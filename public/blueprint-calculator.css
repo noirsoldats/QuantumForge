@@ -1,0 +1,481 @@
+/* Blueprint Calculator Styles */
+
+#calculator-app {
+  min-height: 100vh;
+  background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+  color: #e0e0e0;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+}
+
+/* Header */
+.app-header {
+  background: rgba(255, 255, 255, 0.05);
+  border-bottom: 2px solid rgba(100, 180, 255, 0.2);
+  padding: 20px 30px;
+  display: flex;
+  align-items: center;
+  gap: 20px;
+}
+
+.app-header h1 {
+  color: #64b4ff;
+  font-size: 1.8em;
+  font-weight: 600;
+}
+
+.back-button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 20px;
+  background: rgba(100, 180, 255, 0.1);
+  border: 1px solid rgba(100, 180, 255, 0.3);
+  border-radius: 8px;
+  color: #64b4ff;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.3s ease;
+}
+
+.back-button:hover {
+  background: rgba(100, 180, 255, 0.2);
+  border-color: rgba(100, 180, 255, 0.5);
+  transform: translateX(-3px);
+}
+
+.back-button svg {
+  flex-shrink: 0;
+}
+
+.primary-button {
+  padding: 10px 20px;
+  background: linear-gradient(135deg, #64b4ff 0%, #4a9cdf 100%);
+  border: none;
+  border-radius: 8px;
+  color: white;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  box-shadow: 0 4px 15px rgba(100, 180, 255, 0.3);
+}
+
+.primary-button:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(100, 180, 255, 0.4);
+}
+
+.primary-button:active {
+  transform: translateY(0);
+}
+
+.primary-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.calculator-main {
+  max-width: 1400px;
+  margin: 0 auto;
+  padding: 20px;
+}
+
+/* Search Section */
+.search-section {
+  margin-bottom: 30px;
+}
+
+.search-container {
+  position: relative;
+  max-width: 600px;
+  margin: 0 auto;
+}
+
+.search-input {
+  width: 100%;
+  padding: 15px 20px;
+  font-size: 16px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 2px solid rgba(100, 180, 255, 0.3);
+  border-radius: 8px;
+  color: #e0e0e0;
+  transition: all 0.3s ease;
+}
+
+.search-input:focus {
+  outline: none;
+  border-color: #64b4ff;
+  background: rgba(255, 255, 255, 0.08);
+  box-shadow: 0 0 20px rgba(100, 180, 255, 0.2);
+}
+
+.search-results {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  margin-top: 8px;
+  background: rgba(30, 30, 46, 0.98);
+  border: 1px solid rgba(100, 180, 255, 0.3);
+  border-radius: 8px;
+  max-height: 400px;
+  overflow-y: auto;
+  z-index: 1000;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+}
+
+.search-results.hidden {
+  display: none;
+}
+
+.search-result-item {
+  padding: 12px 20px;
+  cursor: pointer;
+  transition: background 0.2s ease;
+  border-bottom: 1px solid rgba(100, 180, 255, 0.1);
+}
+
+.search-result-item:last-child {
+  border-bottom: none;
+}
+
+.search-result-item:hover {
+  background: rgba(100, 180, 255, 0.15);
+}
+
+.search-result-name {
+  font-weight: 500;
+  color: #e0e0e0;
+  margin-bottom: 4px;
+}
+
+.search-result-details {
+  font-size: 0.85em;
+  color: #a0a0b0;
+}
+
+/* Blueprint Display */
+.blueprint-display {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(100, 180, 255, 0.2);
+  border-radius: 12px;
+  padding: 30px;
+  animation: fadeIn 0.3s ease;
+}
+
+.blueprint-display.hidden {
+  display: none;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Blueprint Header */
+.blueprint-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 30px;
+  padding-bottom: 20px;
+  border-bottom: 2px solid rgba(100, 180, 255, 0.2);
+  flex-wrap: wrap;
+  gap: 20px;
+}
+
+.blueprint-title-section h2 {
+  color: #64b4ff;
+  margin-bottom: 10px;
+  font-size: 1.8em;
+}
+
+.blueprint-info {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.info-item {
+  color: #a0a0b0;
+  font-size: 0.95em;
+}
+
+.info-item strong {
+  color: #e0e0e0;
+}
+
+/* Blueprint Controls */
+.blueprint-controls {
+  display: flex;
+  gap: 15px;
+  align-items: flex-end;
+  flex-wrap: wrap;
+}
+
+.control-group {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.control-group label {
+  font-size: 0.9em;
+  color: #a0a0b0;
+  font-weight: 500;
+}
+
+.control-input {
+  padding: 8px 12px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(100, 180, 255, 0.3);
+  border-radius: 6px;
+  color: #e0e0e0;
+  font-size: 16px;
+  width: 100px;
+  transition: all 0.2s ease;
+}
+
+.control-input:focus {
+  outline: none;
+  border-color: #64b4ff;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+/* Materials Display */
+.materials-display {
+  animation: fadeIn 0.3s ease;
+}
+
+.materials-display.hidden {
+  display: none;
+}
+
+.materials-display h3 {
+  color: #64b4ff;
+  margin-bottom: 20px;
+  font-size: 1.5em;
+}
+
+.materials-display h4 {
+  color: #e0e0e0;
+  margin-bottom: 15px;
+  font-size: 1.2em;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* Materials Summary */
+.materials-summary {
+  background: rgba(100, 180, 255, 0.05);
+  border: 1px solid rgba(100, 180, 255, 0.2);
+  border-radius: 8px;
+  padding: 20px;
+  margin-bottom: 25px;
+}
+
+.material-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 12px;
+}
+
+.material-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 15px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(100, 180, 255, 0.15);
+  border-radius: 6px;
+  transition: all 0.2s ease;
+}
+
+.material-item:hover {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(100, 180, 255, 0.3);
+}
+
+.material-name {
+  font-weight: 500;
+  color: #e0e0e0;
+}
+
+.material-quantity {
+  font-weight: 600;
+  color: #64b4ff;
+  font-size: 1.1em;
+}
+
+/* Materials Breakdown */
+.materials-breakdown {
+  margin-top: 30px;
+}
+
+.breakdown-list {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.breakdown-item {
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(100, 180, 255, 0.15);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.breakdown-header {
+  background: rgba(100, 180, 255, 0.1);
+  padding: 15px 20px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  cursor: pointer;
+  transition: background 0.2s ease;
+}
+
+.breakdown-header:hover {
+  background: rgba(100, 180, 255, 0.15);
+}
+
+.breakdown-title {
+  font-weight: 600;
+  color: #64b4ff;
+  font-size: 1.1em;
+}
+
+.breakdown-badge {
+  background: rgba(100, 180, 255, 0.2);
+  padding: 4px 12px;
+  border-radius: 12px;
+  font-size: 0.85em;
+  color: #64b4ff;
+}
+
+.breakdown-content {
+  padding: 15px 20px;
+}
+
+.breakdown-materials {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 10px;
+}
+
+.sub-material-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 12px;
+  background: rgba(255, 255, 255, 0.02);
+  border-left: 3px solid rgba(100, 180, 255, 0.3);
+  border-radius: 4px;
+}
+
+.sub-material-item.intermediate {
+  border-left-color: #ffa500;
+  background: rgba(255, 165, 0, 0.05);
+}
+
+.sub-material-name {
+  color: #e0e0e0;
+  font-size: 0.95em;
+}
+
+.sub-material-quantity {
+  color: #64b4ff;
+  font-weight: 600;
+}
+
+.intermediate-badge {
+  display: inline-block;
+  background: rgba(255, 165, 0, 0.2);
+  color: #ffa500;
+  padding: 2px 8px;
+  border-radius: 8px;
+  font-size: 0.75em;
+  margin-left: 8px;
+  font-weight: 500;
+}
+
+/* Loading Indicator */
+.loading-indicator {
+  text-align: center;
+  padding: 60px 20px;
+  animation: fadeIn 0.3s ease;
+}
+
+.loading-indicator.hidden {
+  display: none;
+}
+
+.spinner {
+  width: 50px;
+  height: 50px;
+  margin: 0 auto 20px;
+  border: 4px solid rgba(100, 180, 255, 0.2);
+  border-top-color: #64b4ff;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.loading-indicator p {
+  color: #a0a0b0;
+  font-size: 1.1em;
+}
+
+/* Empty State */
+.empty-state {
+  text-align: center;
+  padding: 100px 20px;
+  color: #a0a0b0;
+}
+
+.empty-state svg {
+  margin-bottom: 20px;
+}
+
+.empty-state p {
+  font-size: 1.2em;
+}
+
+/* Responsive Design */
+@media (max-width: 768px) {
+  .blueprint-header {
+    flex-direction: column;
+  }
+
+  .blueprint-controls {
+    width: 100%;
+  }
+
+  .control-input {
+    width: 100%;
+  }
+
+  .material-list,
+  .breakdown-materials {
+    grid-template-columns: 1fr;
+  }
+}

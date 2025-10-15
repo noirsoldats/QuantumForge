@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://images.evetech.net">
+  <title>Skills Manager - Quantum Forge</title>
+  <link rel="stylesheet" href="skills.css">
+</head>
+<body>
+  <div id="skills-app">
+    <header class="skills-header">
+      <div class="character-info">
+        <img id="character-portrait" class="character-portrait-small" src="" alt="">
+        <div>
+          <h1 id="character-name">Loading...</h1>
+          <p id="total-sp">Total SP: Loading...</p>
+        </div>
+      </div>
+      <div class="header-actions">
+        <button class="secondary-button" id="refresh-skills-btn">
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 2v6h-6M3 12a9 9 0 0 1 15-6.7L21 8M3 22v-6h6M21 12a9 9 0 0 1-15 6.7L3 16"/></svg>
+          Refresh from API
+        </button>
+        <button class="danger-button" id="clear-overrides-btn">Clear All Overrides</button>
+      </div>
+    </header>
+
+    <div class="skills-container">
+      <div class="skills-sidebar">
+        <input type="text" id="skill-search" class="search-input" placeholder="Search skills...">
+        <div class="filter-section">
+          <label><input type="checkbox" id="show-trained" checked> Trained</label>
+          <label><input type="checkbox" id="show-overridden"> Overridden</label>
+          <label><input type="checkbox" id="show-untrained"> Untrained</label>
+        </div>
+      </div>
+
+      <div class="skills-content">
+        <div id="skills-list" class="skills-list">
+          <!-- Skills will be loaded here -->
+        </div>
+      </div>
+    </div>
+  </div>
+  <script src="../src/renderer/skills-renderer.js"></script>
+</body>
+</html>

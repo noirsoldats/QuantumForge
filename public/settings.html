@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://images.evetech.net">
+  <title>Settings - Quantum Forge</title>
+  <link rel="stylesheet" href="settings.css">
+</head>
+<body>
+  <div id="settings-app">
+    <div class="settings-container">
+      <nav class="settings-sidebar">
+        <div class="settings-header">
+          <h2>Settings</h2>
+        </div>
+        <ul class="settings-tabs">
+          <li class="tab-item active" data-tab="general">
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"></path>
+              <circle cx="12" cy="12" r="3"></circle>
+            </svg>
+            <span>General</span>
+          </li>
+          <li class="tab-item" data-tab="accounts">
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"></path>
+              <circle cx="9" cy="7" r="4"></circle>
+              <path d="M22 21v-2a4 4 0 0 0-3-3.87"></path>
+              <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
+            </svg>
+            <span>Accounts</span>
+          </li>
+          <li class="tab-item" data-tab="market">
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="12" y1="1" x2="12" y2="23"></line>
+              <path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path>
+            </svg>
+            <span>Market</span>
+          </li>
+        </ul>
+      </nav>
+
+      <main class="settings-content">
+        <!-- General Tab -->
+        <div class="tab-content active" id="general-tab">
+          <div class="tab-header">
+            <h2>General Settings</h2>
+            <p>Configure general application preferences</p>
+          </div>
+
+          <div class="settings-section">
+            <h3>Application</h3>
+            <div class="setting-item">
+              <div class="setting-info">
+                <label>Launch on Startup</label>
+                <span class="setting-description">Automatically start Quantum Forge when you log in</span>
+              </div>
+              <label class="toggle">
+                <input type="checkbox" id="launch-startup">
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+
+            <div class="setting-item">
+              <div class="setting-info">
+                <label>Minimize to Tray</label>
+                <span class="setting-description">Keep app running in system tray when closed</span>
+              </div>
+              <label class="toggle">
+                <input type="checkbox" id="minimize-tray">
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+
+            <div class="setting-item">
+              <div class="setting-info">
+                <label>Theme</label>
+                <span class="setting-description">Choose your preferred theme</span>
+              </div>
+              <select class="setting-select" id="theme-select">
+                <option value="dark">Dark</option>
+                <option value="light">Light</option>
+                <option value="auto">Auto</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="settings-section">
+            <h3>Notifications</h3>
+            <div class="setting-item">
+              <div class="setting-info">
+                <label>Desktop Notifications</label>
+                <span class="setting-description">Show notifications for important events</span>
+              </div>
+              <label class="toggle">
+                <input type="checkbox" id="desktop-notifications" checked>
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+          </div>
+
+          <div class="settings-section">
+            <h3>Static Data Export (SDE)</h3>
+            <div class="sde-info-container">
+              <div class="sde-status-grid">
+                <div class="sde-status-item">
+                  <span class="sde-label">Current Version:</span>
+                  <span class="sde-value" id="sde-current-version">Checking...</span>
+                </div>
+                <div class="sde-status-item">
+                  <span class="sde-label">Latest Version:</span>
+                  <span class="sde-value" id="sde-latest-version">Checking...</span>
+                </div>
+                <div class="sde-status-item">
+                  <span class="sde-label">Minimum Required:</span>
+                  <span class="sde-value" id="sde-minimum-version">Loading...</span>
+                </div>
+                <div class="sde-status-item">
+                  <span class="sde-label">Status:</span>
+                  <span class="sde-value" id="sde-status">Checking...</span>
+                </div>
+              </div>
+
+              <div class="sde-actions">
+                <button class="primary-button" id="sde-update-btn" disabled>
+                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M21 2v6h-6"></path>
+                    <path d="M3 12a9 9 0 0 1 15-6.7L21 8"></path>
+                    <path d="M3 22v-6h6"></path>
+                    <path d="M21 12a9 9 0 0 1-15 6.7L3 16"></path>
+                  </svg>
+                  Update SDE
+                </button>
+                <button class="secondary-button" id="sde-check-btn">
+                  Check for Updates
+                </button>
+              </div>
+
+              <div class="sde-progress" id="sde-progress" style="display: none;">
+                <div class="progress-bar-container">
+                  <div class="progress-bar" id="sde-progress-bar"></div>
+                </div>
+                <div class="progress-text" id="sde-progress-text">Initializing...</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Accounts Tab -->
+        <div class="tab-content" id="accounts-tab">
+          <div class="tab-header">
+            <h2>Account Settings</h2>
+            <p>Manage your Eve Online characters and accounts</p>
+          </div>
+
+          <div class="settings-section">
+            <div class="section-header">
+              <h3>Connected Characters</h3>
+              <button class="primary-button" id="connect-character-btn">
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <line x1="12" y1="5" x2="12" y2="19"></line>
+                  <line x1="5" y1="12" x2="19" y2="12"></line>
+                </svg>
+                Connect Character
+              </button>
+            </div>
+            <div id="characters-list" class="characters-list">
+              <!-- Characters will be dynamically loaded here -->
+            </div>
+            <div class="empty-state" id="empty-characters-state" style="display: none;">
+              <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"></path>
+                <circle cx="9" cy="7" r="4"></circle>
+                <path d="M22 21v-2a4 4 0 0 0-3-3.87"></path>
+                <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
+              </svg>
+              <p>No characters connected yet</p>
+              <small>Click "Connect Character" to add your Eve Online characters</small>
+            </div>
+          </div>
+        </div>
+
+        <!-- Market Tab -->
+        <div class="tab-content" id="market-tab">
+          <div class="tab-header">
+            <h2>Market Settings</h2>
+            <p>Configure market data and pricing preferences</p>
+          </div>
+
+          <div class="settings-section">
+            <h3>Market Data</h3>
+            <div class="setting-item">
+              <div class="setting-info">
+                <label>Default Trade Hub</label>
+                <span class="setting-description">Primary market for price checks</span>
+              </div>
+              <select class="setting-select" id="trade-hub-select">
+                <option value="jita">Jita</option>
+                <option value="amarr">Amarr</option>
+                <option value="dodixie">Dodixie</option>
+                <option value="rens">Rens</option>
+                <option value="hek">Hek</option>
+              </select>
+            </div>
+
+            <div class="setting-item">
+              <div class="setting-info">
+                <label>Auto-Update Market Prices</label>
+                <span class="setting-description">Automatically refresh market data</span>
+              </div>
+              <label class="toggle">
+                <input type="checkbox" id="auto-update-market" checked>
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+
+            <div class="setting-item">
+              <div class="setting-info">
+                <label>Update Interval</label>
+                <span class="setting-description">How often to refresh market data (minutes)</span>
+              </div>
+              <input type="number" class="setting-input" id="update-interval" value="30" min="5" max="1440">
+            </div>
+          </div>
+
+          <div class="settings-section">
+            <h3>Pricing</h3>
+            <div class="setting-item">
+              <div class="setting-info">
+                <label>Price Type</label>
+                <span class="setting-description">Which price to use for calculations</span>
+              </div>
+              <select class="setting-select" id="price-type-select">
+                <option value="sell">Sell Orders</option>
+                <option value="buy">Buy Orders</option>
+                <option value="average">Average</option>
+              </select>
+            </div>
+          </div>
+        </div>
+      </main>
+    </div>
+  </div>
+  <script src="../src/renderer/settings-renderer.js"></script>
+</body>
+</html>

@@ -1,0 +1,882 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://images.evetech.net; connect-src https://esi.evetech.net https://market.fuzzwork.co.uk">
+  <title>Market Manager - Quantum Forge</title>
+  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="market.css">
+</head>
+<body>
+  <div id="market-app">
+    <!-- Settings Button -->
+    <button id="settings-btn" class="settings-icon" title="Settings">
+      <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="3"></circle>
+        <path d="M12 1v6m0 6v6m0-18a10 10 0 0 1 10 10m-10 10a10 10 0 0 1-10-10m8.5-8.5l3 3m-11 11l3 3m11-11l-3 3m-11-11l-3 3m15 5h-6m-6 0H1"></path>
+        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+      </svg>
+    </button>
+
+    <!-- Character Avatar & Menu -->
+    <div id="character-avatar-container" class="character-avatar-container" style="display: none;">
+      <button id="character-avatar-btn" class="character-avatar-icon" title="Character Menu">
+        <img id="character-avatar-img" src="" alt="Default Character" />
+      </button>
+      <div id="character-menu" class="character-menu" style="display: none;">
+        <div class="character-menu-header" id="character-menu-name">Character Name</div>
+        <button class="character-menu-item" id="menu-skills">
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"></path>
+            <path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"></path>
+          </svg>
+          Skills Manager
+        </button>
+        <button class="character-menu-item" id="menu-blueprints">
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+            <polyline points="14 2 14 8 20 8"></polyline>
+            <line x1="16" y1="13" x2="8" y2="13"></line>
+            <line x1="16" y1="17" x2="8" y2="17"></line>
+            <polyline points="10 9 9 9 8 9"></polyline>
+          </svg>
+          Blueprint Manager
+        </button>
+      </div>
+    </div>
+
+    <header class="market-header">
+      <div class="header-content">
+        <button class="back-btn" id="back-btn" title="Back to Main">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="19" y1="12" x2="5" y2="12"></line>
+            <polyline points="12 19 5 12 12 5"></polyline>
+          </svg>
+        </button>
+        <div class="header-title">
+          <h1>Market Manager</h1>
+          <p>Configure pricing, view market data, and manage price overrides</p>
+        </div>
+      </div>
+    </header>
+
+    <div class="tabs-container">
+      <div class="tabs">
+        <button class="tab-btn active" data-tab="update">
+          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polyline points="23 4 23 10 17 10"></polyline>
+            <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
+          </svg>
+          Update Market Data
+        </button>
+        <button class="tab-btn" data-tab="settings">
+          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="3"></circle>
+            <path d="M12 1v6m0 6v6"></path>
+          </svg>
+          Market Settings
+        </button>
+        <button class="tab-btn" data-tab="viewer">
+          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="18" y1="20" x2="18" y2="10"></line>
+            <line x1="12" y1="20" x2="12" y2="4"></line>
+            <line x1="6" y1="20" x2="6" y2="14"></line>
+          </svg>
+          Market Data Viewer
+        </button>
+        <button class="tab-btn" data-tab="overrides">
+          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="12" y1="1" x2="12" y2="23"></line>
+            <path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path>
+          </svg>
+          Price Overrides
+        </button>
+      </div>
+    </div>
+
+    <div class="tab-content-container">
+      <!-- Update Market Data Tab -->
+      <div id="update-tab" class="tab-content active">
+        <div class="settings-section">
+          <h2>Update Market Data</h2>
+          <p class="section-description">Manually refresh market data from ESI and Fuzzwork APIs. Updates are limited to once every 30 minutes.</p>
+
+          <!-- Quick Update -->
+          <div class="settings-group">
+            <h3>Quick Update</h3>
+            <p class="settings-description">Update all market data for your configured region</p>
+
+            <div class="market-refresh-container">
+              <button class="primary-button" id="refresh-market-data-btn">
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <polyline points="23 4 23 10 17 10"></polyline>
+                  <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
+                </svg>
+                Update All Market Data
+              </button>
+              <div class="last-fetch-info">
+                <div class="last-fetch-label">Last Updated:</div>
+                <div id="last-fetch-time" class="last-fetch-time">Never</div>
+              </div>
+            </div>
+
+            <!-- Progress Bar -->
+            <div id="fetch-progress-container" class="fetch-progress-container hidden">
+              <div class="progress-header">
+                <span id="progress-label">Fetching market data...</span>
+                <span id="progress-percentage">0%</span>
+              </div>
+              <div class="progress-bar-bg">
+                <div id="progress-bar-fill" class="progress-bar-fill"></div>
+              </div>
+              <div class="progress-details">
+                <span id="progress-details-text">Page 0 of 0</span>
+              </div>
+            </div>
+
+            <!-- History Data Update -->
+            <div class="history-update-section">
+              <h4>History Data</h4>
+              <p class="settings-description">Update historical price data for all items with current market data</p>
+
+              <div class="market-refresh-container">
+                <button class="secondary-button" id="refresh-history-data-btn">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <polyline points="23 4 23 10 17 10"></polyline>
+                    <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
+                  </svg>
+                  Update All History Data
+                </button>
+                <div class="last-fetch-info">
+                  <div id="history-data-status" class="last-fetch-time">0/0 fully updated historical entries</div>
+                </div>
+              </div>
+
+              <!-- History Progress Bar -->
+              <div id="history-progress-container" class="fetch-progress-container hidden">
+                <div class="progress-header">
+                  <span id="history-progress-label">Fetching history data...</span>
+                  <span id="history-progress-percentage">0%</span>
+                </div>
+                <div class="progress-bar-bg">
+                  <div id="history-progress-bar-fill" class="progress-bar-fill"></div>
+                </div>
+                <div class="progress-details">
+                  <span id="history-progress-details-text">Item 0 of 0</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Category Selection -->
+          <div class="settings-group">
+            <h3>Update by Category</h3>
+            <p class="settings-description">Select specific item categories and groups to update (coming soon)</p>
+
+            <div class="category-selection-container">
+              <div class="category-tree">
+                <!-- Ships Category -->
+                <div class="category-section">
+                  <div class="category-header" data-category="ships">
+                    <input type="checkbox" id="cat-ships" class="category-checkbox" checked>
+                    <button class="expand-btn">
+                      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polyline points="6 9 12 15 18 9"></polyline>
+                      </svg>
+                    </button>
+                    <label for="cat-ships" class="category-title">
+                      <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M2 21l1.5-3.5L12 3l8.5 14.5L22 21H2z"></path>
+                      </svg>
+                      <span>Ships</span>
+                    </label>
+                  </div>
+                  <div class="group-list">
+                    <label class="group-item">
+                      <input type="checkbox" class="group-checkbox" data-parent="ships" checked>
+                      <span>Frigates</span>
+                    </label>
+                    <label class="group-item">
+                      <input type="checkbox" class="group-checkbox" data-parent="ships" checked>
+                      <span>Destroyers</span>
+                    </label>
+                    <label class="group-item">
+                      <input type="checkbox" class="group-checkbox" data-parent="ships" checked>
+                      <span>Cruisers</span>
+                    </label>
+                    <label class="group-item">
+                      <input type="checkbox" class="group-checkbox" data-parent="ships" checked>
+                      <span>Battlecruisers</span>
+                    </label>
+                    <label class="group-item">
+                      <input type="checkbox" class="group-checkbox" data-parent="ships" checked>
+                      <span>Battleships</span>
+                    </label>
+                    <label class="group-item">
+                      <input type="checkbox" class="group-checkbox" data-parent="ships" checked>
+                      <span>Capitals & Supercapitals</span>
+                    </label>
+                  </div>
+                </div>
+
+                <!-- Ship Equipment Category -->
+                <div class="category-section">
+                  <div class="category-header" data-category="equipment">
+                    <input type="checkbox" id="cat-equipment" class="category-checkbox" checked>
+                    <button class="expand-btn">
+                      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polyline points="6 9 12 15 18 9"></polyline>
+                      </svg>
+                    </button>
+                    <label for="cat-equipment" class="category-title">
+                      <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+                        <line x1="9" y1="3" x2="9" y2="21"></line>
+                      </svg>
+                      <span>Ship Equipment</span>
+                    </label>
+                  </div>
+                  <div class="group-list">
+                    <label class="group-item">
+                      <input type="checkbox" class="group-checkbox" data-parent="equipment" checked>
+                      <span>Weapons & Turrets</span>
+                    </label>
+                    <label class="group-item">
+                      <input type="checkbox" class="group-checkbox" data-parent="equipment" checked>
+                      <span>Armor & Hull</span>
+                    </label>
+                    <label class="group-item">
+                      <input type="checkbox" class="group-checkbox" data-parent="equipment" checked>
+                      <span>Shield</span>
+                    </label>
+                    <label class="group-item">
+                      <input type="checkbox" class="group-checkbox" data-parent="equipment" checked>
+                      <span>Propulsion</span>
+                    </label>
+                    <label class="group-item">
+                      <input type="checkbox" class="group-checkbox" data-parent="equipment" checked>
+                      <span>Electronic Systems</span>
+                    </label>
+                    <label class="group-item">
+                      <input type="checkbox" class="group-checkbox" data-parent="equipment" checked>
+                      <span>Engineering & Capacitor</span>
+                    </label>
+                  </div>
+                </div>
+
+                <!-- Ammunition & Charges Category -->
+                <div class="category-section">
+                  <div class="category-header" data-category="ammunition">
+                    <input type="checkbox" id="cat-ammunition" class="category-checkbox" checked>
+                    <button class="expand-btn">
+                      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polyline points="6 9 12 15 18 9"></polyline>
+                      </svg>
+                    </button>
+                    <label for="cat-ammunition" class="category-title">
+                      <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="12" r="10"></circle>
+                        <circle cx="12" cy="12" r="3"></circle>
+                      </svg>
+                      <span>Ammunition & Charges</span>
+                    </label>
+                  </div>
+                  <div class="group-list">
+                    <label class="group-item">
+                      <input type="checkbox" class="group-checkbox" data-parent="ammunition" checked>
+                      <span>Projectile Ammo</span>
+                    </label>
+                    <label class="group-item">
+                      <input type="checkbox" class="group-checkbox" data-parent="ammunition" checked>
+                      <span>Hybrid Charges</span>
+                    </label>
+                    <label class="group-item">
+                      <input type="checkbox" class="group-checkbox" data-parent="ammunition" checked>
+                      <span>Frequency Crystals</span>
+                    </label>
+                    <label class="group-item">
+                      <input type="checkbox" class="group-checkbox" data-parent="ammunition" checked>
+                      <span>Missiles & Rockets</span>
+                    </label>
+                    <label class="group-item">
+                      <input type="checkbox" class="group-checkbox" data-parent="ammunition" checked>
+                      <span>Bombs & Torpedoes</span>
+                    </label>
+                  </div>
+                </div>
+
+                <!-- Drones Category -->
+                <div class="category-section">
+                  <div class="category-header" data-category="drones">
+                    <input type="checkbox" id="cat-drones" class="category-checkbox" checked>
+                    <button class="expand-btn">
+                      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polyline points="6 9 12 15 18 9"></polyline>
+                      </svg>
+                    </button>
+                    <label for="cat-drones" class="category-title">
+                      <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M12 2L2 7l10 5 10-5-10-5z"></path>
+                        <path d="M2 17l10 5 10-5"></path>
+                        <path d="M2 12l10 5 10-5"></path>
+                      </svg>
+                      <span>Drones</span>
+                    </label>
+                  </div>
+                  <div class="group-list">
+                    <label class="group-item">
+                      <input type="checkbox" class="group-checkbox" data-parent="drones" checked>
+                      <span>Combat Drones</span>
+                    </label>
+                    <label class="group-item">
+                      <input type="checkbox" class="group-checkbox" data-parent="drones" checked>
+                      <span>Mining Drones</span>
+                    </label>
+                    <label class="group-item">
+                      <input type="checkbox" class="group-checkbox" data-parent="drones" checked>
+                      <span>Logistics & Support Drones</span>
+                    </label>
+                    <label class="group-item">
+                      <input type="checkbox" class="group-checkbox" data-parent="drones" checked>
+                      <span>Fighter Craft</span>
+                    </label>
+                  </div>
+                </div>
+
+                <!-- Materials Category -->
+                <div class="category-section">
+                  <div class="category-header" data-category="materials">
+                    <input type="checkbox" id="cat-materials" class="category-checkbox" checked>
+                    <button class="expand-btn">
+                      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polyline points="6 9 12 15 18 9"></polyline>
+                      </svg>
+                    </button>
+                    <label for="cat-materials" class="category-title">
+                      <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"></path>
+                        <line x1="3" y1="6" x2="21" y2="6"></line>
+                      </svg>
+                      <span>Materials</span>
+                    </label>
+                  </div>
+                  <div class="group-list">
+                    <label class="group-item">
+                      <input type="checkbox" class="group-checkbox" data-parent="materials" checked>
+                      <span>Raw Minerals</span>
+                    </label>
+                    <label class="group-item">
+                      <input type="checkbox" class="group-checkbox" data-parent="materials" checked>
+                      <span>Moon Materials</span>
+                    </label>
+                    <label class="group-item">
+                      <input type="checkbox" class="group-checkbox" data-parent="materials" checked>
+                      <span>Planetary Materials</span>
+                    </label>
+                    <label class="group-item">
+                      <input type="checkbox" class="group-checkbox" data-parent="materials" checked>
+                      <span>Reaction Products</span>
+                    </label>
+                    <label class="group-item">
+                      <input type="checkbox" class="group-checkbox" data-parent="materials" checked>
+                      <span>Salvage Materials</span>
+                    </label>
+                  </div>
+                </div>
+
+                <!-- Components Category -->
+                <div class="category-section">
+                  <div class="category-header" data-category="components">
+                    <input type="checkbox" id="cat-components" class="category-checkbox" checked>
+                    <button class="expand-btn">
+                      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polyline points="6 9 12 15 18 9"></polyline>
+                      </svg>
+                    </button>
+                    <label for="cat-components" class="category-title">
+                      <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polygon points="12 2 2 7 12 12 22 7 12 2"></polygon>
+                        <polyline points="2 17 12 22 22 17"></polyline>
+                        <polyline points="2 12 12 17 22 12"></polyline>
+                      </svg>
+                      <span>Components</span>
+                    </label>
+                  </div>
+                  <div class="group-list">
+                    <label class="group-item">
+                      <input type="checkbox" class="group-checkbox" data-parent="components" checked>
+                      <span>Ship Components</span>
+                    </label>
+                    <label class="group-item">
+                      <input type="checkbox" class="group-checkbox" data-parent="components" checked>
+                      <span>Structure Components</span>
+                    </label>
+                    <label class="group-item">
+                      <input type="checkbox" class="group-checkbox" data-parent="components" checked>
+                      <span>Capital Components</span>
+                    </label>
+                    <label class="group-item">
+                      <input type="checkbox" class="group-checkbox" data-parent="components" checked>
+                      <span>Advanced Components</span>
+                    </label>
+                  </div>
+                </div>
+
+                <!-- Blueprints Category -->
+                <div class="category-section">
+                  <div class="category-header" data-category="blueprints">
+                    <input type="checkbox" id="cat-blueprints" class="category-checkbox" checked>
+                    <button class="expand-btn">
+                      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polyline points="6 9 12 15 18 9"></polyline>
+                      </svg>
+                    </button>
+                    <label for="cat-blueprints" class="category-title">
+                      <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                        <polyline points="14 2 14 8 20 8"></polyline>
+                      </svg>
+                      <span>Blueprints</span>
+                    </label>
+                  </div>
+                  <div class="group-list">
+                    <label class="group-item">
+                      <input type="checkbox" class="group-checkbox" data-parent="blueprints" checked>
+                      <span>Ship Blueprints</span>
+                    </label>
+                    <label class="group-item">
+                      <input type="checkbox" class="group-checkbox" data-parent="blueprints" checked>
+                      <span>Module Blueprints</span>
+                    </label>
+                    <label class="group-item">
+                      <input type="checkbox" class="group-checkbox" data-parent="blueprints" checked>
+                      <span>Component Blueprints</span>
+                    </label>
+                    <label class="group-item">
+                      <input type="checkbox" class="group-checkbox" data-parent="blueprints" checked>
+                      <span>Structure Blueprints</span>
+                    </label>
+                  </div>
+                </div>
+              </div>
+
+              <div class="category-actions">
+                <button class="secondary-button" id="update-categories-btn" disabled>
+                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <polyline points="23 4 23 10 17 10"></polyline>
+                    <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
+                  </svg>
+                  Update Selected Categories
+                </button>
+                <span class="help-text">Category-specific updates coming in a future release</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Market Settings Tab -->
+      <div id="settings-tab" class="tab-content">
+        <div class="settings-section">
+          <h2>Market Settings</h2>
+          <p class="section-description">Configure how market prices are calculated for manufacturing and profit calculations.</p>
+
+          <!-- Market Location Selection -->
+          <div class="settings-group">
+            <h3>Default Market Location</h3>
+            <p class="settings-description">Choose the scope for market price fetching</p>
+
+            <div class="location-type-selection">
+              <label class="radio-option">
+                <input type="radio" name="location-type" value="hub" checked>
+                <span class="radio-label">Trade Hub</span>
+                <span class="radio-description">Jita, Amarr, Dodixie, Rens, Hek</span>
+              </label>
+
+              <label class="radio-option">
+                <input type="radio" name="location-type" value="station">
+                <span class="radio-label">Specific Station</span>
+                <span class="radio-description">Choose system, then station</span>
+              </label>
+
+              <label class="radio-option">
+                <input type="radio" name="location-type" value="system">
+                <span class="radio-label">Solar System</span>
+                <span class="radio-description">All stations in a system</span>
+              </label>
+
+              <label class="radio-option">
+                <input type="radio" name="location-type" value="region">
+                <span class="radio-label">Entire Region</span>
+                <span class="radio-description">All systems in a region</span>
+              </label>
+            </div>
+
+            <!-- Hub Selection -->
+            <div id="hub-selection" class="location-option-content">
+              <div class="form-group">
+                <label for="hub-select">Select Trade Hub</label>
+                <div id="hub-status" class="selection-status hidden">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <polyline points="20 6 9 17 4 12"></polyline>
+                  </svg>
+                  <span id="hub-status-text"></span>
+                </div>
+                <select id="hub-select" class="form-control">
+                  <option value="">Loading...</option>
+                </select>
+              </div>
+            </div>
+
+            <!-- Station Selection -->
+            <div id="station-selection" class="location-option-content" style="display: none;">
+              <div id="station-status" class="selection-status hidden">
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <polyline points="20 6 9 17 4 12"></polyline>
+                </svg>
+                <span id="station-status-text"></span>
+              </div>
+              <div class="form-row">
+                <div class="form-group">
+                  <label for="station-system-select">Select System</label>
+                  <input type="text" id="station-system-search" class="form-control" placeholder="Search systems...">
+                  <select id="station-system-select" class="form-control" size="8">
+                    <option value="">Type to search...</option>
+                  </select>
+                </div>
+                <div class="form-group">
+                  <label for="station-select">Select Station</label>
+                  <select id="station-select" class="form-control" size="8">
+                    <option value="">Select a system first</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            <!-- System Selection -->
+            <div id="system-selection" class="location-option-content" style="display: none;">
+              <div class="form-group">
+                <label for="system-select">Select Solar System</label>
+                <div id="system-status" class="selection-status hidden">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <polyline points="20 6 9 17 4 12"></polyline>
+                  </svg>
+                  <span id="system-status-text"></span>
+                </div>
+                <input type="text" id="system-search" class="form-control" placeholder="Search systems...">
+                <select id="system-select" class="form-control" size="10">
+                  <option value="">Type to search...</option>
+                </select>
+              </div>
+            </div>
+
+            <!-- Region Selection -->
+            <div id="region-selection" class="location-option-content" style="display: none;">
+              <div class="form-group">
+                <label for="region-select">Select Region</label>
+                <div id="region-status" class="selection-status hidden">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <polyline points="20 6 9 17 4 12"></polyline>
+                  </svg>
+                  <span id="region-status-text"></span>
+                </div>
+                <select id="region-select" class="form-control" size="10">
+                  <option value="">Loading...</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <!-- Input Materials Pricing -->
+          <div class="settings-group">
+            <h3>Input Materials Pricing</h3>
+            <p class="settings-description">Configure how raw material costs are calculated</p>
+
+            <div class="form-row">
+              <div class="form-group">
+                <label for="input-price-type">Price Type</label>
+                <select id="input-price-type" class="form-control">
+                  <option value="sell">Buy from Sell Orders (Higher Cost)</option>
+                  <option value="buy">Buy from Buy Orders (Lower Cost)</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label for="input-price-method">Calculation Method</label>
+                <select id="input-price-method" class="form-control">
+                  <option value="immediate">Immediate (Best Price)</option>
+                  <option value="hybrid">Hybrid (Recommended)</option>
+                  <option value="vwap">VWAP (Volume-Weighted)</option>
+                  <option value="percentile">Percentile-Based</option>
+                  <option value="historical">Historical Average</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="form-row">
+              <div class="form-group">
+                <label for="input-price-modifier">Price Modifier (%)</label>
+                <input type="number" id="input-price-modifier" class="form-control" min="0" max="200" step="1" value="100">
+                <span class="help-text">Apply a percentage adjustment (100 = no change)</span>
+              </div>
+              <div class="form-group">
+                <label for="input-percentile">Percentile Threshold</label>
+                <input type="number" id="input-percentile" class="form-control" min="0" max="1" step="0.05" value="0.20">
+                <span class="help-text">For percentile method (0.2 = 20th percentile)</span>
+              </div>
+            </div>
+
+            <div class="form-row">
+              <div class="form-group">
+                <label for="input-min-volume">Minimum Order Volume</label>
+                <input type="number" id="input-min-volume" class="form-control" min="1" step="100" value="1000">
+                <span class="help-text">Ignore orders below this volume</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Output Products Pricing -->
+          <div class="settings-group">
+            <h3>Output Products Pricing</h3>
+            <p class="settings-description">Configure how manufactured product values are calculated</p>
+
+            <div class="form-row">
+              <div class="form-group">
+                <label for="output-price-type">Price Type</label>
+                <select id="output-price-type" class="form-control">
+                  <option value="sell">Sell via Sell Orders (Higher Value)</option>
+                  <option value="buy">Sell via Buy Orders (Lower Value)</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label for="output-price-method">Calculation Method</label>
+                <select id="output-price-method" class="form-control">
+                  <option value="immediate">Immediate (Best Price)</option>
+                  <option value="hybrid">Hybrid (Recommended)</option>
+                  <option value="vwap">VWAP (Volume-Weighted)</option>
+                  <option value="percentile">Percentile-Based</option>
+                  <option value="historical">Historical Average</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="form-row">
+              <div class="form-group">
+                <label for="output-price-modifier">Price Modifier (%)</label>
+                <input type="number" id="output-price-modifier" class="form-control" min="0" max="200" step="1" value="100">
+                <span class="help-text">Apply a percentage adjustment (100 = no change)</span>
+              </div>
+              <div class="form-group">
+                <label for="output-percentile">Percentile Threshold</label>
+                <input type="number" id="output-percentile" class="form-control" min="0" max="1" step="0.05" value="0.20">
+                <span class="help-text">For percentile method (0.2 = 20th percentile)</span>
+              </div>
+            </div>
+
+            <div class="form-row">
+              <div class="form-group">
+                <label for="output-min-volume">Minimum Order Volume</label>
+                <input type="number" id="output-min-volume" class="form-control" min="1" step="100" value="1000">
+                <span class="help-text">Ignore orders below this volume</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- General Settings -->
+          <div class="settings-group">
+            <h3>General Settings</h3>
+
+            <div class="form-row">
+              <div class="form-group">
+                <label for="warning-threshold">Price Warning Threshold (%)</label>
+                <input type="number" id="warning-threshold" class="form-control" min="0" max="100" step="5" value="30">
+                <span class="help-text">Warn when price deviates more than this % from historical average</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Save Button -->
+          <div class="settings-actions">
+            <button class="primary-button" id="save-settings-btn">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
+                <polyline points="17 21 17 13 7 13 7 21"></polyline>
+                <polyline points="7 3 7 8 15 8"></polyline>
+              </svg>
+              Save Settings
+            </button>
+            <button class="secondary-button" id="reset-settings-btn">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M21 2v6h-6M3 12a9 9 0 0 1 15-6.7L21 8M3 22v-6h6M21 12a9 9 0 0 1-15 6.7L3 16"/>
+              </svg>
+              Reset to Defaults
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Market Data Viewer Tab -->
+      <div id="viewer-tab" class="tab-content">
+        <div class="market-viewer-section">
+          <h2>Market Data Viewer</h2>
+          <p class="section-description">Search for items and view market orders, historical prices, and trends.</p>
+
+          <!-- Item Search -->
+          <div class="viewer-group">
+            <div class="search-container">
+              <input type="text" id="item-search" class="search-input" placeholder="Search for an item...">
+              <div id="search-results" class="search-results hidden"></div>
+            </div>
+          </div>
+
+          <!-- Selected Item Display -->
+          <div id="item-display" class="item-display hidden">
+            <div class="item-header">
+              <div class="item-info">
+                <h3 id="item-name">Item Name</h3>
+                <p id="item-description">Item description</p>
+              </div>
+              <div class="viewer-last-fetch-info">
+                <div class="viewer-last-fetch-label">Market Data:</div>
+                <div id="viewer-last-fetch-time" class="viewer-last-fetch-time">Never</div>
+              </div>
+            </div>
+
+            <!-- Market Data Grid -->
+            <div class="market-data-grid">
+              <!-- Order Book -->
+              <div class="data-card">
+                <h4>Order Book</h4>
+                <div class="order-book-container">
+                  <div class="order-column">
+                    <h5 class="sell-orders-header">Sell Orders</h5>
+                    <div id="sell-orders" class="order-list"></div>
+                  </div>
+                  <div class="order-column">
+                    <h5 class="buy-orders-header">Buy Orders</h5>
+                    <div id="buy-orders" class="order-list"></div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Price Chart -->
+              <div class="data-card">
+                <h4>Price History</h4>
+                <canvas id="price-chart"></canvas>
+              </div>
+
+              <!-- Statistics -->
+              <div class="data-card">
+                <h4>Statistics</h4>
+                <div id="market-stats" class="stats-grid"></div>
+              </div>
+
+              <!-- Price Calculations -->
+              <div class="data-card full-width">
+                <h4>Price Calculation Methods</h4>
+                <p class="calculation-description">Comparison of different pricing methods for manufacturing calculations</p>
+                <div id="price-calculations" class="calculations-grid"></div>
+              </div>
+            </div>
+
+            <!-- Loading Indicator -->
+            <div id="loading-indicator" class="loading-indicator hidden">
+              <div class="spinner"></div>
+              <p>Loading market data...</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Price Overrides Tab -->
+      <div id="overrides-tab" class="tab-content">
+        <div class="settings-section">
+          <h2>Price Overrides</h2>
+          <p class="section-description">Manually set custom prices for specific items to override market calculations.</p>
+
+          <!-- Add Override Section -->
+          <div class="settings-group">
+            <h3>Add Price Override</h3>
+            <p class="settings-description">Search for an item and set a custom price override</p>
+
+            <div class="override-form">
+              <div class="form-row">
+                <div class="form-group override-search-group">
+                  <label for="override-item-search">Search Item</label>
+                  <div class="search-container">
+                    <input type="text" id="override-item-search" class="form-control" placeholder="Search for an item...">
+                    <div id="override-search-results" class="search-results hidden"></div>
+                  </div>
+                </div>
+              </div>
+
+              <div id="override-item-details" class="override-item-details hidden">
+                <div class="override-item-header">
+                  <div class="override-item-info">
+                    <h4 id="override-item-name">Selected Item</h4>
+                    <p id="override-item-id">Type ID: -</p>
+                  </div>
+                  <div id="override-current-price" class="override-current-price">
+                    <div class="current-price-label">Current Market Price</div>
+                    <div id="override-current-price-value" class="current-price-value">Loading...</div>
+                  </div>
+                </div>
+
+                <div class="form-row">
+                  <div class="form-group">
+                    <label for="override-price">Override Price (ISK)</label>
+                    <input type="number" id="override-price" class="form-control" min="0" step="0.01" placeholder="Enter custom price">
+                    <span class="help-text">This price will be used instead of market calculations</span>
+                  </div>
+                  <div class="form-group">
+                    <label for="override-notes">Notes (Optional)</label>
+                    <input type="text" id="override-notes" class="form-control" placeholder="Reason for override, source, etc.">
+                    <span class="help-text">Add context for why this override was set</span>
+                  </div>
+                </div>
+
+                <div class="override-actions">
+                  <button class="primary-button" id="add-override-btn">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <line x1="12" y1="5" x2="12" y2="19"></line>
+                      <line x1="5" y1="12" x2="19" y2="12"></line>
+                    </svg>
+                    Add Override
+                  </button>
+                  <button class="secondary-button" id="cancel-override-btn">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <line x1="18" y1="6" x2="6" y2="18"></line>
+                      <line x1="6" y1="6" x2="18" y2="18"></line>
+                    </svg>
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Active Overrides -->
+          <div class="settings-group">
+            <h3>Active Price Overrides</h3>
+            <p class="settings-description">Manage your current price overrides</p>
+
+            <div id="overrides-list" class="overrides-list">
+              <div class="overrides-empty">
+                <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <line x1="12" y1="1" x2="12" y2="23"></line>
+                  <path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path>
+                </svg>
+                <p>No price overrides set</p>
+                <span>Add an override above to get started</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.js"></script>
+  <script src="../src/renderer/market-renderer.js"></script>
+</body>
+</html>

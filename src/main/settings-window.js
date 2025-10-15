@@ -1,0 +1,51 @@
+const { BrowserWindow } = require('electron');
+const path = require('path');
+const { getWindowBounds, trackWindowState } = require('./window-state-manager');
+
+let settingsWindow = null;
+
+function createSettingsWindow() {
+  // If settings window already exists, focus it
+  if (settingsWindow) {
+    settingsWindow.focus();
+    return;
+  }
+
+  const windowBounds = getWindowBounds('settings', { width: 800, height: 600 });
+
+  settingsWindow = new BrowserWindow({
+    ...windowBounds,
+    resizable: true,
+    webPreferences: {
+      preload: path.join(__dirname, '../preload/preload.js'),
+      nodeIntegration: false,
+      contextIsolation: true,
+    },
+    title: 'Settings - Quantum Forge',
+    parent: null, // Can be set to main window if you want modal behavior
+    modal: false,
+  });
+
+  // Track window state changes
+  trackWindowState(settingsWindow, 'settings');
+
+  settingsWindow.loadFile(path.join(__dirname, '../../public/settings.html'));
+
+  // Open DevTools in development
+  if (process.env.NODE_ENV === 'development') {
+    settingsWindow.webContents.openDevTools();
+  }
+
+  settingsWindow.on('closed', () => {
+    settingsWindow = null;
+  });
+}
+
+function getSettingsWindow() {
+  return settingsWindow;
+}
+
+module.exports = {
+  createSettingsWindow,
+  getSettingsWindow,
+};

@@ -1,0 +1,79 @@
+{
+  "name": "quantum-forge",
+  "productName": "Quantum Forge",
+  "version": "1.0.0",
+  "description": "Eve Online Industry Management Tool",
+  "main": "src/main/main.js",
+  "scripts": {
+    "start": "electron .",
+    "dev": "NODE_ENV=development electron .",
+    "build": "electron-builder",
+    "build:win": "electron-builder --win",
+    "build:mac": "electron-builder --mac",
+    "build:linux": "electron-builder --linux",
+    "build:all": "electron-builder -mwl",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "eve-online",
+    "industry",
+    "gaming",
+    "tool",
+    "electron"
+  ],
+  "author": "",
+  "license": "MIT",
+  "type": "commonjs",
+  "devDependencies": {
+    "electron": "^38.2.2",
+    "electron-builder": "^26.0.12",
+    "electron-rebuild": "^3.2.9"
+  },
+  "build": {
+    "appId": "com.quantumforge.app",
+    "productName": "Quantum Forge",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "src/**/*",
+      "public/**/*",
+      "package.json"
+    ],
+    "mac": {
+      "category": "public.app-category.productivity",
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "icon": "build/icon.icns"
+    },
+    "win": {
+      "target": [
+        "nsis",
+        "portable"
+      ],
+      "icon": "build/icon.ico"
+    },
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb",
+        "rpm"
+      ],
+      "category": "Utility",
+      "icon": "build/icons"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    }
+  },
+  "dependencies": {
+    "better-sqlite3": "^12.4.1",
+    "sqlite3": "^5.1.7",
+    "unbzip2-stream": "^1.4.3"
+  }
+}
