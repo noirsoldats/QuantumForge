@@ -1,6 +1,41 @@
 const { getMarketDatabase } = require('./market-database');
 
 /**
+ * Retry a fetch operation with exponential backoff
+ * @param {Function} fetchFn - Async function that performs the fetch
+ * @param {number} maxRetries - Maximum number of retry attempts (default: 3)
+ * @param {number} initialDelay - Initial delay in milliseconds (default: 1000)
+ * @returns {Promise<Response>} Fetch response
+ */
+async function retryFetch(fetchFn, maxRetries = 3, initialDelay = 1000) {
+  let lastError;
+
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      const response = await fetchFn();
+      return response;
+    } catch (error) {
+      lastError = error;
+
+      // Don't retry if it's the last attempt
+      if (attempt === maxRetries) {
+        break;
+      }
+
+      // Calculate exponential backoff delay
+      const delay = initialDelay * Math.pow(2, attempt);
+      console.log(`Fetch attempt ${attempt + 1} failed: ${error.message}. Retrying in ${delay}ms...`);
+
+      // Wait before retrying
+      await new Promise(resolve => setTimeout(resolve, delay));
+    }
+  }
+
+  // If we get here, all retries failed
+  throw new Error(`Failed after ${maxRetries + 1} attempts: ${lastError.message}`);
+}
+
+/**
  * Check if we can fetch from ESI (rate limiting)
  * @param {string} key - Cache key
  * @param {number} minInterval - Minimum interval in milliseconds
@@ -86,16 +121,20 @@ async function fetchMarketOrders(regionId, typeId = null, locationFilter = null,
 
     console.log(`Fetching market orders from ESI: ${baseUrl}`);
 
-    // Fetch first page to check for pagination
-    const firstResponse = await fetch(`${baseUrl}&page=1`, {
-      headers: {
-        'User-Agent': 'Quantum Forge Industry Tool',
-      },
-    });
+    // Fetch first page to check for pagination (with retry logic)
+    const firstResponse = await retryFetch(async () => {
+      const response = await fetch(`${baseUrl}&page=1`, {
+        headers: {
+          'User-Agent': 'Quantum Forge Industry Tool',
+        },
+      });
 
-    if (!firstResponse.ok) {
-      throw new Error(`Failed to fetch market orders: ${firstResponse.status} ${firstResponse.statusText}`);
-    }
+      if (!response.ok) {
+        throw new Error(`Failed to fetch market orders: ${response.status} ${response.statusText}`);
+      }
+
+      return response;
+    });
 
     const firstPageOrders = await firstResponse.json();
     const expiresAt = getCacheExpiry(firstResponse);
@@ -112,15 +151,19 @@ async function fetchMarketOrders(regionId, typeId = null, locationFilter = null,
 
       for (let page = 2; page <= totalPages; page++) {
         pagePromises.push(
-          fetch(`${baseUrl}&page=${page}`, {
-            headers: {
-              'User-Agent': 'Quantum Forge Industry Tool',
-            },
-          }).then(async (response) => {
+          retryFetch(async () => {
+            const response = await fetch(`${baseUrl}&page=${page}`, {
+              headers: {
+                'User-Agent': 'Quantum Forge Industry Tool',
+              },
+            });
+
             if (!response.ok) {
-              console.error(`Failed to fetch page ${page}: ${response.status}`);
-              return [];
+              throw new Error(`Failed to fetch page ${page}: ${response.status} ${response.statusText}`);
             }
+
+            return response;
+          }).then(async (response) => {
             const pageOrders = await response.json();
             console.log(`Fetched page ${page}/${totalPages} (${pageOrders.length} orders)`);
 
@@ -136,6 +179,9 @@ async function fetchMarketOrders(regionId, typeId = null, locationFilter = null,
             }
 
             return pageOrders;
+          }).catch((error) => {
+            console.error(`Failed to fetch page ${page} after retries: ${error.message}`);
+            return [];
           })
         );
       }
@@ -287,15 +333,19 @@ async function fetchMarketHistory(regionId, typeId, forceRefresh = false) {
 
     console.log(`Fetching market history from ESI: ${url} (cache is ${hasFreshCache ? 'fresh but force refresh' : 'stale or missing'})`);
 
-    const response = await fetch(url, {
-      headers: {
-        'User-Agent': 'Quantum Forge Industry Tool',
-      },
-    });
+    const response = await retryFetch(async () => {
+      const res = await fetch(url, {
+        headers: {
+          'User-Agent': 'Quantum Forge Industry Tool',
+        },
+      });
 
-    if (!response.ok) {
-      throw new Error(`Failed to fetch market history: ${response.status} ${response.statusText}`);
-    }
+      if (!res.ok) {
+        throw new Error(`Failed to fetch market history: ${res.status} ${res.statusText}`);
+      }
+
+      return res;
+    });
 
     const history = await response.json();
     const expiresAt = getCacheExpiry(response);

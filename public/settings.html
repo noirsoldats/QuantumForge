@@ -31,13 +31,6 @@
             </svg>
             <span>Accounts</span>
           </li>
-          <li class="tab-item" data-tab="market">
-            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <line x1="12" y1="1" x2="12" y2="23"></line>
-              <path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path>
-            </svg>
-            <span>Market</span>
-          </li>
         </ul>
       </nav>
 
@@ -177,65 +170,6 @@
               </svg>
               <p>No characters connected yet</p>
               <small>Click "Connect Character" to add your Eve Online characters</small>
-            </div>
-          </div>
-        </div>
-
-        <!-- Market Tab -->
-        <div class="tab-content" id="market-tab">
-          <div class="tab-header">
-            <h2>Market Settings</h2>
-            <p>Configure market data and pricing preferences</p>
-          </div>
-
-          <div class="settings-section">
-            <h3>Market Data</h3>
-            <div class="setting-item">
-              <div class="setting-info">
-                <label>Default Trade Hub</label>
-                <span class="setting-description">Primary market for price checks</span>
-              </div>
-              <select class="setting-select" id="trade-hub-select">
-                <option value="jita">Jita</option>
-                <option value="amarr">Amarr</option>
-                <option value="dodixie">Dodixie</option>
-                <option value="rens">Rens</option>
-                <option value="hek">Hek</option>
-              </select>
-            </div>
-
-            <div class="setting-item">
-              <div class="setting-info">
-                <label>Auto-Update Market Prices</label>
-                <span class="setting-description">Automatically refresh market data</span>
-              </div>
-              <label class="toggle">
-                <input type="checkbox" id="auto-update-market" checked>
-                <span class="toggle-slider"></span>
-              </label>
-            </div>
-
-            <div class="setting-item">
-              <div class="setting-info">
-                <label>Update Interval</label>
-                <span class="setting-description">How often to refresh market data (minutes)</span>
-              </div>
-              <input type="number" class="setting-input" id="update-interval" value="30" min="5" max="1440">
-            </div>
-          </div>
-
-          <div class="settings-section">
-            <h3>Pricing</h3>
-            <div class="setting-item">
-              <div class="setting-info">
-                <label>Price Type</label>
-                <span class="setting-description">Which price to use for calculations</span>
-              </div>
-              <select class="setting-select" id="price-type-select">
-                <option value="sell">Sell Orders</option>
-                <option value="buy">Buy Orders</option>
-                <option value="average">Average</option>
-              </select>
             </div>
           </div>
         </div>

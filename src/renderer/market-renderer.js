@@ -638,15 +638,126 @@ function updateHistoryProgressBar(currentItem, totalItems, progress) {
   progressDetails.textContent = `Item ${currentItem} of ${totalItems}`;
 }
 
+// Show error dialog with retry option
+async function showErrorWithRetry(message, retryCallback) {
+  return new Promise((resolve) => {
+    // Create modal overlay
+    const overlay = document.createElement('div');
+    overlay.style.cssText = `
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(0, 0, 0, 0.7);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 10000;
+    `;
+
+    // Create modal
+    const modal = document.createElement('div');
+    modal.style.cssText = `
+      background: #2d2d44;
+      border: 1px solid #3d3d54;
+      border-radius: 8px;
+      padding: 24px;
+      max-width: 500px;
+      width: 90%;
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+    `;
+
+    modal.innerHTML = `
+      <div style="margin-bottom: 16px;">
+        <h3 style="color: #ff6b6b; margin: 0 0 12px 0; font-size: 18px;">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align: middle; margin-right: 8px;">
+            <circle cx="12" cy="12" r="10"></circle>
+            <line x1="12" y1="8" x2="12" y2="12"></line>
+            <line x1="12" y1="16" x2="12.01" y2="16"></line>
+          </svg>
+          Update Failed
+        </h3>
+        <p style="color: #e0e0e0; margin: 0; line-height: 1.5;">${message}</p>
+        <p style="color: #a0a0b0; margin: 12px 0 0 0; font-size: 13px;">
+          The API request failed after multiple retry attempts. This could be due to network issues or ESI being temporarily unavailable.
+        </p>
+      </div>
+      <div style="display: flex; gap: 12px; justify-content: flex-end;">
+        <button id="error-cancel-btn" style="
+          background: transparent;
+          border: 1px solid #5d5d74;
+          color: #e0e0e0;
+          padding: 8px 20px;
+          border-radius: 4px;
+          cursor: pointer;
+          font-size: 14px;
+        ">Cancel</button>
+        <button id="error-retry-btn" style="
+          background: #4a9eff;
+          border: none;
+          color: white;
+          padding: 8px 20px;
+          border-radius: 4px;
+          cursor: pointer;
+          font-size: 14px;
+          font-weight: 500;
+        ">Retry Now</button>
+      </div>
+    `;
+
+    overlay.appendChild(modal);
+    document.body.appendChild(overlay);
+
+    // Add button styles on hover
+    const retryBtn = modal.querySelector('#error-retry-btn');
+    const cancelBtn = modal.querySelector('#error-cancel-btn');
+
+    retryBtn.addEventListener('mouseenter', () => {
+      retryBtn.style.background = '#3a8eef';
+    });
+    retryBtn.addEventListener('mouseleave', () => {
+      retryBtn.style.background = '#4a9eff';
+    });
+
+    cancelBtn.addEventListener('mouseenter', () => {
+      cancelBtn.style.background = 'rgba(255, 255, 255, 0.05)';
+    });
+    cancelBtn.addEventListener('mouseleave', () => {
+      cancelBtn.style.background = 'transparent';
+    });
+
+    // Handle button clicks
+    retryBtn.addEventListener('click', () => {
+      document.body.removeChild(overlay);
+      resolve('retry');
+      if (retryCallback) retryCallback();
+    });
+
+    cancelBtn.addEventListener('click', () => {
+      document.body.removeChild(overlay);
+      resolve('cancel');
+    });
+
+    // Close on overlay click
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) {
+        document.body.removeChild(overlay);
+        resolve('cancel');
+      }
+    });
+  });
+}
+
 // Handle manual market data refresh
-async function handleMarketDataRefresh() {
+async function handleMarketDataRefresh(isRetry = false) {
   const refreshBtn = document.getElementById('refresh-market-data-btn');
   refreshBtn.disabled = true;
   refreshBtn.innerHTML = `
     <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
       <path d="M21 2v6h-6M3 12a9 9 0 0 1 15-6.7L21 8M3 22v-6h6M21 12a9 9 0 0 1-15 6.7L3 16"/>
     </svg>
-    Updating...
+    ${isRetry ? 'Retrying...' : 'Updating...'}
   `;
 
   // Show progress bar
@@ -692,7 +803,14 @@ async function handleMarketDataRefresh() {
       }, 2000);
     } else {
       hideProgressBar();
-      alert(result.error || 'Failed to update market data');
+
+      // Check if it's a network/timeout error and offer retry
+      if (result.error && (result.error.includes('fetch failed') || result.error.includes('timeout') || result.error.includes('Failed after'))) {
+        await showErrorWithRetry(result.error, () => handleMarketDataRefresh(true));
+      } else {
+        alert(result.error || 'Failed to update market data');
+      }
+
       refreshBtn.disabled = false;
       refreshBtn.innerHTML = `
         <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -706,7 +824,12 @@ async function handleMarketDataRefresh() {
     console.error('Error refreshing market data:', error);
     hideProgressBar();
     window.electronAPI.market.removeFetchProgressListener();
-    alert('Failed to update market data: ' + error.message);
+
+    // Offer retry for network-related errors
+    await showErrorWithRetry(
+      error.message || 'An unexpected error occurred while updating market data.',
+      () => handleMarketDataRefresh(true)
+    );
 
     refreshBtn.disabled = false;
     refreshBtn.innerHTML = `
@@ -720,14 +843,14 @@ async function handleMarketDataRefresh() {
 }
 
 // Handle manual history data refresh
-async function handleHistoryDataRefresh() {
+async function handleHistoryDataRefresh(isRetry = false) {
   const refreshBtn = document.getElementById('refresh-history-data-btn');
   refreshBtn.disabled = true;
   refreshBtn.innerHTML = `
     <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
       <path d="M21 2v6h-6M3 12a9 9 0 0 1 15-6.7L21 8M3 22v-6h6M21 12a9 9 0 0 1-15 6.7L3 16"/>
     </svg>
-    Updating...
+    ${isRetry ? 'Retrying...' : 'Updating...'}
   `;
 
   // Show progress bar
@@ -772,7 +895,14 @@ async function handleHistoryDataRefresh() {
       }, 2000);
     } else {
       hideHistoryProgressBar();
-      alert(result.error || 'Failed to update history data');
+
+      // Check if it's a network/timeout error and offer retry
+      if (result.error && (result.error.includes('fetch failed') || result.error.includes('timeout') || result.error.includes('Failed after'))) {
+        await showErrorWithRetry(result.error, () => handleHistoryDataRefresh(true));
+      } else {
+        alert(result.error || 'Failed to update history data');
+      }
+
       refreshBtn.disabled = false;
       refreshBtn.innerHTML = `
         <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -785,7 +915,12 @@ async function handleHistoryDataRefresh() {
     console.error('Error refreshing history data:', error);
     hideHistoryProgressBar();
     window.electronAPI.market.removeHistoryProgressListener();
-    alert('Failed to update history data: ' + error.message);
+
+    // Offer retry for network-related errors
+    await showErrorWithRetry(
+      error.message || 'An unexpected error occurred while updating history data.',
+      () => handleHistoryDataRefresh(true)
+    );
 
     refreshBtn.disabled = false;
     refreshBtn.innerHTML = `

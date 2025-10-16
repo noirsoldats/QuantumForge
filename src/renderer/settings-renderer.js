@@ -37,27 +37,6 @@ function populateSettings() {
   if (desktopNotifications) {
     desktopNotifications.checked = currentSettings.general?.desktopNotifications !== false;
   }
-
-  // Market settings
-  const tradeHubSelect = document.getElementById('trade-hub-select');
-  if (tradeHubSelect) {
-    tradeHubSelect.value = currentSettings.market?.defaultTradeHub || 'jita';
-  }
-
-  const autoUpdateMarket = document.getElementById('auto-update-market');
-  if (autoUpdateMarket) {
-    autoUpdateMarket.checked = currentSettings.market?.autoUpdateMarket !== false;
-  }
-
-  const updateInterval = document.getElementById('update-interval');
-  if (updateInterval) {
-    updateInterval.value = currentSettings.market?.updateInterval || 30;
-  }
-
-  const priceTypeSelect = document.getElementById('price-type-select');
-  if (priceTypeSelect) {
-    priceTypeSelect.value = currentSettings.market?.priceType || 'sell';
-  }
 }
 
 // Save a specific setting
@@ -141,45 +120,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     desktopNotifications.addEventListener('change', (e) => {
       console.log('Desktop notifications:', e.target.checked);
       saveSetting('general', 'desktopNotifications', e.target.checked);
-    });
-  }
-
-  // Trade hub selection
-  const tradeHubSelect = document.getElementById('trade-hub-select');
-  if (tradeHubSelect) {
-    tradeHubSelect.addEventListener('change', (e) => {
-      console.log('Trade hub changed to:', e.target.value);
-      saveSetting('market', 'defaultTradeHub', e.target.value);
-    });
-  }
-
-  // Auto-update market
-  const autoUpdateMarket = document.getElementById('auto-update-market');
-  if (autoUpdateMarket) {
-    autoUpdateMarket.addEventListener('change', (e) => {
-      console.log('Auto-update market:', e.target.checked);
-      saveSetting('market', 'autoUpdateMarket', e.target.checked);
-    });
-  }
-
-  // Update interval
-  const updateInterval = document.getElementById('update-interval');
-  if (updateInterval) {
-    updateInterval.addEventListener('change', (e) => {
-      console.log('Update interval changed to:', e.target.value);
-      const value = parseInt(e.target.value, 10);
-      if (value >= 5 && value <= 1440) {
-        saveSetting('market', 'updateInterval', value);
-      }
-    });
-  }
-
-  // Price type selection
-  const priceTypeSelect = document.getElementById('price-type-select');
-  if (priceTypeSelect) {
-    priceTypeSelect.addEventListener('change', (e) => {
-      console.log('Price type changed to:', e.target.value);
-      saveSetting('market', 'priceType', e.target.value);
     });
   }
 
