@@ -29,31 +29,50 @@ async function fetchCorporationBlueprints(characterId, corporationId) {
       return [];
     }
 
-    // Fetch corporation blueprints from ESI
-    const response = await fetch(
-      `https://esi.evetech.net/latest/corporations/${corporationId}/blueprints/?datasource=tranquility`,
-      {
-        headers: {
-          'Authorization': `Bearer ${character.accessToken}`,
-          'User-Agent': 'Quantum Forge Industry Tool',
-        },
-      }
-    );
+    // Fetch all pages of corporation blueprints from ESI
+    let allBlueprintsData = [];
+    let page = 1;
+    let totalPages = 1;
 
-    if (!response.ok) {
-      // If we get a 403, the character doesn't have permission
-      if (response.status === 403) {
-        console.log('Character does not have permission to view corporation blueprints');
-        return [];
-      }
-      const errorText = await response.text();
-      throw new Error(`Failed to fetch corporation blueprints: ${response.status} ${errorText}`);
-    }
+    do {
+      console.log(`Fetching corporation blueprints page ${page} of ${totalPages}...`);
 
-    const blueprintsData = await response.json();
+      const response = await fetch(
+        `https://esi.evetech.net/latest/corporations/${corporationId}/blueprints/?datasource=tranquility&page=${page}`,
+        {
+          headers: {
+            'Authorization': `Bearer ${character.accessToken}`,
+            'User-Agent': 'Quantum Forge Industry Tool',
+          },
+        }
+      );
+
+      if (!response.ok) {
+        // If we get a 403, the character doesn't have permission
+        if (response.status === 403) {
+          console.log('Character does not have permission to view corporation blueprints');
+          return [];
+        }
+        const errorText = await response.text();
+        throw new Error(`Failed to fetch corporation blueprints: ${response.status} ${errorText}`);
+      }
+
+      const blueprintsData = await response.json();
+      allBlueprintsData = allBlueprintsData.concat(blueprintsData);
+
+      // Check if there are more pages
+      const xPagesHeader = response.headers.get('X-Pages');
+      if (xPagesHeader) {
+        totalPages = parseInt(xPagesHeader, 10);
+      }
+
+      page++;
+    } while (page <= totalPages);
+
+    console.log(`Fetched ${allBlueprintsData.length} corporation blueprints across ${totalPages} page(s)`);
 
     // Transform blueprints data
-    const blueprints = blueprintsData.map(bp => {
+    const blueprints = allBlueprintsData.map(bp => {
       return {
         itemId: bp.item_id,
         typeId: bp.type_id,
@@ -89,48 +108,68 @@ async function fetchCharacterBlueprints(characterId) {
   try {
     let character = getCharacter(characterId);
 
-    if (!character) {
-      throw new Error('Character not found');
-    }
-
-    // Check if token is expired and refresh if needed
-    if (isTokenExpired(character.expiresAt)) {
-      console.log('Token expired, refreshing...');
-      const newTokens = await refreshAccessToken(character.refreshToken);
-      updateCharacterTokens(characterId, newTokens);
-      character = getCharacter(characterId);
-    }
-
-    // Fetch character blueprints from ESI
-    const response = await fetch(
-      `https://esi.evetech.net/latest/characters/${characterId}/blueprints/?datasource=tranquility`,
-      {
-        headers: {
-          'Authorization': `Bearer ${character.accessToken}`,
-          'User-Agent': 'Quantum Forge Industry Tool',
-        },
+      if (!character) {
+          throw new Error('Character not found');
       }
-    );
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`Failed to fetch blueprints: ${response.status} ${errorText}`);
-    }
+      // Check if token is expired and refresh if needed
+      if (isTokenExpired(character.expiresAt)) {
+          console.log('Token expired, refreshing...');
+          const newTokens = await refreshAccessToken(character.refreshToken);
+          updateCharacterTokens(characterId, newTokens);
+          character = getCharacter(characterId);
+      }
 
-    const blueprintsData = await response.json();
-
-    // Get cache expiry from response headers
-    const expiresHeader = response.headers.get('expires');
+    // Fetch all pages of character blueprints from ESI
+    let allBlueprintsData = [];
+    let page = 1;
+    let totalPages = 1;
     let cacheExpiresAt = null;
 
-    if (expiresHeader) {
-      const expiresDate = new Date(expiresHeader);
-      cacheExpiresAt = expiresDate.getTime();
-      console.log('ESI character blueprints cache expires at:', expiresDate.toISOString());
-    }
+    do {
+      console.log(`Fetching character blueprints page ${page} of ${totalPages}...`);
+
+      const response = await fetch(
+        `https://esi.evetech.net/latest/characters/${characterId}/blueprints/?datasource=tranquility&page=${page}`,
+        {
+          headers: {
+            'Authorization': `Bearer ${character.accessToken}`,
+            'User-Agent': 'Quantum Forge Industry Tool',
+          },
+        }
+      );
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Failed to fetch blueprints: ${response.status} ${errorText}`);
+      }
+
+      const blueprintsData = await response.json();
+      allBlueprintsData = allBlueprintsData.concat(blueprintsData);
+
+      // Get cache expiry from response headers (from first page)
+      if (page === 1) {
+        const expiresHeader = response.headers.get('expires');
+        if (expiresHeader) {
+          const expiresDate = new Date(expiresHeader);
+          cacheExpiresAt = expiresDate.getTime();
+          console.log('ESI character blueprints cache expires at:', expiresDate.toISOString());
+        }
+      }
+
+      // Check if there are more pages
+      const xPagesHeader = response.headers.get('X-Pages');
+      if (xPagesHeader) {
+        totalPages = parseInt(xPagesHeader, 10);
+      }
+
+      page++;
+    } while (page <= totalPages);
+
+    console.log(`Fetched ${allBlueprintsData.length} character blueprints across ${totalPages} page(s)`);
 
     // Transform character blueprints data
-    const characterBlueprints = blueprintsData.map(bp => {
+    const characterBlueprints = allBlueprintsData.map(bp => {
       return {
         itemId: bp.item_id,
         typeId: bp.type_id,

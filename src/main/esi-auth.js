@@ -4,7 +4,7 @@ const { URL } = require('url');
 
 // ESI OAuth Configuration
 const ESI_CONFIG = {
-  clientId: 'be9837bdb49f4a708d81652e216a7a11', // TODO: Replace with your ESI application client ID
+  clientId: 'be9837bdb49f4a708d81652e216a7a11',
   callbackUrl: 'http://localhost:3000/callback',
   authorizationUrl: 'https://login.eveonline.com/v2/oauth/authorize',
   tokenUrl: 'https://login.eveonline.com/v2/oauth/token',

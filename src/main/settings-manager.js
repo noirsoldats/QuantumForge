@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const { app } = require('electron');
+const {isTokenExpired, refreshAccessToken} = require("./esi-auth");
 
 // Get the user data directory
 const userDataPath = app.getPath('userData');
