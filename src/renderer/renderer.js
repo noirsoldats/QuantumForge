@@ -34,6 +34,15 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
   }
 
+  // Facilities card handler
+  const facilitiesCard = document.getElementById('facilities-card');
+  if (facilitiesCard) {
+    facilitiesCard.addEventListener('click', () => {
+      console.log('Opening Facilities Manager');
+      window.location.href = 'facilities.html';
+    });
+  }
+
   // Load default character avatar
   await loadDefaultCharacterAvatar();
 

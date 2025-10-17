@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'">
+  <title>Facilities Manager - Quantum Forge</title>
+  <link rel="stylesheet" href="facilities.css">
+</head>
+<body>
+  <div id="facilities-app">
+    <div class="facilities-container">
+      <!-- Header -->
+      <header class="facilities-header">
+        <button class="back-button" id="back-btn" title="Back to Home">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="19" y1="12" x2="5" y2="12"></line>
+            <polyline points="12 19 5 12 12 5"></polyline>
+          </svg>
+        </button>
+        <div class="header-content">
+          <h1>Facilities Manager</h1>
+          <p>Manage your manufacturing facilities and structures</p>
+        </div>
+      </header>
+
+      <!-- Add Facility Section -->
+      <section class="add-facility-section">
+        <h2 id="form-section-title">Add Manufacturing Facility</h2>
+
+        <form id="add-facility-form" class="facility-form">
+          <!-- Facility Usage -->
+          <div class="form-group">
+            <label for="facility-usage">Facility Usage</label>
+            <select id="facility-usage" required>
+              <option value="">Select Usage</option>
+              <option value="default">Default</option>
+              <option value="components">Components</option>
+              <option value="subsystems">Subsystems</option>
+              <option value="t3-ships">T3 Ships</option>
+              <option value="capitals">Capitals</option>
+              <option value="super-capitals">Super Capitals</option>
+              <option value="t2-invention">T2 Invention</option>
+              <option value="t3-invention">T3 Invention</option>
+              <option value="copy">Copy</option>
+              <option value="boosters">Boosters</option>
+              <option value="reactions">Reactions</option>
+            </select>
+          </div>
+
+          <!-- Empty space -->
+          <div class="form-group"></div>
+
+          <!-- Name Field -->
+          <div class="form-group">
+            <label for="facility-name">Facility Name</label>
+            <input type="text" id="facility-name" placeholder="Enter facility name" required>
+          </div>
+
+          <!-- Facility Type -->
+          <div class="form-group">
+            <label for="facility-type">Facility Type</label>
+            <select id="facility-type" required>
+              <option value="">Select Type</option>
+              <option value="station">NPC Station</option>
+              <option value="structure">Player Structure</option>
+            </select>
+          </div>
+
+          <!-- Location: Region -->
+          <div class="form-group">
+            <label for="facility-region">Region</label>
+            <select id="facility-region" required>
+              <option value="">Select Region</option>
+            </select>
+          </div>
+
+          <!-- Location: System -->
+          <div class="form-group">
+            <label for="facility-system">Solar System</label>
+            <select id="facility-system" required disabled>
+              <option value="">Select System</option>
+            </select>
+          </div>
+
+          <!-- Structure Type (only for structures) -->
+          <div class="form-group" id="structure-type-group" style="display: none;">
+            <label for="structure-type">Structure Type</label>
+            <select id="structure-type">
+              <option value="">Select Structure Type</option>
+            </select>
+          </div>
+
+          <!-- Structure Rigs (only for structures) -->
+          <div class="form-group" id="rig1-group" style="display: none;">
+            <label for="rig-1">Rig Slot 1 (Optional)</label>
+            <select id="rig-1">
+              <option value="">No Rig</option>
+            </select>
+          </div>
+
+          <div class="form-group" id="rig2-group" style="display: none;">
+            <label for="rig-2">Rig Slot 2 (Optional)</label>
+            <select id="rig-2">
+              <option value="">No Rig</option>
+            </select>
+          </div>
+
+          <div class="form-group" id="rig3-group" style="display: none;">
+            <label for="rig-3">Rig Slot 3 (Optional)</label>
+            <select id="rig-3">
+              <option value="">No Rig</option>
+            </select>
+          </div>
+
+          <!-- Info Display -->
+          <div class="facility-info" id="facility-info">
+            <!-- System Cost Index -->
+            <div class="info-section" id="cost-index-section" style="display: none;">
+              <h3>System Cost Index</h3>
+              <div class="cost-indices" id="cost-indices-display">
+                <p class="loading">Select a system to view cost indices</p>
+              </div>
+            </div>
+
+            <!-- Structure Bonuses -->
+            <div class="info-section" id="structure-bonuses-section" style="display: none;">
+              <h3>Structure Bonuses</h3>
+              <div class="bonuses-grid" id="structure-bonuses-display">
+                <p class="loading">Select a structure type to view bonuses</p>
+              </div>
+            </div>
+
+            <!-- Rig Effects -->
+            <div class="info-section" id="rig-effects-section" style="display: none;">
+              <h3>Rig Effects</h3>
+              <div class="rig-effects" id="rig-effects-display">
+                <p class="loading">Select rigs to view effects</p>
+              </div>
+            </div>
+          </div>
+
+          <!-- Submit Button -->
+          <div class="form-actions">
+            <button type="submit" class="primary-button" id="submit-btn">Add Facility</button>
+            <button type="button" class="secondary-button" id="cancel-btn">Clear Form</button>
+          </div>
+        </form>
+      </section>
+
+      <!-- Facilities List Section -->
+      <section class="facilities-list-section">
+        <h2>Manufacturing Facilities</h2>
+        <div id="facilities-list" class="facilities-list">
+          <div class="empty-state">
+            <svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="4" y="2" width="16" height="20" rx="2" ry="2"></rect>
+              <path d="M9 22v-4h6v4"></path>
+              <path d="M8 6h.01"></path>
+              <path d="M16 6h.01"></path>
+              <path d="M12 6h.01"></path>
+            </svg>
+            <p>No facilities added yet</p>
+            <small>Add your first manufacturing facility above</small>
+          </div>
+        </div>
+      </section>
+    </div>
+  </div>
+  <script src="../src/renderer/facilities-renderer.js"></script>
+</body>
+</html>

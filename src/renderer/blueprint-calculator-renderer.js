@@ -81,6 +81,12 @@ function setupEventListeners() {
     calculateBtn.addEventListener('click', handleCalculate);
   }
 
+  // Update Data button
+  const updateDataBtn = document.getElementById('update-data-btn');
+  if (updateDataBtn) {
+    updateDataBtn.addEventListener('click', handleUpdateData);
+  }
+
   // ME and Runs inputs - recalculate on change
   const meInput = document.getElementById('me-level');
   const runsInput = document.getElementById('runs');
@@ -269,6 +275,81 @@ async function handleCalculate() {
     console.error('Error calculating materials:', error);
     hideLoading();
     alert('Failed to calculate materials: ' + error.message);
+  }
+}
+
+// Handle update data button
+async function handleUpdateData() {
+  const updateBtn = document.getElementById('update-data-btn');
+
+  if (!updateBtn) {
+    return;
+  }
+
+  // Disable button and show loading state
+  updateBtn.disabled = true;
+  const originalText = updateBtn.innerHTML;
+  updateBtn.innerHTML = `
+    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="spinning">
+      <polyline points="23 4 23 10 17 10"></polyline>
+      <polyline points="1 20 1 14 7 14"></polyline>
+      <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+    </svg>
+    Updating...
+  `;
+
+  try {
+    console.log('Starting data update...');
+
+    // Get market settings to get the region ID
+    const marketSettings = await window.electronAPI.market.getSettings();
+    const regionId = marketSettings.regionId || 10000002; // Default to The Forge (Jita)
+    console.log('Using region ID:', regionId);
+
+    // Update market prices
+    console.log('Fetching market prices...');
+    await window.electronAPI.market.manualRefresh(regionId);
+    console.log('Market prices updated successfully');
+
+    // Update cost indices
+    console.log('Fetching cost indices...');
+    await window.electronAPI.costIndices.fetch();
+    console.log('Cost indices updated successfully');
+
+    // Show success message
+    updateBtn.innerHTML = `
+      <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <polyline points="20 6 9 17 4 12"></polyline>
+      </svg>
+      Updated!
+    `;
+
+    // Reset button after 2 seconds
+    setTimeout(() => {
+      updateBtn.innerHTML = originalText;
+      updateBtn.disabled = false;
+    }, 2000);
+
+  } catch (error) {
+    console.error('Error updating data:', error);
+
+    // Show error state
+    updateBtn.innerHTML = `
+      <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <circle cx="12" cy="12" r="10"></circle>
+        <line x1="15" y1="9" x2="9" y2="15"></line>
+        <line x1="9" y1="9" x2="15" y2="15"></line>
+      </svg>
+      Update Failed
+    `;
+
+    // Reset button after 3 seconds
+    setTimeout(() => {
+      updateBtn.innerHTML = originalText;
+      updateBtn.disabled = false;
+    }, 3000);
+
+    alert('Failed to update data: ' + error.message);
   }
 }
 

@@ -771,6 +771,150 @@ function updateMarketSettings(updates) {
   return updateSettings('market', updates);
 }
 
+// Manufacturing Facilities Management
+function getManufacturingFacilities() {
+  const settings = loadSettings();
+  return settings.manufacturing_facilities || [];
+}
+
+function addManufacturingFacility(facility) {
+  const settings = loadSettings();
+  if (!settings.manufacturing_facilities) {
+    settings.manufacturing_facilities = [];
+  }
+
+  // Validate required fields
+  if (!facility.name || !facility.name.trim()) {
+    throw new Error('Facility name is required.');
+  }
+
+  if (!facility.usage) {
+    throw new Error('Facility usage is required.');
+  }
+
+  if (!facility.facilityType) {
+    throw new Error('Facility type is required.');
+  }
+
+  if (!facility.regionId) {
+    throw new Error('Region is required.');
+  }
+
+  if (!facility.systemId) {
+    throw new Error('Solar System is required.');
+  }
+
+  // Validate structure-specific fields
+  if (facility.facilityType === 'structure' && !facility.structureTypeId) {
+    throw new Error('Structure type is required for player structures.');
+  }
+
+  // Check for duplicate facility name (case-insensitive)
+  const trimmedName = facility.name.trim();
+  const existingFacility = settings.manufacturing_facilities.find(
+    f => f.name.toLowerCase() === trimmedName.toLowerCase()
+  );
+  if (existingFacility) {
+    throw new Error(`A facility with the name "${trimmedName}" already exists. Please choose a different name.`);
+  }
+
+  // Check if trying to add a Default facility when one already exists
+  if (facility.usage === 'default') {
+    const existingDefault = settings.manufacturing_facilities.find(f => f.usage === 'default');
+    if (existingDefault) {
+      throw new Error(`Only one Default facility is allowed. "${existingDefault.name}" is already set as the Default facility.`);
+    }
+  }
+
+  // Generate unique ID
+  const id = Date.now().toString() + Math.random().toString(36).substr(2, 9);
+  const newFacility = {
+    id,
+    ...facility,
+    name: trimmedName, // Use trimmed name
+    createdAt: Date.now()
+  };
+
+  settings.manufacturing_facilities.push(newFacility);
+  saveSettings(settings);
+  return newFacility;
+}
+
+function updateManufacturingFacility(id, updates) {
+  const settings = loadSettings();
+  if (!settings.manufacturing_facilities) {
+    return false;
+  }
+
+  const index = settings.manufacturing_facilities.findIndex(f => f.id === id);
+  if (index === -1) {
+    return false;
+  }
+
+  // Check for duplicate facility name if name is being updated (case-insensitive)
+  if (updates.name) {
+    const trimmedName = updates.name.trim();
+    if (!trimmedName) {
+      throw new Error('Facility name cannot be empty.');
+    }
+    const existingFacility = settings.manufacturing_facilities.find(
+      f => f.name.toLowerCase() === trimmedName.toLowerCase() && f.id !== id
+    );
+    if (existingFacility) {
+      throw new Error(`A facility with the name "${trimmedName}" already exists. Please choose a different name.`);
+    }
+    updates.name = trimmedName; // Use trimmed name
+  }
+
+  // Validate structure-specific fields if facilityType is being updated
+  if (updates.facilityType === 'structure' && !updates.structureTypeId && !settings.manufacturing_facilities[index].structureTypeId) {
+    throw new Error('Structure type is required for player structures.');
+  }
+
+  // Check if trying to set usage to Default when another facility is already Default
+  if (updates.usage === 'default') {
+    const existingDefault = settings.manufacturing_facilities.find(f => f.usage === 'default' && f.id !== id);
+    if (existingDefault) {
+      throw new Error(`Only one Default facility is allowed. "${existingDefault.name}" is already set as the Default facility.`);
+    }
+  }
+
+  settings.manufacturing_facilities[index] = {
+    ...settings.manufacturing_facilities[index],
+    ...updates,
+    updatedAt: Date.now()
+  };
+
+  saveSettings(settings);
+  return settings.manufacturing_facilities[index];
+}
+
+function removeManufacturingFacility(id) {
+  const settings = loadSettings();
+  if (!settings.manufacturing_facilities) {
+    return false;
+  }
+
+  const initialLength = settings.manufacturing_facilities.length;
+  settings.manufacturing_facilities = settings.manufacturing_facilities.filter(f => f.id !== id);
+
+  if (settings.manufacturing_facilities.length === initialLength) {
+    return false;
+  }
+
+  saveSettings(settings);
+  return true;
+}
+
+function getManufacturingFacility(id) {
+  const settings = loadSettings();
+  if (!settings.manufacturing_facilities) {
+    return null;
+  }
+
+  return settings.manufacturing_facilities.find(f => f.id === id) || null;
+}
+
 module.exports = {
   loadSettings,
   saveSettings,
@@ -801,4 +945,9 @@ module.exports = {
   getBlueprintsCacheStatus,
   getMarketSettings,
   updateMarketSettings,
+  getManufacturingFacilities,
+  addManufacturingFacility,
+  updateManufacturingFacility,
+  removeManufacturingFacility,
+  getManufacturingFacility,
 };

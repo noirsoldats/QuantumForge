@@ -123,4 +123,29 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getTypeName: (typeId) => ipcRenderer.invoke('calculator:getTypeName', typeId),
     getOwnedBlueprintME: (characterId, blueprintTypeId) => ipcRenderer.invoke('calculator:getOwnedBlueprintME', characterId, blueprintTypeId),
   },
+
+  // Cost Indices API
+  costIndices: {
+    fetch: () => ipcRenderer.invoke('costIndices:fetch'),
+    getCostIndices: (solarSystemId) => ipcRenderer.invoke('costIndices:getCostIndices', solarSystemId),
+    getAll: () => ipcRenderer.invoke('costIndices:getAll'),
+    getLastFetchTime: () => ipcRenderer.invoke('costIndices:getLastFetchTime'),
+    getSystemCount: () => ipcRenderer.invoke('costIndices:getSystemCount'),
+  },
+
+  // Facilities API
+  facilities: {
+    getFacilities: () => ipcRenderer.invoke('facilities:getFacilities'),
+    addFacility: (facility) => ipcRenderer.invoke('facilities:addFacility', facility),
+    updateFacility: (id, updates) => ipcRenderer.invoke('facilities:updateFacility', id, updates),
+    removeFacility: (id) => ipcRenderer.invoke('facilities:removeFacility', id),
+    getFacility: (id) => ipcRenderer.invoke('facilities:getFacility', id),
+    getAllRegions: () => ipcRenderer.invoke('facilities:getAllRegions'),
+    getSystemsByRegion: (regionId) => ipcRenderer.invoke('facilities:getSystemsByRegion', regionId),
+    getCostIndices: (systemId) => ipcRenderer.invoke('facilities:getCostIndices', systemId),
+    getStructureTypes: () => ipcRenderer.invoke('facilities:getStructureTypes'),
+    getStructureRigs: () => ipcRenderer.invoke('facilities:getStructureRigs'),
+    getStructureBonuses: (typeId) => ipcRenderer.invoke('facilities:getStructureBonuses', typeId),
+    getRigEffects: (typeId) => ipcRenderer.invoke('facilities:getRigEffects', typeId),
+  },
 });

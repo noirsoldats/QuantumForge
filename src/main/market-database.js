@@ -139,6 +139,21 @@ function createTables() {
     );
   `);
 
+  // Industry cost indices (solar system industry cost modifiers)
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS cost_indices (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      solar_system_id INTEGER NOT NULL,
+      activity TEXT NOT NULL,
+      cost_index REAL NOT NULL,
+      fetched_at INTEGER NOT NULL,
+      UNIQUE(solar_system_id, activity)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_cost_indices_system ON cost_indices(solar_system_id);
+    CREATE INDEX IF NOT EXISTS idx_cost_indices_fetched ON cost_indices(fetched_at);
+  `);
+
   // Seed default trade hubs
   seedDefaultLocations();
 }

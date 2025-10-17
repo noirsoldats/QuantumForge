@@ -89,17 +89,60 @@ function getTypeName(typeId) {
 }
 
 /**
- * Calculate material quantity with ME (Material Efficiency) bonus
+ * Get the default manufacturing facility and its bonuses
+ * @returns {Object|null} Default facility with bonuses or null
+ */
+function getDefaultFacility() {
+  try {
+    const { getManufacturingFacilities } = require('./settings-manager');
+    const facilities = getManufacturingFacilities();
+
+    // Find the facility marked as default
+    const defaultFacility = facilities.find(f => f.usage === 'default');
+
+    if (!defaultFacility) {
+      return null;
+    }
+
+    // Return facility with its structure bonus
+    // Structure ME bonus is typically 1% for all Upwell structures
+    return {
+      ...defaultFacility,
+      structureMEBonus: 1.0 // 1% material reduction from structure
+    };
+  } catch (error) {
+    console.error('Error getting default facility:', error);
+    return null;
+  }
+}
+
+/**
+ * Calculate material quantity with ME (Material Efficiency) bonus and structure bonus
  * @param {number} baseQuantity - Base material quantity
  * @param {number} meLevel - ME level (0-10)
  * @param {number} runs - Number of production runs
  * @returns {number} Adjusted quantity
  */
 function calculateMaterialQuantity(baseQuantity, meLevel, runs) {
+  // Step 1: Apply ME bonus from blueprint
   // ME formula: quantity = max(runs, runs * baseQuantity * (1 - ME/100))
-  // Round up to nearest integer
-  const reduction = meLevel / 100;
-  const adjustedQuantity = Math.max(runs, Math.ceil(runs * baseQuantity * (1 - reduction)));
+  const meReduction = meLevel / 100;
+  const afterME = runs * baseQuantity * (1 - meReduction);
+
+  // Step 2: Apply structure bonus (in series after ME)
+  const defaultFacility = getDefaultFacility();
+  let finalQuantity = afterME;
+
+  if (defaultFacility && defaultFacility.facilityType === 'structure') {
+    // Structure provides 1% material reduction (applied after ME)
+    const structureReduction = defaultFacility.structureMEBonus / 100;
+    finalQuantity = afterME * (1 - structureReduction);
+  }
+
+  // Final calculation: max(runs, ceil(finalQuantity))
+  // The result cannot be less than the number of runs
+  const adjustedQuantity = Math.max(runs, Math.ceil(finalQuantity));
+
   return adjustedQuantity;
 }
 
@@ -353,5 +396,6 @@ module.exports = {
   getBlueprintForProduct,
   getOwnedBlueprintME,
   calculateBlueprintMaterials,
-  searchBlueprints
+  searchBlueprints,
+  getDefaultFacility
 };

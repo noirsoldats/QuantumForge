@@ -583,6 +583,257 @@ async function getItemDetails(typeID) {
   }
 }
 
+/**
+ * Get all structure types (Upwell Structures)
+ * @returns {Promise<Array>} Array of structure types
+ */
+async function getStructureTypes() {
+  try {
+    const db = await getDatabase();
+
+    return new Promise((resolve, reject) => {
+      // Query for only Engineering Complexes (used for manufacturing)
+      // Citadels and Refineries cannot be used for manufacturing
+      const query = `
+        SELECT DISTINCT t.typeID, t.typeName
+        FROM invTypes t
+        WHERE t.typeName IN (
+          'Raitaru',
+          'Azbel',
+          'Sotiyo'
+        )
+        AND t.published = 1
+        ORDER BY
+          CASE t.typeName
+            WHEN 'Raitaru' THEN 1
+            WHEN 'Azbel' THEN 2
+            WHEN 'Sotiyo' THEN 3
+          END
+      `;
+
+      db.all(query, [], (err, rows) => {
+        if (err) {
+          console.error('Error querying structure types:', err);
+          reject(err);
+        } else {
+          console.log(`Found ${rows.length} Engineering Complex structure types`);
+          resolve(rows.map(row => {
+            // All returned structures are Engineering Complexes
+            // Only categorize by size
+            let size = '';
+
+            if (row.typeName === 'Raitaru') {
+              size = 'Medium';
+            } else if (row.typeName === 'Azbel') {
+              size = 'Large';
+            } else if (row.typeName === 'Sotiyo') {
+              size = 'X-Large';
+            }
+
+            return {
+              typeId: row.typeID,
+              typeName: row.typeName,
+              category: 'Engineering Complex',
+              size: size
+            };
+          }));
+        }
+      });
+    });
+  } catch (error) {
+    console.error('Error getting structure types:', error);
+    return [];
+  }
+}
+
+/**
+ * Get structure rigs (Engineering Rigs)
+ * @returns {Promise<Array>} Array of structure rigs
+ */
+async function getStructureRigs() {
+  try {
+    const db = await getDatabase();
+
+    return new Promise((resolve, reject) => {
+      // Query for structure rigs - specifically Engineering Rigs for manufacturing
+      const query = `
+        SELECT DISTINCT t.typeID, t.typeName, g.groupName
+        FROM invTypes t
+        JOIN invGroups g ON t.groupID = g.groupID
+        WHERE (
+          g.groupName LIKE '%Structure%Rig%'
+          OR g.groupName LIKE '%Engineering Rig%'
+          OR (g.categoryID = 66 AND g.groupName LIKE '%Rig%')
+        )
+        AND t.published = 1
+        AND t.typeName NOT LIKE '%Blueprint%'
+        ORDER BY t.typeName
+      `;
+
+      db.all(query, [], (err, rows) => {
+        if (err) {
+          console.error('Error querying structure rigs:', err);
+          reject(err);
+        } else {
+          console.log(`Found ${rows.length} structure rigs`);
+          resolve(rows.map(row => {
+            // Determine rig size from group name
+            // Structure rig sizes in SDE: Medium=2, Large=3, X-Large=4
+            // Structure Engineering Rig M = size 2 (for Medium structures)
+            // Structure Engineering Rig L = size 3 (for Large structures)
+            // Structure Engineering Rig XL = size 4 (for X-Large structures)
+            let rigSize = 0;
+            if (row.groupName.includes(' M ') || row.groupName.includes('Rig M -')) {
+              rigSize = 2;
+            } else if (row.groupName.includes(' L ') || row.groupName.includes('Rig L -')) {
+              rigSize = 3;
+            } else if (row.groupName.includes(' XL ') || row.groupName.includes('Rig XL -')) {
+              rigSize = 4;
+            }
+
+            return {
+              typeId: row.typeID,
+              typeName: row.typeName,
+              groupName: row.groupName,
+              rigSize: rigSize
+            };
+          }));
+        }
+      });
+    });
+  } catch (error) {
+    console.error('Error getting structure rigs:', error);
+    return [];
+  }
+}
+
+/**
+ * Get structure bonuses - hardcoded for Upwell structures
+ * @param {number} typeId - Structure type ID
+ * @returns {Promise<Object>} Structure bonuses
+ */
+async function getStructureBonuses(typeId) {
+  try {
+    const db = await getDatabase();
+
+    // First get the structure name and rig size
+    const structure = await new Promise((resolve, reject) => {
+      db.get(
+        'SELECT typeName FROM invTypes WHERE typeID = ?',
+        [typeId],
+        (err, row) => {
+          if (err) {
+            reject(err);
+          } else {
+            resolve(row);
+          }
+        }
+      );
+    });
+
+    if (!structure) {
+      return {};
+    }
+
+    // Get rig size from dgmTypeAttributes
+    const rigSize = await new Promise((resolve, reject) => {
+      db.get(
+        `SELECT valueInt, valueFloat
+         FROM dgmTypeAttributes
+         WHERE typeID = ? AND attributeID = 1547`,
+        [typeId],
+        (err, row) => {
+          if (err) {
+            reject(err);
+          } else {
+            resolve(row ? (row.valueInt || row.valueFloat) : null);
+          }
+        }
+      );
+    });
+
+    // Hardcoded bonuses for Upwell Engineering Complexes
+    // Different cost reduction and time efficiency based on structure size
+    const structureName = structure.typeName;
+    let costReduction = 0.0;
+    let timeEfficiency = 15.0;
+
+    // Engineering Complex bonuses by size
+    if (structureName === 'Raitaru') {
+      costReduction = 3.0;   // Medium: 3% job cost reduction
+      timeEfficiency = 15.0; // Medium: 15% time reduction
+    } else if (structureName === 'Azbel') {
+      costReduction = 4.0;   // Large: 4% job cost reduction
+      timeEfficiency = 20.0; // Large: 20% time reduction
+    } else if (structureName === 'Sotiyo') {
+      costReduction = 5.0;   // X-Large: 5% job cost reduction
+      timeEfficiency = 30.0; // X-Large: 30% time reduction
+    }
+
+    const bonuses = {
+      materialEfficiency: 1.0,  // 1% material reduction (all structures)
+      timeEfficiency: timeEfficiency,
+      costReduction: costReduction,
+      rigSize: rigSize || 0,
+      structureName: structureName
+    };
+
+    return bonuses;
+  } catch (error) {
+    console.error('Error getting structure bonuses:', error);
+    return {};
+  }
+}
+
+/**
+ * Get rig effects from dgm attributes
+ * @param {number} typeId - Rig type ID
+ * @returns {Promise<Array>} Rig effects
+ */
+async function getRigEffects(typeId) {
+  try {
+    const db = await getDatabase();
+
+    return new Promise((resolve, reject) => {
+      const query = `
+        SELECT
+          dat.attributeID,
+          dat.attributeName,
+          dat.displayName,
+          dta.valueInt,
+          dta.valueFloat
+        FROM dgmTypeAttributes dta
+        JOIN dgmAttributeTypes dat ON dta.attributeID = dat.attributeID
+        WHERE dta.typeID = ?
+        AND (
+          dat.displayName LIKE '%Bonus%'
+          OR dat.displayName LIKE '%bonus%'
+          OR dat.displayName LIKE 'Bonus to%'
+        )
+        ORDER BY dat.displayName
+      `;
+
+      db.all(query, [typeId], (err, rows) => {
+        if (err) {
+          console.error('Error querying rig effects:', err);
+          reject(err);
+        } else {
+          const effects = rows.map(row => ({
+            attributeName: row.attributeName,
+            displayName: row.displayName || row.attributeName,
+            value: row.valueInt || row.valueFloat
+          })).filter(effect => effect.value !== null && effect.value !== undefined);
+
+          resolve(effects);
+        }
+      });
+    });
+  } catch (error) {
+    console.error('Error getting rig effects:', error);
+    return [];
+  }
+}
+
 module.exports = {
   getDatabase,
   closeDatabase,
@@ -602,4 +853,8 @@ module.exports = {
   getTradeHubs,
   searchMarketItems,
   getItemDetails,
+  getStructureTypes,
+  getStructureRigs,
+  getStructureBonuses,
+  getRigEffects,
 };

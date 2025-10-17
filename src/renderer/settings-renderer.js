@@ -502,9 +502,136 @@ function initializeSdeControls() {
   }
 }
 
+// Cost Indices Management
+async function loadCostIndicesStatus() {
+  try {
+    const systemCount = await window.electronAPI.costIndices.getSystemCount();
+    const lastFetch = await window.electronAPI.costIndices.getLastFetchTime();
+
+    const countEl = document.getElementById('cost-indices-count');
+    const lastFetchEl = document.getElementById('cost-indices-last-fetch');
+
+    if (countEl) {
+      countEl.textContent = systemCount > 0 ? systemCount.toLocaleString() : 'Not yet fetched';
+      countEl.className = systemCount > 0 ? 'sde-value up-to-date' : 'sde-value critical';
+    }
+
+    if (lastFetchEl) {
+      if (lastFetch) {
+        const date = new Date(lastFetch);
+        lastFetchEl.textContent = date.toLocaleString();
+
+        // Check if data is stale (over 1 hour old)
+        const now = Date.now();
+        const ageInHours = (now - lastFetch) / (60 * 60 * 1000);
+        if (ageInHours > 1) {
+          lastFetchEl.className = 'sde-value outdated';
+        } else {
+          lastFetchEl.className = 'sde-value up-to-date';
+        }
+      } else {
+        lastFetchEl.textContent = 'Never';
+        lastFetchEl.className = 'sde-value critical';
+      }
+    }
+  } catch (error) {
+    console.error('Error loading cost indices status:', error);
+  }
+}
+
+async function updateCostIndices() {
+  const updateBtn = document.getElementById('cost-indices-update-btn');
+  if (!updateBtn) return;
+
+  updateBtn.disabled = true;
+  updateBtn.innerHTML = `
+    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <path d="M21 2v6h-6M3 12a9 9 0 0 1 15-6.7L21 8M3 22v-6h6M21 12a9 9 0 0 1-15 6.7L3 16"/>
+    </svg>
+    Updating...
+  `;
+
+  try {
+    const result = await window.electronAPI.costIndices.fetch();
+
+    if (result.success) {
+      // Show success state
+      updateBtn.innerHTML = `
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <polyline points="20 6 9 17 4 12"></polyline>
+        </svg>
+        Updated!
+      `;
+
+      // Reload status
+      await loadCostIndicesStatus();
+
+      // Show success message
+      setTimeout(() => {
+        alert(`Successfully updated cost indices for ${result.systemCount.toLocaleString()} solar systems!`);
+      }, 100);
+
+      // Reset button after 2 seconds
+      setTimeout(() => {
+        updateBtn.disabled = false;
+        updateBtn.innerHTML = `
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M21 2v6h-6"></path>
+            <path d="M3 12a9 9 0 0 1 15-6.7L21 8"></path>
+            <path d="M3 22v-6h6"></path>
+            <path d="M21 12a9 9 0 0 1-15 6.7L3 16"></path>
+          </svg>
+          Update Cost Indices
+        `;
+      }, 2000);
+    } else {
+      // Show error
+      alert(`Failed to update cost indices: ${result.error}`);
+
+      updateBtn.disabled = false;
+      updateBtn.innerHTML = `
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M21 2v6h-6"></path>
+          <path d="M3 12a9 9 0 0 1 15-6.7L21 8"></path>
+          <path d="M3 22v-6h6"></path>
+          <path d="M21 12a9 9 0 0 1-15 6.7L3 16"></path>
+        </svg>
+        Update Cost Indices
+      `;
+    }
+  } catch (error) {
+    console.error('Error updating cost indices:', error);
+    alert(`Error updating cost indices: ${error.message}`);
+
+    updateBtn.disabled = false;
+    updateBtn.innerHTML = `
+      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M21 2v6h-6"></path>
+        <path d="M3 12a9 9 0 0 1 15-6.7L21 8"></path>
+        <path d="M3 22v-6h6"></path>
+        <path d="M21 12a9 9 0 0 1-15 6.7L3 16"></path>
+      </svg>
+      Update Cost Indices
+    `;
+  }
+}
+
+function initializeCostIndicesControls() {
+  loadCostIndicesStatus();
+
+  const updateBtn = document.getElementById('cost-indices-update-btn');
+  if (updateBtn) {
+    updateBtn.addEventListener('click', updateCostIndices);
+  }
+}
+
 // Call this when settings window loads
 if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', initializeSdeControls);
+  document.addEventListener('DOMContentLoaded', () => {
+    initializeSdeControls();
+    initializeCostIndicesControls();
+  });
 } else {
   initializeSdeControls();
+  initializeCostIndicesControls();
 }

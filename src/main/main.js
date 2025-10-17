@@ -31,6 +31,11 @@ const {
   getBlueprintsCacheStatus,
   getMarketSettings,
   updateMarketSettings,
+  getManufacturingFacilities,
+  addManufacturingFacility,
+  updateManufacturingFacility,
+  removeManufacturingFacility,
+  getManufacturingFacility,
 } = require('./settings-manager');
 const { authenticateWithESI, refreshAccessToken, isTokenExpired } = require('./esi-auth');
 const { fetchCharacterSkills } = require('./esi-skills');
@@ -60,9 +65,14 @@ const {
   searchSystems,
   getStationsInSystem,
   getTradeHubs,
+  getStructureTypes,
+  getStructureRigs,
+  getStructureBonuses,
+  getRigEffects,
 } = require('./sde-database');
 const { initializeMarketDatabase, getMarketDatabase } = require('./market-database');
 const { fetchMarketOrders, fetchMarketHistory, fetchMarketData, getLastMarketFetchTime, getLastHistoryFetchTime, getHistoryDataStatus, manualRefreshMarketData, manualRefreshHistoryData } = require('./esi-market');
+const { fetchCostIndices, getCostIndices, getAllCostIndices, getLastCostIndicesFetchTime, getCostIndicesSystemCount } = require('./esi-cost-indices');
 const { fetchFuzzworkHistory, fetchJitaPrice, fetchBulkPrices } = require('./fuzzwork-market');
 const {
   calculateRealisticPrice,
@@ -528,6 +538,91 @@ app.whenReady().then(() => {
 
   ipcMain.handle('market:manualRefreshHistory', async (event, regionId) => {
     return await manualRefreshHistoryData(regionId);
+  });
+
+  // Handle IPC for cost indices
+  ipcMain.handle('costIndices:fetch', async () => {
+    return await fetchCostIndices();
+  });
+
+  ipcMain.handle('costIndices:getCostIndices', (event, solarSystemId) => {
+    return getCostIndices(solarSystemId);
+  });
+
+  ipcMain.handle('costIndices:getAll', () => {
+    return getAllCostIndices();
+  });
+
+  ipcMain.handle('costIndices:getLastFetchTime', () => {
+    return getLastCostIndicesFetchTime();
+  });
+
+  ipcMain.handle('costIndices:getSystemCount', () => {
+    return getCostIndicesSystemCount();
+  });
+
+  // Handle IPC for Facilities Manager
+  ipcMain.handle('facilities:getFacilities', () => {
+    return getManufacturingFacilities();
+  });
+
+  ipcMain.handle('facilities:addFacility', (event, facility) => {
+    return addManufacturingFacility(facility);
+  });
+
+  ipcMain.handle('facilities:updateFacility', (event, id, updates) => {
+    return updateManufacturingFacility(id, updates);
+  });
+
+  ipcMain.handle('facilities:removeFacility', (event, id) => {
+    return removeManufacturingFacility(id);
+  });
+
+  ipcMain.handle('facilities:getFacility', (event, id) => {
+    return getManufacturingFacility(id);
+  });
+
+  ipcMain.handle('facilities:getAllRegions', async () => {
+    const regions = await getAllRegions();
+    // Note: SDE returns regionID (uppercase), convert to camelCase for consistency
+    return regions.map(region => ({
+      regionId: region.regionID,
+      regionName: region.regionName
+    }));
+  });
+
+  ipcMain.handle('facilities:getSystemsByRegion', async (event, regionId) => {
+    // Get all systems and filter by region
+    const allSystems = await getAllSystems();
+    // Note: SDE returns regionID (uppercase), convert to camelCase for consistency
+    return allSystems
+      .filter(system => system.regionID === parseInt(regionId))
+      .map(system => ({
+        systemId: system.solarSystemID,
+        systemName: system.solarSystemName,
+        security: system.security,
+        regionId: system.regionID
+      }));
+  });
+
+  ipcMain.handle('facilities:getCostIndices', async (event, systemId) => {
+    return getCostIndices(parseInt(systemId));
+  });
+
+  ipcMain.handle('facilities:getStructureTypes', async () => {
+    return await getStructureTypes();
+  });
+
+  ipcMain.handle('facilities:getStructureRigs', async () => {
+    return await getStructureRigs();
+  });
+
+  ipcMain.handle('facilities:getStructureBonuses', async (event, typeId) => {
+    return await getStructureBonuses(parseInt(typeId));
+  });
+
+  ipcMain.handle('facilities:getRigEffects', async (event, typeId) => {
+    return await getRigEffects(parseInt(typeId));
   });
 
   // Handle IPC for SDE skill lookups
