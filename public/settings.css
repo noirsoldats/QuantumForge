@@ -300,6 +300,7 @@ body {
 .character-card {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 15px;
   padding: 15px;
   background: rgba(0, 0, 0, 0.2);
@@ -344,10 +345,12 @@ body {
   border-radius: 8px;
   border: 2px solid rgba(100, 180, 255, 0.3);
   object-fit: cover;
+  flex-shrink: 0;
 }
 
 .character-info {
-  flex: 1;
+  flex: 1 1 200px;
+  min-width: 150px;
   display: flex;
   flex-direction: column;
   gap: 5px;
@@ -373,7 +376,9 @@ body {
 
 .character-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
+  margin-left: auto;
 }
 
 .icon-button {
@@ -383,11 +388,14 @@ body {
   color: #64b4ff;
   width: 36px;
   height: 36px;
+  min-width: 36px;
+  min-height: 36px;
   display: flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
   transition: all 0.2s ease;
+  flex-shrink: 0;
 }
 
 .icon-button:hover {
@@ -426,6 +434,8 @@ body {
   font-weight: 500;
   cursor: pointer;
   transition: all 0.2s ease;
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 
 .text-button:hover {

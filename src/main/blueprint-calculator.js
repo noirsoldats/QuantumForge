@@ -180,59 +180,38 @@ function getBlueprintForProduct(typeId) {
  */
 function getOwnedBlueprintME(characterId, blueprintTypeId) {
   try {
-    console.log('=== getOwnedBlueprintME Debug ===');
-    console.log('Character ID:', characterId);
-    console.log('Blueprint Type ID:', blueprintTypeId);
-
     // Import settings-manager functions
     const { getBlueprints, getEffectiveBlueprintValues } = require('./settings-manager');
 
     if (!characterId) {
-      console.log('No character ID provided, returning 0');
       return 0;
     }
 
     // Get blueprints for this character
     const blueprints = getBlueprints(characterId);
-    console.log(`Found ${blueprints?.length || 0} blueprints for character ${characterId}`);
 
     if (!blueprints || blueprints.length === 0) {
-      console.log('No blueprints found for character, returning 0');
       return 0;
-    }
-
-    // Debug: Log first few blueprints to see structure
-    if (blueprints.length > 0) {
-      console.log('Sample blueprint structure:', JSON.stringify(blueprints[0], null, 2));
     }
 
     // Find blueprint by typeId
     // Note: ESI stores as typeId, but check both typeId and type_id for compatibility
     const blueprint = blueprints.find(bp => bp.typeId === blueprintTypeId || bp.type_id === blueprintTypeId);
-    console.log('Matching blueprint found:', blueprint ? 'YES' : 'NO');
 
     if (!blueprint) {
-      console.log(`No blueprint found with typeId=${blueprintTypeId}, returning 0`);
       return 0;
     }
 
-    console.log('Found blueprint:', JSON.stringify(blueprint, null, 2));
-
     // Get effective values (includes overrides)
     const effectiveValues = getEffectiveBlueprintValues(blueprint.itemId);
-    console.log('Effective values:', effectiveValues);
 
     if (effectiveValues && effectiveValues.materialEfficiency !== undefined) {
-      console.log(`Returning ME from effective values: ${effectiveValues.materialEfficiency}`);
       return effectiveValues.materialEfficiency;
     }
 
     // Fallback to base ME value
     // materialEfficiency comes from ESI, material_efficiency might be from manual entry
-    const me = blueprint.materialEfficiency !== undefined ? blueprint.materialEfficiency : (blueprint.material_efficiency || 0);
-    console.log(`Returning base ME: ${me}`);
-    console.log('=== End getOwnedBlueprintME Debug ===');
-    return me;
+    return blueprint.materialEfficiency !== undefined ? blueprint.materialEfficiency : (blueprint.material_efficiency || 0);
   } catch (error) {
     console.error('Error getting owned blueprint ME:', error);
     console.error('Stack trace:', error.stack);

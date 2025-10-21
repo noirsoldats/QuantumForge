@@ -18,11 +18,6 @@ async function initializeCalculator() {
   try {
     // Get default character
     currentDefaultCharacter = await window.electronAPI.esi.getDefaultCharacter();
-    console.log('=== Blueprint Calculator Initialization ===');
-    console.log('Default character loaded:', currentDefaultCharacter);
-    console.log('Character ID:', currentDefaultCharacter?.characterId);
-    console.log('Character Name:', currentDefaultCharacter?.characterName);
-    console.log('=== End Initialization ===');
 
     // Setup event listeners
     setupEventListeners();
@@ -32,9 +27,7 @@ async function initializeCalculator() {
 
     // Listen for default character changes
     window.electronAPI.esi.onDefaultCharacterChanged(async () => {
-      console.log('Default character changed, refreshing...');
       currentDefaultCharacter = await window.electronAPI.esi.getDefaultCharacter();
-      console.log('Updated default character:', currentDefaultCharacter);
       loadDefaultCharacterAvatar();
     });
 
@@ -195,35 +188,22 @@ async function selectBlueprint(blueprintTypeId) {
     document.getElementById('base-quantity').textContent = product.quantity;
 
     // Check if the default character owns this blueprint and load ME
-    console.log('=== Blueprint ME Loading Debug ===');
-    console.log('Current Default Character:', currentDefaultCharacter);
-    console.log('Character ID:', currentDefaultCharacter?.characterId);
-    console.log('Blueprint Type ID:', blueprintTypeId);
-
     let ownedME = 0;
     if (currentDefaultCharacter?.characterId) {
-      console.log('Fetching owned blueprint ME...');
       ownedME = await window.electronAPI.calculator.getOwnedBlueprintME(
         currentDefaultCharacter.characterId,
         blueprintTypeId
       );
-      console.log(`Owned blueprint ME for ${blueprintName}: ${ownedME}`);
-    } else {
-      console.log('No default character set, skipping ME lookup');
     }
 
     // Set ME level to owned blueprint value, or 0 if not owned
-    console.log(`Setting ME input to: ${ownedME}`);
     document.getElementById('me-level').value = ownedME;
     document.getElementById('runs').value = 1;
-    console.log('=== End Blueprint ME Loading Debug ===');
 
     // Show blueprint display, hide empty state
     document.getElementById('blueprint-display').classList.remove('hidden');
     document.getElementById('empty-state').style.display = 'none';
     document.getElementById('materials-display').classList.add('hidden');
-
-    console.log('Selected blueprint:', currentBlueprint);
   } catch (error) {
     console.error('Error selecting blueprint:', error);
     alert('Failed to load blueprint: ' + error.message);
@@ -304,17 +284,12 @@ async function handleUpdateData() {
     // Get market settings to get the region ID
     const marketSettings = await window.electronAPI.market.getSettings();
     const regionId = marketSettings.regionId || 10000002; // Default to The Forge (Jita)
-    console.log('Using region ID:', regionId);
 
     // Update market prices
-    console.log('Fetching market prices...');
     await window.electronAPI.market.manualRefresh(regionId);
-    console.log('Market prices updated successfully');
 
     // Update cost indices
-    console.log('Fetching cost indices...');
     await window.electronAPI.costIndices.fetch();
-    console.log('Cost indices updated successfully');
 
     // Show success message
     updateBtn.innerHTML = `
@@ -525,17 +500,12 @@ async function loadDefaultCharacterAvatar() {
 
         // Setup menu toggle
         setupCharacterMenu(defaultCharacter);
-
-        console.log('Loaded default character avatar:', defaultCharacter.characterName);
-      } else {
-        console.log('Default character unchanged, skipping update');
       }
     } else {
       // No default character, hide the container
       currentDefaultCharacterId = null;
       currentDefaultCharacter = null;
       avatarContainer.style.display = 'none';
-      console.log('No default character set');
     }
   } catch (error) {
     console.error('Error loading default character avatar:', error);

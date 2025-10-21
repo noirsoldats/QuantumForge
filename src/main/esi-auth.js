@@ -1,6 +1,7 @@
-const { BrowserWindow } = require('electron');
+const { shell } = require('electron');
 const crypto = require('crypto');
 const { URL } = require('url');
+const http = require('http');
 
 // ESI OAuth Configuration
 const ESI_CONFIG = {
@@ -43,12 +44,15 @@ function generatePKCE() {
 
 /**
  * Start the ESI authentication flow
+ * Opens the authorization URL in the system browser and starts a temporary local server
  * @returns {Promise<Object>} Authentication result with character info and tokens
  */
 async function authenticateWithESI() {
   return new Promise((resolve, reject) => {
     const state = generateState();
     const { codeVerifier, codeChallenge } = generatePKCE();
+    let server = null;
+    let serverTimeout = null;
 
     // Build authorization URL
     const authUrl = new URL(ESI_CONFIG.authorizationUrl);
@@ -60,87 +64,144 @@ async function authenticateWithESI() {
     authUrl.searchParams.append('code_challenge_method', 'S256');
     authUrl.searchParams.append('state', state);
 
-    // Create auth window
-    const authWindow = new BrowserWindow({
-      width: 600,
-      height: 800,
-      show: true,
-      webPreferences: {
-        nodeIntegration: false,
-        contextIsolation: true,
-      },
-      title: 'Eve Online - Login',
-    });
+    // Create temporary HTTP server to receive callback
+    server = http.createServer(async (req, res) => {
+      const reqUrl = new URL(req.url, ESI_CONFIG.callbackUrl);
 
-    authWindow.loadURL(authUrl.toString());
+      // Only handle the callback path
+      if (reqUrl.pathname === '/callback') {
+        const code = reqUrl.searchParams.get('code');
+        const receivedState = reqUrl.searchParams.get('state');
+        const error = reqUrl.searchParams.get('error');
 
-    // Prevent navigation to callback URL and handle it instead
-    authWindow.webContents.on('will-navigate', (event, url) => {
-      if (url.startsWith(ESI_CONFIG.callbackUrl)) {
-        event.preventDefault();
-        handleCallback(url, state, codeVerifier, authWindow, resolve, reject);
+        // Send response to browser
+        if (error) {
+          res.writeHead(400, { 'Content-Type': 'text/html' });
+          res.end(`
+            <!DOCTYPE html>
+            <html>
+              <head>
+                <title>Authentication Failed</title>
+                <style>
+                  body { font-family: Arial, sans-serif; text-align: center; padding: 50px; }
+                  .error { color: #d32f2f; }
+                </style>
+              </head>
+              <body>
+                <h1 class="error">Authentication Failed</h1>
+                <p>Error: ${error}</p>
+                <p>You can close this window and try again.</p>
+              </body>
+            </html>
+          `);
+          cleanup();
+          reject(new Error(`OAuth error: ${error}`));
+          return;
+        }
+
+        if (!code || receivedState !== state) {
+          res.writeHead(400, { 'Content-Type': 'text/html' });
+          res.end(`
+            <!DOCTYPE html>
+            <html>
+              <head>
+                <title>Authentication Failed</title>
+                <style>
+                  body { font-family: Arial, sans-serif; text-align: center; padding: 50px; }
+                  .error { color: #d32f2f; }
+                </style>
+              </head>
+              <body>
+                <h1 class="error">Authentication Failed</h1>
+                <p>Invalid OAuth response. Please try again.</p>
+                <p>You can close this window.</p>
+              </body>
+            </html>
+          `);
+          cleanup();
+          reject(new Error('Invalid OAuth response'));
+          return;
+        }
+
+        // Send success response to browser first
+        res.writeHead(200, { 'Content-Type': 'text/html' });
+        res.end(`
+          <!DOCTYPE html>
+          <html>
+            <head>
+              <title>Authentication Successful</title>
+              <style>
+                body { font-family: Arial, sans-serif; text-align: center; padding: 50px; }
+                .success { color: #388e3c; }
+              </style>
+            </head>
+            <body>
+              <h1 class="success">Authentication Successful!</h1>
+              <p>You have successfully authenticated with Eve Online.</p>
+              <p>You can close this window and return to Quantum Forge.</p>
+            </body>
+          </html>
+        `);
+
+        // Process the callback asynchronously
+        try {
+          // Exchange code for tokens
+          const tokenResponse = await exchangeCodeForToken(code, codeVerifier);
+
+          // Get character information
+          const characterInfo = await getCharacterInfo(tokenResponse.access_token);
+
+          cleanup();
+          resolve({
+            ...tokenResponse,
+            character: characterInfo,
+          });
+        } catch (err) {
+          cleanup();
+          reject(err);
+        }
+      } else {
+        // Handle unknown paths
+        res.writeHead(404, { 'Content-Type': 'text/plain' });
+        res.end('Not Found');
       }
     });
 
-    // Handle redirect
-    authWindow.webContents.on('will-redirect', (event, url) => {
-      if (url.startsWith(ESI_CONFIG.callbackUrl)) {
-        event.preventDefault();
-        handleCallback(url, state, codeVerifier, authWindow, resolve, reject);
+    // Cleanup function to close server and clear timeout
+    const cleanup = () => {
+      if (serverTimeout) {
+        clearTimeout(serverTimeout);
+        serverTimeout = null;
       }
+      if (server) {
+        server.close();
+        server = null;
+      }
+    };
+
+    // Start server
+    server.listen(3000, 'localhost', () => {
+      console.log('OAuth callback server listening on http://localhost:3000');
+
+      // Open the authorization URL in the default browser
+      shell.openExternal(authUrl.toString()).catch(err => {
+        cleanup();
+        reject(new Error(`Failed to open browser: ${err.message}`));
+      });
+
+      // Set timeout for authentication (5 minutes)
+      serverTimeout = setTimeout(() => {
+        cleanup();
+        reject(new Error('Authentication timeout - no response received within 5 minutes'));
+      }, 5 * 60 * 1000);
     });
 
-    // Handle window close
-    authWindow.on('closed', () => {
-      reject(new Error('Authentication window was closed'));
+    // Handle server errors
+    server.on('error', (err) => {
+      cleanup();
+      reject(new Error(`Server error: ${err.message}`));
     });
   });
-}
-
-/**
- * Handle the OAuth callback
- */
-async function handleCallback(url, expectedState, codeVerifier, authWindow, resolve, reject) {
-  const urlObj = new URL(url);
-
-  // Check if this is our callback URL
-  if (!url.startsWith(ESI_CONFIG.callbackUrl)) {
-    return;
-  }
-
-  const code = urlObj.searchParams.get('code');
-  const state = urlObj.searchParams.get('state');
-  const error = urlObj.searchParams.get('error');
-
-  if (error) {
-    authWindow.close();
-    reject(new Error(`OAuth error: ${error}`));
-    return;
-  }
-
-  if (!code || state !== expectedState) {
-    authWindow.close();
-    reject(new Error('Invalid OAuth response'));
-    return;
-  }
-
-  try {
-    // Exchange code for tokens
-    const tokenResponse = await exchangeCodeForToken(code, codeVerifier);
-
-    // Get character information
-    const characterInfo = await getCharacterInfo(tokenResponse.access_token);
-
-    authWindow.close();
-
-    resolve({
-      ...tokenResponse,
-      character: characterInfo,
-    });
-  } catch (err) {
-    authWindow.close();
-    reject(err);
-  }
 }
 
 /**
