@@ -6,7 +6,7 @@ const http = require('http');
 // ESI OAuth Configuration
 const ESI_CONFIG = {
   clientId: 'be9837bdb49f4a708d81652e216a7a11',
-  callbackUrl: 'http://localhost:3000/callback',
+  callbackUrl: 'http://localhost:42069/callback',
   authorizationUrl: 'https://login.eveonline.com/v2/oauth/authorize',
   tokenUrl: 'https://login.eveonline.com/v2/oauth/token',
   scopes: [
@@ -180,8 +180,8 @@ async function authenticateWithESI() {
     };
 
     // Start server
-    server.listen(3000, 'localhost', () => {
-      console.log('OAuth callback server listening on http://localhost:3000');
+    server.listen(42069, 'localhost', () => {
+      console.log('OAuth callback server listening on http://localhost:42069');
 
       // Open the authorization URL in the default browser
       shell.openExternal(authUrl.toString()).catch(err => {

@@ -257,11 +257,12 @@ function renderBlueprints() {
 
   blueprintsList.innerHTML = groupedBlueprints.map(group => createBlueprintGroupItem(group)).join('');
 
-  // Add event listeners for expand/collapse
+  // Add event listeners for expand/collapse and calculator buttons
   groupedBlueprints.forEach(group => {
     const groupKey = `group-${group.typeId}-${group.isCopy ? 'bpc' : 'bpo'}-${group.runs}-${group.materialEfficiency}-${group.timeEfficiency}`;
     const expandBtn = document.getElementById(`expand-${groupKey}`);
     const itemsDiv = document.getElementById(`items-${groupKey}`);
+    const calcBtn = document.getElementById(`calc-${groupKey}`);
 
     if (expandBtn && itemsDiv) {
       expandBtn.addEventListener('click', (e) => {
@@ -269,6 +270,13 @@ function renderBlueprints() {
         const isExpanded = itemsDiv.style.display === 'block';
         itemsDiv.style.display = isExpanded ? 'none' : 'block';
         expandBtn.classList.toggle('expanded', !isExpanded);
+      });
+    }
+
+    if (calcBtn) {
+      calcBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        openInCalculator(group.typeId, group.materialEfficiency);
       });
     }
   });
@@ -382,11 +390,22 @@ function createBlueprintGroupItem(group) {
             ${hasOverride ? '<span class="blueprint-badge badge-overridden">Overridden</span>' : ''}
           </div>
         </div>
-        <button class="expand-btn" id="expand-${groupKey}">
-          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <polyline points="6 9 12 15 18 9"></polyline>
-          </svg>
-        </button>
+        <div class="blueprint-group-actions">
+          <button class="calculator-btn" id="calc-${groupKey}" data-type-id="${group.typeId}" title="Open in Blueprint Calculator">
+            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="4" y="2" width="16" height="20" rx="2" ry="2"></rect>
+              <line x1="8" y1="6" x2="16" y2="6"></line>
+              <line x1="8" y1="10" x2="16" y2="10"></line>
+              <line x1="8" y1="14" x2="16" y2="14"></line>
+              <line x1="8" y1="18" x2="12" y2="18"></line>
+            </svg>
+          </button>
+          <button class="expand-btn" id="expand-${groupKey}">
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="6 9 12 15 18 9"></polyline>
+            </svg>
+          </button>
+        </div>
       </div>
       <div class="blueprint-group-items" id="items-${groupKey}" style="display: none;">
         ${group.blueprints.map(bp => createBlueprintItem(bp)).join('')}
@@ -847,6 +866,17 @@ function setupEventListeners() {
   const modalSearchInput = document.getElementById('blueprint-search-modal');
   if (modalSearchInput) {
     modalSearchInput.addEventListener('input', (e) => searchBlueprintsModal(e.target.value));
+  }
+}
+
+// Open blueprint in calculator
+async function openInCalculator(blueprintTypeId, meLevel) {
+  try {
+    // Request to open the blueprint in the calculator
+    await window.electronAPI.blueprints.openInCalculator(blueprintTypeId, meLevel);
+  } catch (error) {
+    console.error('Error opening blueprint in calculator:', error);
+    alert('Failed to open blueprint in calculator');
   }
 }
 

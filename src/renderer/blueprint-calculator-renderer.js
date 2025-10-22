@@ -10,6 +10,18 @@ let searchTimeout = null;
 // Initialize on load
 document.addEventListener('DOMContentLoaded', async () => {
   console.log('DOM loaded, initializing Blueprint Calculator');
+
+  // Set up the listener BEFORE initializing to catch any early messages
+  window.electronAPI.blueprints.onOpenInCalculator(async (data) => {
+    console.log('Received blueprint to open:', data);
+    const { blueprintTypeId, meLevel } = data;
+    await selectBlueprint(blueprintTypeId);
+    // Set ME level if provided
+    if (meLevel !== undefined) {
+      document.getElementById('me-level').value = meLevel;
+    }
+  });
+
   await initializeCalculator();
 });
 

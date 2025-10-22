@@ -82,7 +82,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getEffectiveValues: (itemId) => ipcRenderer.invoke('blueprints:getEffectiveValues', itemId),
     getCacheStatus: (characterId) => ipcRenderer.invoke('blueprints:getCacheStatus', characterId),
     openWindow: (characterId) => ipcRenderer.invoke('blueprints:openWindow', characterId),
+    openInCalculator: (blueprintTypeId, meLevel) => ipcRenderer.invoke('blueprints:openInCalculator', blueprintTypeId, meLevel),
     onCharacterId: (callback) => ipcRenderer.on('blueprints:set-character-id', (event, id) => callback(id)),
+    onOpenInCalculator: (callback) => ipcRenderer.on('calculator:openBlueprint', (event, data) => callback(data)),
   },
 
   // Market API

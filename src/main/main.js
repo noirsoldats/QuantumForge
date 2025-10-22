@@ -402,6 +402,21 @@ app.whenReady().then(() => {
     createBlueprintsWindow(characterId);
   });
 
+  ipcMain.handle('blueprints:openInCalculator', (event, blueprintTypeId, meLevel) => {
+    // Focus or create main window
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.focus();
+      // Navigate to calculator page and send blueprint data
+      mainWindow.loadFile(path.join(__dirname, '../../public/blueprint-calculator.html')).then(() => {
+        // Wait for the DOM to be ready and listeners to be set up
+        // Use a longer timeout to ensure initialization is complete
+        setTimeout(() => {
+          mainWindow.webContents.send('calculator:openBlueprint', { blueprintTypeId, meLevel });
+        }, 500);
+      });
+    }
+  });
+
   // Handle IPC for blueprint calculator
   const {
     searchBlueprints,

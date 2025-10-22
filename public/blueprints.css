@@ -535,3 +535,30 @@ body {
   padding: 40px;
   color: #64b4ff;
 }
+
+/* Blueprint group actions */
+.blueprint-group-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.calculator-btn {
+  background: rgba(100, 180, 255, 0.1);
+  border: 1px solid rgba(100, 180, 255, 0.3);
+  border-radius: 6px;
+  color: #64b4ff;
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.calculator-btn:hover {
+  background: rgba(100, 180, 255, 0.2);
+  border-color: rgba(100, 180, 255, 0.5);
+  transform: translateY(-1px);
+}
