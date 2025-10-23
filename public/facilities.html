@@ -113,6 +113,18 @@
             </select>
           </div>
 
+          <!-- Facility Tax (only for structures) -->
+          <div class="form-group" id="facility-tax-group" style="display: none;">
+            <label for="facility-tax">
+              Facility Tax (%)
+              <span class="field-hint">Tax rate set by structure owner (0-100%)</span>
+            </label>
+            <input type="number" id="facility-tax" min="0" max="100" step="0.01" placeholder="0.00">
+          </div>
+
+          <!-- Empty space for alignment -->
+          <div class="form-group" id="facility-tax-spacer" style="display: none;"></div>
+
           <!-- Info Display -->
           <div class="facility-info" id="facility-info">
             <!-- System Cost Index -->

@@ -350,27 +350,21 @@
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 12px 15px;
-  background: rgba(255, 255, 255, 0.03);
-  border: 1px solid rgba(100, 180, 255, 0.15);
-  border-radius: 6px;
-  transition: all 0.2s ease;
-}
-
-.material-item:hover {
-  background: rgba(255, 255, 255, 0.05);
-  border-color: rgba(100, 180, 255, 0.3);
+  padding: 10px 12px;
+  background: rgba(255, 255, 255, 0.02);
+  border-left: 3px solid rgba(100, 180, 255, 0.3);
+  border-radius: 4px;
+  margin-bottom: 4px;
 }
 
 .material-name {
-  font-weight: 500;
   color: #e0e0e0;
+  font-size: 0.95em;
 }
 
 .material-quantity {
-  font-weight: 600;
   color: #64b4ff;
-  font-size: 1.1em;
+  font-weight: 600;
 }
 
 /* Materials Breakdown */
@@ -575,6 +569,209 @@
   margin-top: 10px !important;
 }
 
+/* Pricing Display */
+.pricing-display {
+  margin-top: 30px;
+}
+
+.pricing-display h4 {
+  color: #64b4ff;
+  margin-bottom: 20px;
+  font-size: 1.3em;
+}
+
+.pricing-breakdown {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.pricing-section {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(100, 180, 255, 0.2);
+  border-radius: 8px;
+  padding: 15px;
+}
+
+.pricing-section h5 {
+  color: #64b4ff;
+  margin-bottom: 12px;
+  font-size: 1.05em;
+  font-weight: 600;
+}
+
+.pricing-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 0;
+  color: #e0e0e0;
+  font-size: 0.95em;
+}
+
+.pricing-row:not(:last-child) {
+  border-bottom: 1px solid rgba(100, 180, 255, 0.1);
+}
+
+.pricing-value {
+  font-family: 'Courier New', monospace;
+  color: #fff;
+  font-weight: 500;
+}
+
+.pricing-total {
+  background: rgba(100, 180, 255, 0.08);
+  border-color: rgba(100, 180, 255, 0.4);
+}
+
+.pricing-profit {
+  background: rgba(100, 255, 180, 0.05);
+  border-color: rgba(100, 255, 180, 0.3);
+}
+
+.profit-positive {
+  color: #64ffb4 !important;
+}
+
+.profit-negative {
+  color: #ff6b6b !important;
+}
+
+.pricing-warning {
+  background: rgba(255, 200, 100, 0.1);
+  border: 1px solid rgba(255, 200, 100, 0.3);
+  border-radius: 4px;
+  padding: 8px 12px;
+  margin-top: 8px;
+  color: #ffc864;
+  font-size: 0.9em;
+}
+
+/* Material Prices List */
+.material-prices-list {
+  margin-bottom: 15px;
+}
+
+.material-price-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  background: rgba(255, 255, 255, 0.02);
+  border-left: 3px solid rgba(100, 180, 255, 0.3);
+  border-radius: 4px;
+  margin-bottom: 4px;
+}
+
+.material-price-row .material-name {
+  color: #e0e0e0;
+  font-size: 0.95em;
+  font-weight: 500;
+}
+
+.material-price-details {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  padding-left: 12px;
+}
+
+.material-price-details .material-quantity {
+  color: #a0a0b0;
+  font-size: 0.85em;
+  font-family: 'Courier New', monospace;
+}
+
+.material-total-price {
+  color: #64b4ff;
+  font-family: 'Courier New', monospace;
+  font-size: 0.9em;
+  font-weight: 600;
+}
+
+.pricing-subtotal {
+  margin-top: 10px;
+  padding-top: 12px !important;
+  border-top: 2px solid rgba(100, 180, 255, 0.3) !important;
+}
+
+/* Job Cost Breakdown */
+.job-cost-breakdown {
+  background: rgba(255, 255, 255, 0.02);
+  border-radius: 6px;
+  padding: 10px;
+  margin-bottom: 12px;
+}
+
+.pricing-taxes {
+  background: rgba(255, 255, 255, 0.02);
+  border-radius: 6px;
+  padding: 10px;
+  margin-bottom: 12px;
+}
+
+.pricing-taxes h6 {
+  color: #64b4ff;
+  margin-bottom: 8px;
+  font-size: 0.95em;
+  font-weight: 600;
+}
+
+/* Fee Group Styling */
+.fee-group {
+  background: rgba(100, 180, 255, 0.05);
+  border: 1px solid rgba(100, 180, 255, 0.2);
+  border-radius: 8px;
+  padding: 14px;
+  margin-bottom: 16px;
+}
+
+.fee-group-header {
+  color: #64b4ff;
+  font-size: 1em;
+  font-weight: 600;
+  margin: 0 0 12px 0;
+  padding-bottom: 8px;
+  border-bottom: 1px solid rgba(100, 180, 255, 0.2);
+}
+
+.fee-group-content {
+  margin-bottom: 12px;
+}
+
+.fee-group-content:last-child {
+  margin-bottom: 0;
+}
+
+.fee-subgroup {
+  background: rgba(255, 255, 255, 0.02);
+  border-left: 3px solid rgba(100, 180, 255, 0.3);
+  border-radius: 4px;
+  padding: 8px 10px;
+  margin-top: 8px;
+}
+
+.fee-subgroup-header {
+  color: #9cc5ff;
+  font-size: 0.9em;
+  font-weight: 500;
+  margin-bottom: 6px;
+  padding-left: 4px;
+}
+
+.indent-1 {
+  padding-left: 15px;
+  position: relative;
+}
+
+.indent-1::before {
+  content: "└";
+  position: absolute;
+  left: 3px;
+  color: rgba(100, 180, 255, 0.4);
+}
+
 /* Responsive Design */
 @media (max-width: 768px) {
   .blueprint-header {
@@ -592,5 +789,15 @@
   .material-list,
   .breakdown-materials {
     grid-template-columns: 1fr;
+  }
+
+  .pricing-row {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 5px;
+  }
+
+  .pricing-value {
+    align-self: flex-end;
   }
 }

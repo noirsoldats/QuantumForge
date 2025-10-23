@@ -442,9 +442,16 @@ app.whenReady().then(() => {
         const { getSystemSecurityStatus } = require('./sde-database');
         facility.securityStatus = await getSystemSecurityStatus(facility.systemId);
       }
+
+      // Get structure bonuses if this is a player structure
+      if (facility && facility.structureTypeId) {
+        const { getStructureBonuses } = require('./sde-database');
+        const bonuses = await getStructureBonuses(facility.structureTypeId);
+        facility.structureBonuses = bonuses;
+      }
     }
 
-    return calculateBlueprintMaterials(blueprintTypeId, runs, meLevel, characterId, facility);
+    return await calculateBlueprintMaterials(blueprintTypeId, runs, meLevel, characterId, facility);
   });
 
   ipcMain.handle('calculator:getBlueprintProduct', (event, blueprintTypeId) => {
@@ -571,6 +578,11 @@ app.whenReady().then(() => {
 
   ipcMain.handle('market:manualRefreshHistory', async (event, regionId) => {
     return await manualRefreshHistoryData(regionId);
+  });
+
+  ipcMain.handle('market:refreshAdjustedPrices', async () => {
+    const { manualRefreshAdjustedPrices } = require('./esi-market');
+    return await manualRefreshAdjustedPrices();
   });
 
   // Handle IPC for cost indices

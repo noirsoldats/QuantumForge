@@ -292,8 +292,10 @@ async function calculateRealisticPrice(typeId, regionId, locationId, priceType, 
   let warning = null;
 
   // Get the best immediate price (highest buy or lowest sell)
-  const immediatePrice = orders.length > 0
-    ? (isBuy ? Math.max(...orders.map(o => o.price)) : Math.min(...orders.map(o => o.price)))
+  // Filter to only the order type we want (buy or sell)
+  const relevantOrders = orders.filter(o => o.is_buy_order === isBuy);
+  const immediatePrice = relevantOrders.length > 0
+    ? (isBuy ? Math.max(...relevantOrders.map(o => o.price)) : Math.min(...relevantOrders.map(o => o.price)))
     : 0;
 
   // Determine which method to use

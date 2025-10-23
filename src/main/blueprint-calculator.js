@@ -266,7 +266,7 @@ function getProductGroupId(productTypeId) {
  * @param {number} depth - Current recursion depth (for internal use)
  * @returns {Object} Calculation result with materials and breakdown
  */
-function calculateBlueprintMaterials(blueprintTypeId, runs = 1, meLevel = 0, characterId = null, facility = null, depth = 0) {
+async function calculateBlueprintMaterials(blueprintTypeId, runs = 1, meLevel = 0, characterId = null, facility = null, depth = 0) {
   const MAX_DEPTH = 10; // Prevent infinite recursion
 
   if (depth > MAX_DEPTH) {
@@ -311,7 +311,7 @@ function calculateBlueprintMaterials(blueprintTypeId, runs = 1, meLevel = 0, cha
       const subME = characterId ? getOwnedBlueprintME(characterId, subBlueprintId) : 0;
 
       // Recursively calculate materials for this component
-      const subCalculation = calculateBlueprintMaterials(
+      const subCalculation = await calculateBlueprintMaterials(
         subBlueprintId,
         adjustedQty,
         subME,
@@ -369,6 +369,46 @@ function calculateBlueprintMaterials(blueprintTypeId, runs = 1, meLevel = 0, cha
     }
   }
 
+  // Calculate pricing if facility is provided (has systemId for cost calculation)
+  let pricing = null;
+  if (facility && facility.systemId) {
+    try {
+      // Get skill levels from default character (if available)
+      const { getDefaultCharacter, getEffectiveSkillLevel } = require('./settings-manager');
+      const defaultCharacter = getDefaultCharacter();
+
+      // EVE Online skill IDs
+      const ACCOUNTING_SKILL_ID = 16622;
+      const BROKER_RELATIONS_SKILL_ID = 3446;
+
+      let accountingSkillLevel = 0;
+      let brokerRelationsSkillLevel = 0;
+
+      if (defaultCharacter) {
+        accountingSkillLevel = getEffectiveSkillLevel(defaultCharacter.characterId, ACCOUNTING_SKILL_ID) || 0;
+        brokerRelationsSkillLevel = getEffectiveSkillLevel(defaultCharacter.characterId, BROKER_RELATIONS_SKILL_ID) || 0;
+      }
+
+      const { calculateBlueprintPricing } = require('./blueprint-pricing');
+      pricing = await calculateBlueprintPricing(
+        adjustedMaterials,
+        {
+          typeID: product.typeID,
+          quantity: product.quantity * runs
+        },
+        facility.systemId,
+        facility,
+        accountingSkillLevel,
+        blueprintTypeId, // Pass blueprint type ID for EIV calculation
+        runs, // Pass runs for EIV calculation
+        brokerRelationsSkillLevel
+      );
+    } catch (error) {
+      console.error('Error calculating blueprint pricing:', error);
+      pricing = null;
+    }
+  }
+
   return {
     materials: adjustedMaterials,
     breakdown: breakdown,
@@ -376,7 +416,8 @@ function calculateBlueprintMaterials(blueprintTypeId, runs = 1, meLevel = 0, cha
       typeID: product.typeID,
       typeName: getTypeName(product.typeID),
       quantity: product.quantity * runs
-    }
+    },
+    pricing: pricing
   };
 }
 

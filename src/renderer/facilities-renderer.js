@@ -181,13 +181,18 @@ function setupEventListeners() {
 // Handle facility type change
 function handleFacilityTypeChange(e) {
   const facilityType = e.target.value;
-  const structureFields = document.querySelectorAll('#structure-type-group, #rig1-group, #rig2-group, #rig3-group');
+  const structureFields = document.querySelectorAll('#structure-type-group, #rig1-group, #rig2-group, #rig3-group, #facility-tax-group, #facility-tax-spacer');
   const structureTypeSelect = document.getElementById('structure-type');
+  const facilityTaxInput = document.getElementById('facility-tax');
 
   if (facilityType === 'structure') {
     structureFields.forEach(field => field.style.display = 'flex');
     // Make structure type required when structure is selected
     structureTypeSelect.setAttribute('required', 'required');
+    // Set default facility tax for player structures (0%)
+    if (!facilityTaxInput.value) {
+      facilityTaxInput.value = '0.00';
+    }
   } else {
     structureFields.forEach(field => field.style.display = 'none');
     document.getElementById('structure-bonuses-section').style.display = 'none';
@@ -195,6 +200,8 @@ function handleFacilityTypeChange(e) {
     // Remove required attribute when not a structure
     structureTypeSelect.removeAttribute('required');
     structureTypeSelect.value = '';
+    // Clear facility tax for NPC stations (handled by backend default)
+    facilityTaxInput.value = '';
   }
 }
 
@@ -475,6 +482,13 @@ async function handleFormSubmit(e) {
       document.getElementById('rig-2').value,
       document.getElementById('rig-3').value,
     ].filter(r => r);
+
+    // Add facility tax for player structures
+    const facilityTaxInput = document.getElementById('facility-tax');
+    const facilityTax = parseFloat(facilityTaxInput.value);
+    if (!isNaN(facilityTax)) {
+      formData.facilityTax = facilityTax;
+    }
   }
 
   try {
@@ -506,7 +520,7 @@ function clearForm() {
   // Reset form
   document.getElementById('add-facility-form').reset();
   document.getElementById('facility-system').disabled = true;
-  document.querySelectorAll('#structure-type-group, #rig1-group, #rig2-group, #rig3-group').forEach(field => {
+  document.querySelectorAll('#structure-type-group, #rig1-group, #rig2-group, #rig3-group, #facility-tax-group, #facility-tax-spacer').forEach(field => {
     field.style.display = 'none';
   });
   document.querySelectorAll('.info-section').forEach(section => {
@@ -698,6 +712,11 @@ async function editFacility(id) {
 
       // Load rig effects
       await handleRigChange();
+    }
+
+    // Populate facility tax
+    if (facility.facilityTax !== undefined) {
+      document.getElementById('facility-tax').value = facility.facilityTax.toFixed(2);
     }
   }
 

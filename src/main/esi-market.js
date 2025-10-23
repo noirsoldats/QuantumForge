@@ -660,6 +660,66 @@ async function manualRefreshHistoryData(regionId) {
   }
 }
 
+/**
+ * Fetch adjusted prices from ESI
+ * @returns {Promise<Array>} Array of price objects
+ */
+async function fetchAdjustedPrices() {
+  try {
+    console.log('Fetching adjusted prices from ESI...');
+
+    const response = await retryFetch(async () => {
+      const res = await fetch('https://esi.evetech.net/latest/markets/prices/?datasource=tranquility');
+      if (!res.ok) {
+        throw new Error(`ESI returned status ${res.status}`);
+      }
+      return res;
+    });
+
+    const prices = await response.json();
+    console.log(`Fetched ${prices.length} adjusted prices from ESI`);
+
+    return prices;
+  } catch (error) {
+    console.error('Error fetching adjusted prices:', error);
+    throw error;
+  }
+}
+
+/**
+ * Manually refresh adjusted prices
+ * @returns {Promise<Object>} Status object
+ */
+async function manualRefreshAdjustedPrices() {
+  try {
+    console.log('Starting manual refresh of adjusted prices...');
+
+    const { clearAdjustedPrices, saveAdjustedPrices } = require('./market-database');
+
+    // Clear existing prices
+    clearAdjustedPrices();
+
+    // Fetch new prices
+    const prices = await fetchAdjustedPrices();
+
+    // Save to database
+    saveAdjustedPrices(prices);
+
+    return {
+      success: true,
+      lastFetch: Date.now(),
+      message: `Adjusted prices updated for ${prices.length} items`,
+      itemsUpdated: prices.length
+    };
+  } catch (error) {
+    console.error('Error refreshing adjusted prices:', error);
+    return {
+      success: false,
+      error: error.message
+    };
+  }
+}
+
 module.exports = {
   fetchMarketOrders,
   fetchMarketHistory,
@@ -671,4 +731,6 @@ module.exports = {
   getHistoryDataStatus,
   manualRefreshMarketData,
   manualRefreshHistoryData,
+  fetchAdjustedPrices,
+  manualRefreshAdjustedPrices,
 };

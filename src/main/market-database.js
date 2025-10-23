@@ -83,6 +83,18 @@ function createTables() {
     CREATE INDEX IF NOT EXISTS idx_history_date ON market_history(date);
   `);
 
+  // Adjusted prices table (CCP's adjusted prices for industry calculations)
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS adjusted_prices (
+      type_id INTEGER PRIMARY KEY,
+      adjusted_price REAL,
+      average_price REAL,
+      fetched_at INTEGER NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_adjusted_prices_fetched ON adjusted_prices(fetched_at);
+  `);
+
   // Market price cache (calculated prices with metadata)
   db.exec(`
     CREATE TABLE IF NOT EXISTS market_price_cache (
@@ -201,6 +213,57 @@ function getMarketDatabase() {
 }
 
 /**
+ * Save adjusted prices from ESI /markets/prices/
+ * @param {Array} pricesData - Array of price objects from ESI
+ */
+function saveAdjustedPrices(pricesData) {
+  const db = getMarketDatabase();
+  const fetchedAt = Date.now();
+
+  const insert = db.prepare(`
+    INSERT OR REPLACE INTO adjusted_prices (type_id, adjusted_price, average_price, fetched_at)
+    VALUES (?, ?, ?, ?)
+  `);
+
+  const insertMany = db.transaction((prices) => {
+    for (const price of prices) {
+      insert.run(
+        price.type_id,
+        price.adjusted_price || null,
+        price.average_price || null,
+        fetchedAt
+      );
+    }
+  });
+
+  insertMany(pricesData);
+  console.log(`Saved ${pricesData.length} adjusted prices to database`);
+}
+
+/**
+ * Get adjusted price for a specific type
+ * @param {number} typeId - Type ID
+ * @returns {Object|null} Price object with adjusted_price and average_price
+ */
+function getAdjustedPrice(typeId) {
+  const db = getMarketDatabase();
+  return db.prepare(`
+    SELECT adjusted_price, average_price, fetched_at
+    FROM adjusted_prices
+    WHERE type_id = ?
+  `).get(typeId);
+}
+
+/**
+ * Clear all adjusted prices (used before refresh)
+ */
+function clearAdjustedPrices() {
+  const db = getMarketDatabase();
+  db.prepare('DELETE FROM adjusted_prices').run();
+  console.log('Cleared all adjusted prices from database');
+}
+
+/**
  * Clean up old data
  */
 function cleanupOldData(daysToKeep = 90) {
@@ -213,6 +276,10 @@ function cleanupOldData(daysToKeep = 90) {
   // Clean old price cache
   db.prepare('DELETE FROM market_price_cache WHERE expires_at < ?').run(Date.now());
 
+  // Clean old adjusted prices (older than 7 days)
+  const adjustedPricesCutoff = Date.now() - (7 * 24 * 60 * 60 * 1000);
+  db.prepare('DELETE FROM adjusted_prices WHERE fetched_at < ?').run(adjustedPricesCutoff);
+
   console.log(`Cleaned up market data older than ${daysToKeep} days`);
 }
 
@@ -221,5 +288,8 @@ module.exports = {
   closeMarketDatabase,
   getMarketDatabase,
   getMarketDatabasePath,
+  saveAdjustedPrices,
+  getAdjustedPrice,
+  clearAdjustedPrices,
   cleanupOldData,
 };

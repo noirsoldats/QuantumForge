@@ -305,6 +305,9 @@ async function handleUpdateData() {
     // Update market prices
     await window.electronAPI.market.manualRefresh(regionId);
 
+    // Update adjusted prices
+    await window.electronAPI.market.refreshAdjustedPrices();
+
     // Update cost indices
     await window.electronAPI.costIndices.fetch();
 
@@ -366,6 +369,17 @@ async function displayMaterialsCalculation(result, runs, facilityId = null) {
 
   // Display breakdown
   await displayMaterialsBreakdown(result.breakdown, runs);
+
+  // Display pricing information if available
+  if (result.pricing) {
+    await displayPricingInformation(result.pricing);
+  } else {
+    // Hide pricing display if no pricing data
+    const pricingEl = document.getElementById('pricing-display');
+    if (pricingEl) {
+      pricingEl.style.display = 'none';
+    }
+  }
 }
 
 // Display total materials summary
@@ -595,15 +609,28 @@ async function loadFacilities() {
     // Clear existing options except the first one (No Facility)
     facilitySelect.innerHTML = '<option value="">No Facility (No Bonuses)</option>';
 
+    // Find the default facility
+    let defaultFacilityId = null;
+
     // Add facility options
     facilities.forEach(facility => {
       const option = document.createElement('option');
       option.value = facility.id;
       option.textContent = facility.name;
       facilitySelect.appendChild(option);
+
+      // Check if this is the default facility
+      if (facility.usage === 'default') {
+        defaultFacilityId = facility.id;
+      }
     });
 
-    console.log(`Loaded ${facilities.length} facilities`);
+    // Select the default facility if one exists
+    if (defaultFacilityId) {
+      facilitySelect.value = defaultFacilityId;
+    }
+
+    console.log(`Loaded ${facilities.length} facilities${defaultFacilityId ? ', default facility selected' : ''}`);
   } catch (error) {
     console.error('Error loading facilities:', error);
   }
@@ -685,5 +712,279 @@ async function displayFacilityBonuses(facilityId) {
     bonusesEl.style.display = 'block';
   } catch (error) {
     console.error('Error displaying facility bonuses:', error);
+  }
+}
+
+// Display pricing information
+async function displayPricingInformation(pricing) {
+  try {
+    const pricingEl = document.getElementById('pricing-display');
+    const contentEl = document.getElementById('pricing-content');
+
+    if (!pricingEl || !contentEl) {
+      return;
+    }
+
+    // Format ISK values
+    const formatISK = (value) => {
+      if (!value || value === 0) return '0.00 ISK';
+      return value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' ISK';
+    };
+
+    let html = '<div class="pricing-breakdown">';
+
+    // Input Costs Section
+    html += '<div class="pricing-section">';
+    html += '<h5>Input Costs</h5>';
+
+    // Display detailed material list
+    if (pricing.inputCosts.materialPrices) {
+      html += '<div class="material-prices-list">';
+
+      // Get material names and sort by quantity (descending)
+      const materialEntries = await Promise.all(
+        Object.entries(pricing.inputCosts.materialPrices).map(async ([typeId, data]) => {
+          const typeName = await window.electronAPI.calculator.getTypeName(parseInt(typeId));
+          return {
+            typeId: parseInt(typeId),
+            typeName,
+            ...data
+          };
+        })
+      );
+
+      // Sort by quantity descending
+      materialEntries.sort((a, b) => b.quantity - a.quantity);
+
+      // Display each material
+      for (const material of materialEntries) {
+        html += '<div class="material-price-row">';
+        html += `<span class="material-name">${material.typeName}</span>`;
+        html += '<div class="material-price-details">';
+        html += `<span class="material-quantity">${formatNumber(material.quantity)}x @ ${formatISK(material.unitPrice)}</span>`;
+        html += `<span class="material-total-price">${formatISK(material.totalPrice)}</span>`;
+        html += '</div>';
+        html += '</div>';
+      }
+
+      html += '</div>'; // Close material-prices-list
+    }
+
+    // Total materials cost
+    html += '<div class="pricing-row pricing-subtotal">';
+    html += `<span><strong>Total Materials Cost:</strong></span>`;
+    html += `<span class="pricing-value"><strong>${formatISK(pricing.inputCosts.totalCost)}</strong></span>`;
+    html += '</div>';
+
+    if (pricing.inputCosts.itemsWithoutPrices > 0) {
+      html += '<div class="pricing-warning">';
+      html += `⚠️ ${pricing.inputCosts.itemsWithoutPrices} material(s) missing price data`;
+      html += '</div>';
+    }
+    html += '</div>';
+
+    // Manufacturing Fees Section
+    html += '<div class="pricing-section">';
+    html += '<h5>Manufacturing Fees</h5>';
+
+    // Job Cost Breakdown
+    if (pricing.jobCostBreakdown) {
+      const jcb = pricing.jobCostBreakdown;
+
+      // Job Cost Group
+      html += '<div class="fee-group">';
+      html += '<h6 class="fee-group-header">Job Costs</h6>';
+      html += '<div class="fee-group-content">';
+
+      // Estimated Item Value
+      html += '<div class="pricing-row">';
+      html += `<span class="indent-1">Estimated Item Value:</span>`;
+      html += `<span class="pricing-value">${formatISK(jcb.estimatedItemValue)}</span>`;
+      html += '</div>';
+
+      // System Cost Index
+      html += '<div class="pricing-row">';
+      html += `<span class="indent-1">System Cost Index:</span>`;
+      html += `<span class="pricing-value">${(jcb.systemCostIndex * 100).toFixed(2)}%</span>`;
+      html += '</div>';
+
+      // Job Gross Cost
+      html += '<div class="pricing-row">';
+      html += `<span class="indent-1">Job Gross Cost:</span>`;
+      html += `<span class="pricing-value">${formatISK(jcb.jobGrossCost)}</span>`;
+      html += '</div>';
+
+      // Structure Cost Bonus (if applicable)
+      if (jcb.structureCostBonus > 0) {
+        html += '<div class="pricing-row">';
+        html += `<span class="indent-1">Structure Cost Bonus:</span>`;
+        html += `<span class="pricing-value">-${jcb.structureCostBonus.toFixed(2)}%</span>`;
+        html += '</div>';
+      }
+
+      // Job Base Cost (after structure bonus)
+      html += '<div class="pricing-row">';
+      html += `<span class="indent-1">Job Base Cost:</span>`;
+      html += `<span class="pricing-value">${formatISK(jcb.jobBaseCost)}</span>`;
+      html += '</div>';
+
+      html += '</div>'; // Close fee-group-content
+
+      // Taxes subsection
+      html += '<div class="fee-subgroup">';
+      html += '<div class="fee-subgroup-header">Installation Taxes</div>';
+
+      // Facility Tax
+      html += '<div class="pricing-row">';
+      html += `<span class="indent-1">Facility Tax (${jcb.facilityTaxRate.toFixed(2)}%):</span>`;
+      html += `<span class="pricing-value">${formatISK(jcb.facilityTax)}</span>`;
+      html += '</div>';
+
+      // SCC Surcharge
+      html += '<div class="pricing-row">';
+      html += `<span class="indent-1">SCC Surcharge (4%):</span>`;
+      html += `<span class="pricing-value">${formatISK(jcb.sccSurcharge)}</span>`;
+      html += '</div>';
+
+      html += '</div>'; // Close fee-subgroup
+
+      // Total Job Cost
+      html += '<div class="pricing-row pricing-subtotal">';
+      html += `<span><strong>Total Job Cost:</strong></span>`;
+      html += `<span class="pricing-value"><strong>${formatISK(jcb.totalJobCost)}</strong></span>`;
+      html += '</div>';
+
+      html += '</div>'; // Close fee-group
+    } else {
+      // Fallback for legacy format
+      html += '<div class="pricing-row">';
+      html += `<span>Job Cost (Installation):</span>`;
+      html += `<span class="pricing-value">${formatISK(pricing.jobCost)}</span>`;
+      html += '</div>';
+    }
+
+    // Sales Tax and Broker's Fee breakdown
+    if (pricing.taxesBreakdown) {
+      const tb = pricing.taxesBreakdown;
+
+      // Trading Taxes Group
+      html += '<div class="fee-group">';
+      html += '<h6 class="fee-group-header">Trading Fees</h6>';
+
+      // Material Purchase Fees section (broker's fee on buying materials)
+      html += '<div class="fee-group-content">';
+      html += '<div class="fee-subgroup-header">Material Purchase Fees</div>';
+
+      html += '<div class="pricing-row">';
+      html += `<span class="indent-1">Materials Cost:</span>`;
+      html += `<span class="pricing-value">${formatISK(tb.materialsCost)}</span>`;
+      html += '</div>';
+
+      html += '<div class="pricing-row">';
+      const brokerSkillText = tb.brokerRelationsSkillLevel > 0 ? ` (Broker Relations ${tb.brokerRelationsSkillLevel})` : '';
+      html += `<span class="indent-1">Broker Fee Rate${brokerSkillText}:</span>`;
+      html += `<span class="pricing-value">${tb.materialBrokerFeeRate.toFixed(2)}%</span>`;
+      html += '</div>';
+
+      html += '<div class="pricing-row pricing-subtotal">';
+      html += `<span class="indent-1"><strong>Material Purchase Fees Total:</strong></span>`;
+      html += `<span class="pricing-value"><strong>${formatISK(tb.materialBrokerFee)}</strong></span>`;
+      html += '</div>';
+      html += '</div>'; // Close fee-group-content
+
+      // Product Selling Fees section (sales tax + broker's fee on selling products)
+      html += '<div class="fee-group-content">';
+      html += '<div class="fee-subgroup-header">Product Selling Fees</div>';
+
+      html += '<div class="pricing-row">';
+      html += `<span class="indent-1">Product Value:</span>`;
+      html += `<span class="pricing-value">${formatISK(tb.outputValue)}</span>`;
+      html += '</div>';
+
+      // Sales Tax
+      html += '<div class="pricing-row">';
+      const accountingSkillText = tb.accountingSkillLevel > 0 ? ` (Accounting ${tb.accountingSkillLevel})` : '';
+      html += `<span class="indent-1">Sales Tax Rate${accountingSkillText}:</span>`;
+      html += `<span class="pricing-value">${tb.effectiveSalesTaxRate.toFixed(2)}%</span>`;
+      html += '</div>';
+
+      html += '<div class="pricing-row">';
+      html += `<span class="indent-1">Sales Tax:</span>`;
+      html += `<span class="pricing-value">${formatISK(tb.productSalesTax)}</span>`;
+      html += '</div>';
+
+      // Broker's Fee
+      html += '<div class="pricing-row">';
+      const productBrokerSkillText = tb.brokerRelationsSkillLevel > 0 ? ` (Broker Relations ${tb.brokerRelationsSkillLevel})` : '';
+      html += `<span class="indent-1">Broker Fee Rate${productBrokerSkillText}:</span>`;
+      html += `<span class="pricing-value">${tb.productBrokerFeeRate.toFixed(2)}%</span>`;
+      html += '</div>';
+
+      html += '<div class="pricing-row">';
+      html += `<span class="indent-1">Broker Fee:</span>`;
+      html += `<span class="pricing-value">${formatISK(tb.productBrokerFee)}</span>`;
+      html += '</div>';
+
+      html += '<div class="pricing-row pricing-subtotal">';
+      html += `<span class="indent-1"><strong>Product Selling Fees Total:</strong></span>`;
+      html += `<span class="pricing-value"><strong>${formatISK(tb.totalProductFees)}</strong></span>`;
+      html += '</div>';
+      html += '</div>'; // Close fee-group-content
+
+      html += '</div>'; // Close fee-group
+    } else {
+      // Fallback for legacy format
+      html += '<div class="pricing-row">';
+      html += `<span>Sales Tax (Materials):</span>`;
+      html += `<span class="pricing-value">${formatISK(pricing.salesTax)}</span>`;
+      html += '</div>';
+    }
+    html += '</div>';
+
+    // Total Costs Section
+    html += '<div class="pricing-section pricing-total">';
+    html += '<div class="pricing-row">';
+    html += `<span><strong>Total Manufacturing Cost:</strong></span>`;
+    html += `<span class="pricing-value"><strong>${formatISK(pricing.totalCosts)}</strong></span>`;
+    html += '</div>';
+    html += '</div>';
+
+    // Output Value Section
+    html += '<div class="pricing-section">';
+    html += '<h5>Output Value</h5>';
+    html += '<div class="pricing-row">';
+    html += `<span>Product Value (${pricing.outputValue.quantity}x units):</span>`;
+    html += `<span class="pricing-value">${formatISK(pricing.outputValue.totalValue)}</span>`;
+    html += '</div>';
+
+    if (!pricing.outputValue.hasPrice) {
+      html += '<div class="pricing-warning">';
+      html += '⚠️ Product price data not available';
+      html += '</div>';
+    }
+    html += '</div>';
+
+    // Profit/Loss Section
+    html += '<div class="pricing-section pricing-profit">';
+    const isProfit = pricing.profit >= 0;
+    const profitClass = isProfit ? 'profit-positive' : 'profit-negative';
+
+    html += '<div class="pricing-row">';
+    html += `<span><strong>${isProfit ? 'Profit' : 'Loss'}:</strong></span>`;
+    html += `<span class="pricing-value ${profitClass}"><strong>${formatISK(Math.abs(pricing.profit))}</strong></span>`;
+    html += '</div>';
+
+    html += '<div class="pricing-row">';
+    html += `<span>Profit Margin:</span>`;
+    html += `<span class="pricing-value ${profitClass}">${pricing.profitMargin.toFixed(2)}%</span>`;
+    html += '</div>';
+    html += '</div>';
+
+    html += '</div>'; // Close pricing-breakdown
+
+    contentEl.innerHTML = html;
+    pricingEl.style.display = 'block';
+  } catch (error) {
+    console.error('Error displaying pricing information:', error);
   }
 }
