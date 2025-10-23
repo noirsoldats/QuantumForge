@@ -520,6 +520,61 @@
   font-size: 1.2em;
 }
 
+/* Facility Bonuses */
+.facility-bonuses {
+  background: rgba(100, 180, 255, 0.05);
+  border: 1px solid rgba(100, 180, 255, 0.2);
+  border-radius: 8px;
+  padding: 20px;
+  margin-bottom: 20px;
+}
+
+.facility-bonuses h4 {
+  color: #64b4ff;
+  margin-bottom: 15px;
+  font-size: 1.1em;
+}
+
+.facility-info p {
+  color: #e0e0e0;
+  margin: 8px 0;
+  font-size: 0.95em;
+}
+
+.facility-info strong {
+  color: #64b4ff;
+}
+
+.facility-info em {
+  color: #a0a0b0;
+}
+
+.rig-list {
+  list-style: none;
+  padding-left: 20px;
+  margin: 10px 0;
+}
+
+.rig-list li {
+  color: #e0e0e0;
+  margin: 5px 0;
+  position: relative;
+}
+
+.rig-list li:before {
+  content: "▸";
+  color: #64b4ff;
+  position: absolute;
+  left: -15px;
+}
+
+.bonus-note {
+  color: #a0a0b0 !important;
+  font-size: 0.85em !important;
+  font-style: italic;
+  margin-top: 10px !important;
+}
+
 /* Responsive Design */
 @media (max-width: 768px) {
   .blueprint-header {

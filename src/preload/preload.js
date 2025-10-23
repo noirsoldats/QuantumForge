@@ -59,6 +59,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getTradeHubs: () => ipcRenderer.invoke('sde:getTradeHubs'),
     searchMarketItems: (searchTerm) => ipcRenderer.invoke('sde:searchMarketItems', searchTerm),
     getItemDetails: (typeID) => ipcRenderer.invoke('sde:getItemDetails', typeID),
+    getSystemSecurityStatus: (systemId) => ipcRenderer.invoke('sde:getSystemSecurityStatus', systemId),
   },
 
   // Skills API
@@ -119,11 +120,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Blueprint Calculator API
   calculator: {
     searchBlueprints: (searchTerm, limit) => ipcRenderer.invoke('calculator:searchBlueprints', searchTerm, limit),
-    calculateMaterials: (blueprintTypeId, runs, meLevel, characterId) =>
-      ipcRenderer.invoke('calculator:calculateMaterials', blueprintTypeId, runs, meLevel, characterId),
+    calculateMaterials: (blueprintTypeId, runs, meLevel, characterId, facilityId) =>
+      ipcRenderer.invoke('calculator:calculateMaterials', blueprintTypeId, runs, meLevel, characterId, facilityId),
     getBlueprintProduct: (blueprintTypeId) => ipcRenderer.invoke('calculator:getBlueprintProduct', blueprintTypeId),
     getTypeName: (typeId) => ipcRenderer.invoke('calculator:getTypeName', typeId),
     getOwnedBlueprintME: (characterId, blueprintTypeId) => ipcRenderer.invoke('calculator:getOwnedBlueprintME', characterId, blueprintTypeId),
+    getRigBonuses: (rigTypeId) => ipcRenderer.invoke('calculator:getRigBonuses', rigTypeId),
   },
 
   // Cost Indices API

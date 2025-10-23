@@ -31,6 +31,9 @@ async function initializeCalculator() {
     // Get default character
     currentDefaultCharacter = await window.electronAPI.esi.getDefaultCharacter();
 
+    // Load facilities into dropdown
+    await loadFacilities();
+
     // Setup event listeners
     setupEventListeners();
 
@@ -247,12 +250,14 @@ async function handleCalculate() {
 
   try {
     const characterId = currentDefaultCharacter?.characterId || null;
+    const facilityId = document.getElementById('facility-select').value || null;
 
     const result = await window.electronAPI.calculator.calculateMaterials(
       currentBlueprint.typeID,
       runs,
       meLevel,
-      characterId
+      characterId,
+      facilityId
     );
 
     if (result.error) {
@@ -260,7 +265,7 @@ async function handleCalculate() {
     }
 
     // Display results
-    await displayMaterialsCalculation(result, runs);
+    await displayMaterialsCalculation(result, runs, facilityId);
 
     hideLoading();
   } catch (error) {
@@ -341,9 +346,20 @@ async function handleUpdateData() {
 }
 
 // Display materials calculation results
-async function displayMaterialsCalculation(result, runs) {
+async function displayMaterialsCalculation(result, runs, facilityId = null) {
   // Show materials display
   document.getElementById('materials-display').classList.remove('hidden');
+
+  // Display facility bonuses if a facility is selected
+  if (facilityId) {
+    await displayFacilityBonuses(facilityId);
+  } else {
+    // Hide facility bonuses section if no facility selected
+    const facilityBonusesEl = document.getElementById('facility-bonuses');
+    if (facilityBonusesEl) {
+      facilityBonusesEl.style.display = 'none';
+    }
+  }
 
   // Display total materials
   await displayTotalMaterials(result.materials);
@@ -563,4 +579,111 @@ function setupCharacterMenu(defaultCharacter) {
       menu.style.display = 'none';
     }
   });
+}
+
+// Load facilities into dropdown
+async function loadFacilities() {
+  try {
+    const facilities = await window.electronAPI.facilities.getFacilities();
+    const facilitySelect = document.getElementById('facility-select');
+
+    if (!facilitySelect) {
+      console.error('Facility select element not found');
+      return;
+    }
+
+    // Clear existing options except the first one (No Facility)
+    facilitySelect.innerHTML = '<option value="">No Facility (No Bonuses)</option>';
+
+    // Add facility options
+    facilities.forEach(facility => {
+      const option = document.createElement('option');
+      option.value = facility.id;
+      option.textContent = facility.name;
+      facilitySelect.appendChild(option);
+    });
+
+    console.log(`Loaded ${facilities.length} facilities`);
+  } catch (error) {
+    console.error('Error loading facilities:', error);
+  }
+}
+
+// Display facility bonuses information
+async function displayFacilityBonuses(facilityId) {
+  try {
+    const facility = await window.electronAPI.facilities.getFacility(facilityId);
+    const bonusesEl = document.getElementById('facility-bonuses');
+    const contentEl = document.getElementById('facility-bonuses-content');
+
+    if (!facility || !bonusesEl || !contentEl) {
+      return;
+    }
+
+    // Get security status if we have a systemId
+    if (facility.systemId) {
+      facility.securityStatus = await window.electronAPI.sde.getSystemSecurityStatus(facility.systemId);
+    }
+
+    let bonusesHtml = `<div class="facility-info">`;
+    bonusesHtml += `<p><strong>Facility:</strong> ${facility.name}</p>`;
+
+    // Structure bonus (all Upwell structures)
+    if (facility.structureTypeId) {
+      bonusesHtml += `<p><strong>Structure Bonus:</strong> -1% Material Cost</p>`;
+    }
+
+    // Rig bonuses
+    if (facility.rigs && facility.rigs.length > 0) {
+      bonusesHtml += `<p><strong>Rigs Installed:</strong> ${facility.rigs.length}</p>`;
+      bonusesHtml += `<ul class="rig-list">`;
+
+      for (const rig of facility.rigs) {
+        // Handle both string typeIds and object format {typeId: ...}
+        const rigTypeId = typeof rig === 'string' ? parseInt(rig) : rig.typeId;
+        const rigName = await window.electronAPI.calculator.getTypeName(rigTypeId);
+        bonusesHtml += `<li>${rigName}</li>`;
+      }
+
+      bonusesHtml += `</ul>`;
+
+      // Security status info
+      const secStatus = facility.securityStatus || 0.5;
+      const secMultiplier = secStatus >= 0.5 ? 1.0 : secStatus > 0 ? 1.9 : 2.1;
+      const secInfo = secStatus >= 0.5 ? 'High-Sec (1.0x)' :
+                      secStatus > 0 ? 'Low-Sec (1.9x)' :
+                      'Null-Sec/WH (2.1x)';
+      bonusesHtml += `<p><strong>Security Multiplier:</strong> ${secInfo}</p>`;
+
+      // Calculate total rig ME bonus for display
+      let totalRigBonus = 0;
+      for (const rig of facility.rigs) {
+        const rigTypeId = typeof rig === 'string' ? parseInt(rig) : rig.typeId;
+        // Get rig bonuses from a simple query (we'll need to add this)
+        try {
+          const rigBonuses = await window.electronAPI.calculator.getRigBonuses(rigTypeId);
+          if (rigBonuses && rigBonuses.materialBonus) {
+            totalRigBonus += rigBonuses.materialBonus * secMultiplier;
+          }
+        } catch (error) {
+          console.error('Error getting rig bonuses for display:', error);
+        }
+      }
+
+      if (totalRigBonus !== 0) {
+        bonusesHtml += `<p><strong>Rigs Bonus:</strong> ${totalRigBonus.toFixed(2)}% Material Reduction</p>`;
+      }
+
+      bonusesHtml += `<p class="bonus-note">Note: Rig bonuses are applied to items they affect based on their type</p>`;
+    } else {
+      bonusesHtml += `<p><em>No rigs installed</em></p>`;
+    }
+
+    bonusesHtml += `</div>`;
+
+    contentEl.innerHTML = bonusesHtml;
+    bonusesEl.style.display = 'block';
+  } catch (error) {
+    console.error('Error displaying facility bonuses:', error);
+  }
 }

@@ -834,6 +834,35 @@ async function getRigEffects(typeId) {
   }
 }
 
+/**
+ * Get system security status
+ * @param {number} systemId - Solar system ID
+ * @returns {Promise<number>} Security status (0.0 to 1.0, or negative for null/wormhole)
+ */
+async function getSystemSecurityStatus(systemId) {
+  try {
+    const database = await getDatabase();
+
+    return new Promise((resolve, reject) => {
+      database.get(
+        'SELECT security FROM mapSolarSystems WHERE solarSystemID = ?',
+        [systemId],
+        (err, row) => {
+          if (err) {
+            console.error('Error querying system security:', err);
+            reject(err);
+          } else {
+            resolve(row ? row.security : 0.5); // Default to high-sec if not found
+          }
+        }
+      );
+    });
+  } catch (error) {
+    console.error('Error getting system security:', error);
+    return 0.5; // Default to high-sec on error
+  }
+}
+
 module.exports = {
   getDatabase,
   closeDatabase,
@@ -857,4 +886,5 @@ module.exports = {
   getStructureRigs,
   getStructureBonuses,
   getRigEffects,
+  getSystemSecurityStatus,
 };

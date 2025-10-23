@@ -100,6 +100,12 @@
               <label for="runs">Production Runs</label>
               <input type="number" id="runs" class="control-input" value="1" min="1" step="1">
             </div>
+            <div class="control-group">
+              <label for="facility-select">Manufacturing Facility</label>
+              <select id="facility-select" class="control-input">
+                <option value="">No Facility (No Bonuses)</option>
+              </select>
+            </div>
             <button id="calculate-btn" class="primary-button">Calculate Materials</button>
           </div>
         </div>
@@ -107,6 +113,12 @@
         <!-- Materials Display -->
         <div id="materials-display" class="materials-display hidden">
           <h3>Required Materials</h3>
+
+          <!-- Facility Bonuses Info -->
+          <div id="facility-bonuses" class="facility-bonuses" style="display: none;">
+            <h4>Manufacturing Facility Bonuses</h4>
+            <div id="facility-bonuses-content"></div>
+          </div>
 
           <!-- Total Materials Summary -->
           <div class="materials-summary">

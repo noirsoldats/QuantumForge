@@ -430,8 +430,21 @@ app.whenReady().then(() => {
     return searchBlueprints(searchTerm, limit);
   });
 
-  ipcMain.handle('calculator:calculateMaterials', (event, blueprintTypeId, runs, meLevel, characterId) => {
-    return calculateBlueprintMaterials(blueprintTypeId, runs, meLevel, characterId);
+  ipcMain.handle('calculator:calculateMaterials', async (event, blueprintTypeId, runs, meLevel, characterId, facilityId) => {
+    // Get facility if facilityId is provided
+    let facility = null;
+    if (facilityId) {
+      const { getManufacturingFacility } = require('./settings-manager');
+      facility = getManufacturingFacility(facilityId);
+
+      // Get system security status from SDE if we have a systemId
+      if (facility && facility.systemId) {
+        const { getSystemSecurityStatus } = require('./sde-database');
+        facility.securityStatus = await getSystemSecurityStatus(facility.systemId);
+      }
+    }
+
+    return calculateBlueprintMaterials(blueprintTypeId, runs, meLevel, characterId, facility);
   });
 
   ipcMain.handle('calculator:getBlueprintProduct', (event, blueprintTypeId) => {
@@ -444,6 +457,11 @@ app.whenReady().then(() => {
 
   ipcMain.handle('calculator:getOwnedBlueprintME', (event, characterId, blueprintTypeId) => {
     return getOwnedBlueprintME(characterId, blueprintTypeId);
+  });
+
+  ipcMain.handle('calculator:getRigBonuses', (event, rigTypeId) => {
+    const { getRigBonusesFromSDE } = require('./rig-bonuses');
+    return getRigBonusesFromSDE(rigTypeId);
   });
 
   // Handle IPC for market data operations
@@ -788,6 +806,16 @@ app.whenReady().then(() => {
     } catch (error) {
       console.error('Error getting item details:', error);
       return null;
+    }
+  });
+
+  ipcMain.handle('sde:getSystemSecurityStatus', async (event, systemId) => {
+    try {
+      const { getSystemSecurityStatus } = require('./sde-database');
+      return await getSystemSecurityStatus(systemId);
+    } catch (error) {
+      console.error('Error getting system security status:', error);
+      return 0.5; // Default to high-sec on error
     }
   });
 

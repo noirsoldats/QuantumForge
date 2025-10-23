@@ -117,26 +117,39 @@ function getDefaultFacility() {
 }
 
 /**
- * Calculate material quantity with ME (Material Efficiency) bonus and structure bonus
+ * Calculate material quantity with ME (Material Efficiency) bonus, structure bonus, and rig bonuses
  * @param {number} baseQuantity - Base material quantity
  * @param {number} meLevel - ME level (0-10)
  * @param {number} runs - Number of production runs
+ * @param {Object} facility - Facility object with rigs and security status (optional)
+ * @param {number} productGroupId - Product group ID for rig bonus matching
  * @returns {number} Adjusted quantity
  */
-function calculateMaterialQuantity(baseQuantity, meLevel, runs) {
+function calculateMaterialQuantity(baseQuantity, meLevel, runs, facility = null, productGroupId = null) {
   // Step 1: Apply ME bonus from blueprint
-  // ME formula: quantity = max(runs, runs * baseQuantity * (1 - ME/100))
+  // ME formula: quantity = runs * baseQuantity * (1 - ME/100)
   const meReduction = meLevel / 100;
   const afterME = runs * baseQuantity * (1 - meReduction);
 
-  // Step 2: Apply structure bonus (in series after ME)
-  const defaultFacility = getDefaultFacility();
-  let finalQuantity = afterME;
+  // Step 2: Apply structure bonus (1% for all Upwell structures)
+  let afterStructure = afterME;
+  if (facility && facility.structureTypeId) {
+    // All Upwell structures provide 1% material reduction
+    const structureReduction = 0.01; // 1%
+    afterStructure = afterME * (1 - structureReduction);
+  }
 
-  if (defaultFacility && defaultFacility.facilityType === 'structure') {
-    // Structure provides 1% material reduction (applied after ME)
-    const structureReduction = defaultFacility.structureMEBonus / 100;
-    finalQuantity = afterME * (1 - structureReduction);
+  // Step 3: Apply rig bonuses (if facility has rigs and product matches)
+  let finalQuantity = afterStructure;
+  if (facility && facility.rigs && facility.rigs.length > 0 && productGroupId) {
+    const { getRigMaterialBonus } = require('./rig-bonuses');
+    const rigBonus = getRigMaterialBonus(facility.rigs, productGroupId, facility.securityStatus);
+
+    if (rigBonus !== 0) {
+      // Rig bonus is negative (e.g., -2.0 for 2% reduction)
+      // Apply as: quantity * (1 + bonus/100)
+      finalQuantity = afterStructure * (1 + rigBonus / 100);
+    }
   }
 
   // Final calculation: max(runs, ceil(finalQuantity))
@@ -220,15 +233,40 @@ function getOwnedBlueprintME(characterId, blueprintTypeId) {
 }
 
 /**
+ * Get product group ID from SDE
+ * @param {number} productTypeId - Product type ID
+ * @returns {number|null} Group ID
+ */
+function getProductGroupId(productTypeId) {
+  try {
+    const dbPath = getSDEPath();
+    const db = new Database(dbPath, { readonly: true });
+
+    const result = db.prepare(`
+      SELECT groupID
+      FROM invTypes
+      WHERE typeID = ?
+    `).get(productTypeId);
+
+    db.close();
+    return result ? result.groupID : null;
+  } catch (error) {
+    console.error('Error getting product group ID:', error);
+    return null;
+  }
+}
+
+/**
  * Calculate total materials needed for a blueprint with recursive sub-component calculation
  * @param {number} blueprintTypeId - Blueprint type ID
  * @param {number} runs - Number of production runs
  * @param {number} meLevel - ME level (0-10)
  * @param {number} characterId - Character ID for owned blueprints (optional)
+ * @param {Object} facility - Facility object with rigs and security status (optional)
  * @param {number} depth - Current recursion depth (for internal use)
  * @returns {Object} Calculation result with materials and breakdown
  */
-function calculateBlueprintMaterials(blueprintTypeId, runs = 1, meLevel = 0, characterId = null, depth = 0) {
+function calculateBlueprintMaterials(blueprintTypeId, runs = 1, meLevel = 0, characterId = null, facility = null, depth = 0) {
   const MAX_DEPTH = 10; // Prevent infinite recursion
 
   if (depth > MAX_DEPTH) {
@@ -254,13 +292,16 @@ function calculateBlueprintMaterials(blueprintTypeId, runs = 1, meLevel = 0, cha
   // Get base materials
   const baseMaterials = getBlueprintMaterials(blueprintTypeId);
 
-  // Calculate adjusted quantities with ME bonus
+  // Get product group ID for rig bonus matching
+  const productGroupId = getProductGroupId(product.typeID);
+
+  // Calculate adjusted quantities with ME bonus and facility bonuses
   const adjustedMaterials = {};
   const intermediateComponents = [];
   const rawMaterials = [];
 
   for (const material of baseMaterials) {
-    const adjustedQty = calculateMaterialQuantity(material.quantity, meLevel, runs);
+    const adjustedQty = calculateMaterialQuantity(material.quantity, meLevel, runs, facility, productGroupId);
 
     // Check if this material can be manufactured
     const subBlueprintId = getBlueprintForProduct(material.typeID);
@@ -275,6 +316,7 @@ function calculateBlueprintMaterials(blueprintTypeId, runs = 1, meLevel = 0, cha
         adjustedQty,
         subME,
         characterId,
+        facility,  // Pass facility through recursion
         depth + 1
       );
 
@@ -376,5 +418,6 @@ module.exports = {
   getOwnedBlueprintME,
   calculateBlueprintMaterials,
   searchBlueprints,
-  getDefaultFacility
+  getDefaultFacility,
+  getProductGroupId
 };
