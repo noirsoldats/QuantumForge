@@ -275,7 +275,7 @@ async function calculateManufacturingJobCost(blueprintTypeId, runs, systemId, fa
 /**
  * Calculate trading fees for manufacturing
  * Material Purchase Fees: Broker's fee on buying materials (3% base, -0.3% per Broker Relations level)
- * Product Selling Fees: Sales tax (5% base, -10% per Accounting level) + Broker's fee (3% base, -0.3% per Broker Relations level)
+ * Product Selling Fees: Sales tax (7.5% base, -11% per Accounting level) + Broker's fee (3% base, -0.3% per Broker Relations level)
  * @param {number} materialsCost - Total cost of materials
  * @param {number} outputValue - Total value of output product
  * @param {number} accountingSkillLevel - Accounting skill level (0-5)
@@ -292,8 +292,8 @@ function calculateManufacturingTaxes(materialsCost, outputValue, accountingSkill
   const materialBrokerFee = materialsCost * (effectiveBrokerFeeRate / 100);
 
   // Product Selling Fees: Sales tax + Broker's fee on selling products
-  const baseSalesTaxRate = 5.0; // 5%
-  const salesTaxReduction = accountingSkillLevel * 10.0; // 10% per level
+  const baseSalesTaxRate = 7.5; // 7.5%
+  const salesTaxReduction = accountingSkillLevel * 11.0; // 11% per level
   const effectiveSalesTaxRate = baseSalesTaxRate * (1 - salesTaxReduction / 100);
   const productSalesTax = outputValue * (effectiveSalesTaxRate / 100);
   const productBrokerFee = outputValue * (effectiveBrokerFeeRate / 100);

@@ -402,6 +402,12 @@ app.whenReady().then(() => {
     createBlueprintsWindow(characterId);
   });
 
+  // Manufacturing Summary Window
+  ipcMain.handle('manufacturingSummary:openWindow', () => {
+    const { createManufacturingSummaryWindow } = require('./manufacturing-summary-window');
+    createManufacturingSummaryWindow();
+  });
+
   ipcMain.handle('blueprints:openInCalculator', (event, blueprintTypeId, meLevel) => {
     // Focus or create main window
     if (mainWindow && !mainWindow.isDestroyed()) {
@@ -469,6 +475,11 @@ app.whenReady().then(() => {
   ipcMain.handle('calculator:getRigBonuses', (event, rigTypeId) => {
     const { getRigBonusesFromSDE } = require('./rig-bonuses');
     return getRigBonusesFromSDE(rigTypeId);
+  });
+
+  ipcMain.handle('calculator:getAllBlueprints', (event, limit) => {
+    const { getAllBlueprints } = require('./blueprint-calculator');
+    return getAllBlueprints(limit);
   });
 
   // Handle IPC for market data operations
@@ -828,6 +839,27 @@ app.whenReady().then(() => {
     } catch (error) {
       console.error('Error getting system security status:', error);
       return 0.5; // Default to high-sec on error
+    }
+  });
+
+  // Item Volume Handlers
+  ipcMain.handle('sde:getItemVolume', async (event, typeId) => {
+    try {
+      const { getItemVolume } = require('./sde-database');
+      return await getItemVolume(typeId);
+    } catch (error) {
+      console.error('Error getting item volume:', error);
+      return 0;
+    }
+  });
+
+  ipcMain.handle('sde:getItemVolumes', async (event, typeIds) => {
+    try {
+      const { getItemVolumes } = require('./sde-database');
+      return await getItemVolumes(typeIds);
+    } catch (error) {
+      console.error('Error getting item volumes:', error);
+      return {};
     }
   });
 

@@ -43,6 +43,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
   }
 
+  const manufacturingSummaryCard = document.getElementById('manufacturing-summary-card');
+  if (manufacturingSummaryCard) {
+    manufacturingSummaryCard.addEventListener('click', () => {
+      console.log('Opening Manufacturing Summary');
+      window.electronAPI.manufacturingSummary.openWindow();
+    });
+  }
+
   // Load default character avatar
   await loadDefaultCharacterAvatar();
 

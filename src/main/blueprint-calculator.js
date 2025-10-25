@@ -450,6 +450,49 @@ function searchBlueprints(searchTerm, limit = 20) {
   }
 }
 
+/**
+ * Get all manufacturing blueprints from SDE
+ * @param {number} limit - Maximum number of blueprints to return (default: all)
+ * @returns {Array} Array of blueprint objects
+ */
+function getAllBlueprints(limit = null) {
+  try {
+    const dbPath = getSDEPath();
+    const db = new Database(dbPath, { readonly: true });
+
+    let query = `
+      SELECT DISTINCT
+        it.typeID,
+        it.typeName,
+        ig.groupName as category,
+        iap.productTypeID,
+        pt.typeName as productName,
+        pt.groupID as productGroupID,
+        iap.quantity as productQuantity,
+        ia.time as baseTime
+      FROM invTypes it
+      JOIN invGroups ig ON it.groupID = ig.groupID
+      JOIN industryActivityProducts iap ON it.typeID = iap.typeID AND iap.activityID = 1
+      JOIN invTypes pt ON iap.productTypeID = pt.typeID
+      LEFT JOIN industryActivity ia ON it.typeID = ia.typeID AND ia.activityID = 1
+      WHERE it.published = 1
+      ORDER BY ig.groupName, it.typeName
+    `;
+
+    if (limit) {
+      query += ` LIMIT ${limit}`;
+    }
+
+    const blueprints = db.prepare(query).all();
+
+    db.close();
+    return blueprints;
+  } catch (error) {
+    console.error('Error getting all blueprints:', error);
+    return [];
+  }
+}
+
 module.exports = {
   getBlueprintMaterials,
   getBlueprintProduct,
@@ -459,6 +502,7 @@ module.exports = {
   getOwnedBlueprintME,
   calculateBlueprintMaterials,
   searchBlueprints,
+  getAllBlueprints,
   getDefaultFacility,
   getProductGroupId
 };

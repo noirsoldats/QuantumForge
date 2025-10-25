@@ -772,14 +772,31 @@ async function handleMarketDataRefresh(isRetry = false) {
     const settings = await window.electronAPI.market.getSettings();
     const regionId = settings.regionId || 10000002;
 
+    // Step 1: Update market data
+    const progressLabel = document.getElementById('progress-label');
+    if (progressLabel) progressLabel.textContent = 'Fetching market orders...';
+
     const result = await window.electronAPI.market.manualRefresh(regionId);
 
     // Remove progress listener
     window.electronAPI.market.removeFetchProgressListener();
 
     if (result.success) {
+      // Step 2: Update adjusted prices
+      if (progressLabel) progressLabel.textContent = 'Fetching adjusted prices...';
+      updateProgressBar(1, 3, 33);
+
+      await window.electronAPI.market.refreshAdjustedPrices();
+
+      // Step 3: Update cost indices
+      if (progressLabel) progressLabel.textContent = 'Fetching system cost indices...';
+      updateProgressBar(2, 3, 66);
+
+      await window.electronAPI.costIndices.fetch();
+
       // Show complete state
-      updateProgressBar(1, 1, 100);
+      if (progressLabel) progressLabel.textContent = 'Update complete!';
+      updateProgressBar(3, 3, 100);
 
       refreshBtn.innerHTML = `
         <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">

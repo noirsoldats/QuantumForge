@@ -863,6 +863,78 @@ async function getSystemSecurityStatus(systemId) {
   }
 }
 
+/**
+ * Get volume for a single item type (packaged volume if available, otherwise regular volume)
+ * @param {number} typeId - Type ID
+ * @returns {Promise<number>} Volume in m³
+ */
+async function getItemVolume(typeId) {
+  try {
+    const database = await getDatabase();
+
+    return new Promise((resolve, reject) => {
+      database.get(
+        `SELECT
+          COALESCE(iv.volume, it.volume, 0) as volume
+         FROM invTypes it
+         LEFT JOIN invVolumes iv ON it.typeID = iv.typeID
+         WHERE it.typeID = ?`,
+        [typeId],
+        (err, row) => {
+          if (err) {
+            console.error('Error querying item volume:', err);
+            reject(err);
+          } else {
+            resolve(row ? (row.volume || 0) : 0);
+          }
+        }
+      );
+    });
+  } catch (error) {
+    console.error('Error getting item volume:', error);
+    return 0;
+  }
+}
+
+/**
+ * Get volumes for multiple item types (packaged volume if available, otherwise regular volume)
+ * @param {number[]} typeIds - Array of type IDs
+ * @returns {Promise<Object>} Map of typeId -> volume
+ */
+async function getItemVolumes(typeIds) {
+  try {
+    const database = await getDatabase();
+
+    return new Promise((resolve, reject) => {
+      const placeholders = typeIds.map(() => '?').join(',');
+      database.all(
+        `SELECT
+          it.typeID,
+          COALESCE(iv.volume, it.volume, 0) as volume
+         FROM invTypes it
+         LEFT JOIN invVolumes iv ON it.typeID = iv.typeID
+         WHERE it.typeID IN (${placeholders})`,
+        typeIds,
+        (err, rows) => {
+          if (err) {
+            console.error('Error querying item volumes:', err);
+            reject(err);
+          } else {
+            const volumeMap = {};
+            rows.forEach(row => {
+              volumeMap[row.typeID] = row.volume || 0;
+            });
+            resolve(volumeMap);
+          }
+        }
+      );
+    });
+  } catch (error) {
+    console.error('Error getting item volumes:', error);
+    return {};
+  }
+}
+
 module.exports = {
   getDatabase,
   closeDatabase,
@@ -887,4 +959,6 @@ module.exports = {
   getStructureBonuses,
   getRigEffects,
   getSystemSecurityStatus,
+  getItemVolume,
+  getItemVolumes,
 };

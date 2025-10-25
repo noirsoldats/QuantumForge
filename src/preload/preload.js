@@ -60,6 +60,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     searchMarketItems: (searchTerm) => ipcRenderer.invoke('sde:searchMarketItems', searchTerm),
     getItemDetails: (typeID) => ipcRenderer.invoke('sde:getItemDetails', typeID),
     getSystemSecurityStatus: (systemId) => ipcRenderer.invoke('sde:getSystemSecurityStatus', systemId),
+    getItemVolume: (typeId) => ipcRenderer.invoke('sde:getItemVolume', typeId),
+    getItemVolumes: (typeIds) => ipcRenderer.invoke('sde:getItemVolumes', typeIds),
   },
 
   // Skills API
@@ -127,6 +129,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getTypeName: (typeId) => ipcRenderer.invoke('calculator:getTypeName', typeId),
     getOwnedBlueprintME: (characterId, blueprintTypeId) => ipcRenderer.invoke('calculator:getOwnedBlueprintME', characterId, blueprintTypeId),
     getRigBonuses: (rigTypeId) => ipcRenderer.invoke('calculator:getRigBonuses', rigTypeId),
+    getAllBlueprints: (limit) => ipcRenderer.invoke('calculator:getAllBlueprints', limit),
   },
 
   // Cost Indices API
@@ -152,5 +155,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getStructureRigs: () => ipcRenderer.invoke('facilities:getStructureRigs'),
     getStructureBonuses: (typeId) => ipcRenderer.invoke('facilities:getStructureBonuses', typeId),
     getRigEffects: (typeId) => ipcRenderer.invoke('facilities:getRigEffects', typeId),
+  },
+
+  // Manufacturing Summary API
+  manufacturingSummary: {
+    openWindow: () => ipcRenderer.invoke('manufacturingSummary:openWindow'),
   },
 });
