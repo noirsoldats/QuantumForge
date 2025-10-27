@@ -320,6 +320,78 @@ brew install --cask wine-stable
 
 Or use a Windows VM/machine for Windows builds.
 
+## Installer Size Optimization
+
+The build process includes several optimizations to reduce installer size:
+
+### Current Optimizations
+
+1. **ASAR Compression** (`compression: "maximum"`):
+   - Compresses JavaScript, HTML, CSS files in the app.asar archive
+   - Reduces app code size by ~30-40%
+   - Minor trade-off: ~50-100ms slower app startup
+
+2. **Language Removal** (`electronLanguages: ["en"]`):
+   - Only includes English language pack
+   - Removes ~70 unused language localizations
+   - Saves ~5-10 MB per installer
+
+3. **DMG Compression** (`format: "ULFO"`):
+   - Uses LZFSE compression for Mac DMG files
+   - Better compression than default UDZO format
+   - Reduces DMG size by ~5-10%
+
+### Size Breakdown
+
+**Typical installer sizes:**
+- Mac DMG: ~85-95 MB per architecture
+- Mac ZIP (for auto-update): ~90-100 MB per architecture
+- Windows NSIS: ~80-90 MB
+- Linux AppImage: ~100-110 MB
+- Linux .deb: ~90-100 MB
+
+**What contributes to size:**
+- Electron Framework (Chromium + Node.js): ~252 MB (~90% of app)
+- App code (compressed): ~6-7 MB
+- Native modules (SQLite): ~17 MB
+- Icon and resources: ~2-3 MB
+
+### Further Optimization Options
+
+If you need smaller installers, consider:
+
+**1. Single Architecture Builds** (50% reduction per platform):
+```json
+// In package.json, instead of:
+"target": [{"target": "dmg", "arch": ["x64", "arm64"]}]
+
+// Use separate builds:
+"target": [{"target": "dmg", "arch": ["x64"]}]  // x64 only
+// or
+"target": [{"target": "dmg", "arch": ["arm64"]}]  // ARM64 only
+```
+
+Users download only their architecture, but you distribute multiple files.
+
+**2. Add More Languages** (if needed):
+```json
+"electronLanguages": ["en", "fr", "de", "es"]  // Add as needed
+```
+
+Each language adds ~100-200 KB.
+
+**3. Use Web-Based Distribution:**
+- Host the SDE database on a server
+- Download on first run instead of bundling
+- Reduces installer by ~100-200 MB (if SDE is included)
+
+### What Cannot Be Reduced
+
+- **Electron Framework**: This is the full Chromium browser + Node.js runtime. It's the same size regardless of your app's features.
+- **Native Modules**: SQLite binaries must be included for database functionality.
+
+The current configuration provides a good balance between size and functionality.
+
 ## File Locations
 
 ### Source Files

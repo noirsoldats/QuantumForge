@@ -19,9 +19,27 @@
     "version:minor": "npm version minor",
     "version:major": "npm version major",
     "rebuild": "electron-rebuild",
+    "rebuild:node": "npm rebuild better-sqlite3 --build-from-source",
+    "rebuild:electron": "electron-rebuild",
     "postinstall": "electron-builder install-app-deps",
     "clean": "rm -rf dist/",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "pretest": "npm run rebuild:node",
+    "test": "jest",
+    "test:watch": "jest --watch",
+    "test:coverage": "jest --coverage",
+    "test:sde": "jest tests/sde",
+    "posttest": "npm run rebuild:electron"
+  },
+  "jest": {
+    "testEnvironment": "node",
+    "testMatch": ["**/tests/**/*.test.js"],
+    "setupFilesAfterEnv": ["<rootDir>/tests/setup.js"],
+    "collectCoverageFrom": [
+      "src/main/**/*.js",
+      "!src/main/main.js"
+    ],
+    "coverageDirectory": "coverage",
+    "verbose": true
   },
   "keywords": [
     "eve-online",
@@ -39,13 +57,20 @@
   },
   "type": "commonjs",
   "devDependencies": {
+    "@types/jest": "^30.0.0",
     "electron": "^38.2.2",
     "electron-builder": "^26.0.12",
-    "electron-rebuild": "^3.2.9"
+    "electron-rebuild": "^3.2.9",
+    "jest": "^30.2.0"
   },
   "build": {
     "appId": "com.quantumforge.app",
     "productName": "Quantum Forge",
+    "asar": true,
+    "compression": "maximum",
+    "electronLanguages": [
+      "en"
+    ],
     "directories": {
       "output": "dist",
       "buildResources": "build"
@@ -66,11 +91,17 @@
       "target": [
         {
           "target": "dmg",
-          "arch": ["x64", "arm64"]
+          "arch": [
+            "x64",
+            "arm64"
+          ]
         },
         {
           "target": "zip",
-          "arch": ["x64", "arm64"]
+          "arch": [
+            "x64",
+            "arm64"
+          ]
         }
       ],
       "icon": "build/icon.icns",
@@ -96,17 +127,23 @@
       "window": {
         "width": 540,
         "height": 380
-      }
+      },
+      "format": "ULFO"
     },
     "win": {
       "target": [
         {
           "target": "nsis",
-          "arch": ["x64", "ia32"]
+          "arch": [
+            "x64",
+            "ia32"
+          ]
         },
         {
           "target": "portable",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         }
       ],
       "icon": "build/icon.ico"
