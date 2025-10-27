@@ -469,11 +469,17 @@ function getAllBlueprints(limit = null) {
         pt.typeName as productName,
         pt.groupID as productGroupID,
         iap.quantity as productQuantity,
-        ia.time as baseTime
+        ia.time as baseTime,
+        pg.groupName as productGroupName,
+        pc.categoryName as productCategoryName,
+        COALESCE(mt.metaGroupID, 1) as productMetaGroupID
       FROM invTypes it
       JOIN invGroups ig ON it.groupID = ig.groupID
       JOIN industryActivityProducts iap ON it.typeID = iap.typeID AND iap.activityID = 1
       JOIN invTypes pt ON iap.productTypeID = pt.typeID
+      JOIN invGroups pg ON pt.groupID = pg.groupID
+      JOIN invCategories pc ON pg.categoryID = pc.categoryID
+      LEFT JOIN invMetaTypes mt ON pt.typeID = mt.typeID
       LEFT JOIN industryActivity ia ON it.typeID = ia.typeID AND ia.activityID = 1
       WHERE it.published = 1
       ORDER BY ig.groupName, it.typeName

@@ -3,7 +3,6 @@ node_modules/
 
 # Build outputs
 dist/
-build/
 
 # Logs
 npm-debug.log*
@@ -36,3 +35,4 @@ out/
 # Claude
 .claude/
 CLAUDE.md
+SVR.md

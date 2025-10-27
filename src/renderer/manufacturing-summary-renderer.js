@@ -5,6 +5,33 @@ let calculatedData = [];
 let currentFilter = 'owned';
 let currentSort = { column: 'profit', direction: 'desc' };
 
+// Filter configuration
+let blueprintFilters = loadFilterConfig();
+
+function loadFilterConfig() {
+  try {
+    const saved = localStorage.getItem('manufacturing-summary-filters');
+    if (saved) {
+      return JSON.parse(saved);
+    }
+  } catch (error) {
+    console.error('Error loading filter config:', error);
+  }
+  // Default: all filters enabled
+  return {
+    tech: ['T1', 'T2', 'T3', 'Storyline', 'Navy', 'Pirate'],
+    category: ['Ships', 'Drones', 'Modules', 'Ammo/Charges', 'Components', 'Rigs', 'Deployables', 'Subsystems', 'Structures', 'Structure Rigs', 'Structure Modules', 'Boosters', 'Celestials', 'Reactions']
+  };
+}
+
+function saveFilterConfig() {
+  try {
+    localStorage.setItem('manufacturing-summary-filters', JSON.stringify(blueprintFilters));
+  } catch (error) {
+    console.error('Error saving filter config:', error);
+  }
+}
+
 // Column configuration
 const ALL_COLUMNS = [
   // Default columns
@@ -132,10 +159,23 @@ function setupEventListeners() {
   // Apply columns button
   document.getElementById('apply-columns-btn')?.addEventListener('click', applyColumns);
 
+  // Filter modal handlers
+  document.getElementById('configure-filters-btn')?.addEventListener('click', openFilterConfigModal);
+  document.getElementById('close-filter-modal-btn')?.addEventListener('click', closeFilterConfigModal);
+  document.getElementById('select-all-filters-btn')?.addEventListener('click', selectAllFilters);
+  document.getElementById('clear-all-filters-btn')?.addEventListener('click', clearAllFilters);
+  document.getElementById('apply-filters-btn')?.addEventListener('click', applyFilters);
+
   // Modal backdrop click
   document.getElementById('column-config-modal')?.addEventListener('click', (e) => {
     if (e.target.id === 'column-config-modal') {
       closeColumnConfigModal();
+    }
+  });
+
+  document.getElementById('filter-config-modal')?.addEventListener('click', (e) => {
+    if (e.target.id === 'filter-config-modal') {
+      closeFilterConfigModal();
     }
   });
 }
@@ -210,6 +250,14 @@ async function calculateSummary() {
         showLoading(`Calculating... ${completed}/${blueprints.length}`);
         // Allow UI to update
         await new Promise(resolve => setTimeout(resolve, 0));
+      }
+
+      // Check if blueprint matches filters
+      const techLevel = determineTechLevel(blueprint);
+      const category = determineCategory(blueprint);
+
+      if (!blueprintFilters.tech.includes(techLevel) || !blueprintFilters.category.includes(category)) {
+        continue; // Skip this blueprint
       }
 
       try {
@@ -337,7 +385,7 @@ async function calculateBlueprintData(blueprint, facility, svrPeriod, defaultCha
     const roi = pricing.totalCosts > 0 ? (pricing.profit / pricing.totalCosts) * 100 : 0;
 
     // Determine tech level
-    const techLevel = determineTechLevel(blueprint.typeName);
+    const techLevel = determineTechLevel(blueprint);
 
     // Blueprint type
     const blueprintType = ownedBP?.isCopy ? 'BPC' : 'BPO';
@@ -506,11 +554,117 @@ async function calculateTotalSellVolume(productTypeId) {
   }
 }
 
-// Determine tech level from blueprint name
-function determineTechLevel(blueprintName) {
-  if (blueprintName.includes('II')) return 'T2';
-  if (blueprintName.includes('III')) return 'T3';
-  return 'T1';
+// Determine tech level from blueprint data using metaGroupID
+function determineTechLevel(blueprint) {
+  const metaGroupID = blueprint.productMetaGroupID;
+
+  // Map metaGroupID to tech level
+  // Reference from invMetaGroups table:
+  // 1 = Tech I, 2 = Tech II, 3 = Storyline, 4 = Faction, 14 = Tech III
+  // 5 = Officer, 6 = Deadspace, 52 = Structure Faction, 53 = Structure Tech II
+
+  switch (metaGroupID) {
+    case 2:  // Tech II
+    case 53: // Structure Tech II
+      return 'T2';
+    case 14: // Tech III
+      return 'T3';
+    case 3:  // Storyline
+      return 'Storyline';
+    case 4:  // Faction (Navy)
+    case 52: // Structure Faction
+      return 'Navy';
+    case 5:  // Officer (Pirate)
+    case 6:  // Deadspace (Pirate)
+      return 'Pirate';
+    case 1:  // Tech I
+    case 54: // Structure Tech I
+    default:
+      return 'T1';
+  }
+}
+
+// Map SDE categories/groups to our filter categories
+function determineCategory(blueprint) {
+  const sdeCategory = blueprint.productCategoryName || '';
+  const sdeGroup = blueprint.productGroupName || '';
+
+  // Ships - all products in Ship category
+  if (sdeCategory === 'Ship') {
+    return 'Ships';
+  }
+
+  // Drones - all products in Drone category
+  if (sdeCategory === 'Drone') {
+    return 'Drones';
+  }
+
+  // Fighters - group with Drones
+  if (sdeCategory === 'Fighter') {
+    return 'Drones';
+  }
+
+  // Modules - all products in Module category
+  if (sdeCategory === 'Module') {
+    return 'Modules';
+  }
+
+  // Ammo/Charges - all products in Charge category
+  if (sdeCategory === 'Charge') {
+    return 'Ammo/Charges';
+  }
+
+  // Subsystems - all products in Subsystem category
+  if (sdeCategory === 'Subsystem') {
+    return 'Subsystems';
+  }
+
+  // Deployables - all products in Deployable category
+  if (sdeCategory === 'Deployable') {
+    return 'Deployables';
+  }
+
+  // Structure Modules - all products in Structure Module category
+  if (sdeCategory === 'Structure Module') {
+    return 'Structure Modules';
+  }
+
+  // Structures - all products in Structure category
+  if (sdeCategory === 'Structure') {
+    // Check if it's a structure rig
+    if (sdeGroup && sdeGroup.includes('Rig')) {
+      return 'Structure Rigs';
+    }
+    return 'Structures';
+  }
+
+  // Boosters - products in Implant category with Booster groups
+  if (sdeCategory === 'Implant' && sdeGroup && sdeGroup.includes('Booster')) {
+    return 'Boosters';
+  }
+
+  // Reactions - all products in Reaction category
+  if (sdeCategory === 'Reaction') {
+    return 'Reactions';
+  }
+
+  // Celestials - all products in Celestial or Starbase categories
+  if (sdeCategory === 'Celestial' || sdeCategory === 'Starbase' || sdeCategory === 'Station') {
+    return 'Celestials';
+  }
+
+  // Components - check Material category or component-related groups
+  if (sdeCategory === 'Material' || sdeCategory === 'Commodity') {
+    return 'Components';
+  }
+
+  // Rigs - check for module category with rig groups (not structure rigs)
+  if (sdeGroup && sdeGroup.includes('Rig') && sdeCategory !== 'Structure') {
+    return 'Rigs';
+  }
+
+  // Default to Components for anything else (covers materials, intermediate products, etc.)
+  return 'Components';
 }
 
 // Sort table
@@ -785,6 +939,72 @@ function applyColumns() {
   displayResults();
 
   closeColumnConfigModal();
+}
+
+// Filter Configuration Functions
+function openFilterConfigModal() {
+  const modal = document.getElementById('filter-config-modal');
+
+  // Set checkbox states based on current filters
+  document.querySelectorAll('.filter-checkbox').forEach(checkbox => {
+    const filterType = checkbox.getAttribute('data-filter-type');
+    const value = checkbox.value;
+    checkbox.checked = blueprintFilters[filterType]?.includes(value) || false;
+  });
+
+  modal.style.display = 'flex';
+}
+
+function closeFilterConfigModal() {
+  const modal = document.getElementById('filter-config-modal');
+  modal.style.display = 'none';
+}
+
+function selectAllFilters() {
+  document.querySelectorAll('.filter-checkbox').forEach(checkbox => {
+    checkbox.checked = true;
+  });
+}
+
+function clearAllFilters() {
+  document.querySelectorAll('.filter-checkbox').forEach(checkbox => {
+    checkbox.checked = false;
+  });
+}
+
+function applyFilters() {
+  // Collect selected filters
+  const newFilters = {
+    tech: [],
+    category: []
+  };
+
+  document.querySelectorAll('.filter-checkbox').forEach(checkbox => {
+    if (checkbox.checked) {
+      const filterType = checkbox.getAttribute('data-filter-type');
+      const value = checkbox.value;
+      newFilters[filterType].push(value);
+    }
+  });
+
+  // Validate at least one filter is selected
+  if (newFilters.tech.length === 0 && newFilters.category.length === 0) {
+    alert('You must have at least one filter selected');
+    return;
+  }
+
+  blueprintFilters = newFilters;
+
+  // Save configuration
+  saveFilterConfig();
+
+  // Re-calculate with new filters
+  closeFilterConfigModal();
+
+  // If we already have calculated data, recalculate
+  if (calculatedData.length > 0) {
+    calculateSummary();
+  }
 }
 
 function setupColumnDragAndDrop() {

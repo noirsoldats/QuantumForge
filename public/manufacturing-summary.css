@@ -543,6 +543,54 @@ body {
   font-weight: 500;
 }
 
+/* Filter Configuration Modal */
+.filter-config-modal {
+  max-width: 700px;
+}
+
+.filter-section {
+  margin-bottom: 24px;
+}
+
+.filter-section:last-child {
+  margin-bottom: 0;
+}
+
+.filter-section-title {
+  color: #64b4ff;
+  font-size: 1.1em;
+  margin: 0 0 12px 0;
+  font-weight: 600;
+}
+
+.filter-checkboxes {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 12px;
+}
+
+.filter-checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  color: #d0d0e0;
+  font-size: 14px;
+  padding: 8px;
+  border-radius: 4px;
+  transition: background 0.2s;
+}
+
+.filter-checkbox-label:hover {
+  background: rgba(100, 180, 255, 0.05);
+}
+
+.filter-checkbox {
+  width: 18px;
+  height: 18px;
+  cursor: pointer;
+}
+
 /* Responsive Design */
 @media (max-width: 768px) {
   .settings-controls {

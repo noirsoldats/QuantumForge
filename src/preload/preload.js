@@ -161,4 +161,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
   manufacturingSummary: {
     openWindow: () => ipcRenderer.invoke('manufacturingSummary:openWindow'),
   },
+
+  // App API (updates, etc.)
+  app: {
+    checkForUpdates: () => ipcRenderer.invoke('app:checkForUpdates'),
+    onUpdateAvailable: (callback) => ipcRenderer.on('update-available', (event, info) => callback(info)),
+    onUpdateNotAvailable: (callback) => ipcRenderer.on('update-not-available', () => callback()),
+    onUpdateDownloadProgress: (callback) => ipcRenderer.on('update-download-progress', (event, progress) => callback(progress)),
+    onUpdateDownloaded: (callback) => ipcRenderer.on('update-downloaded', (event, info) => callback(info)),
+    onUpdateError: (callback) => ipcRenderer.on('update-error', (event, error) => callback(error)),
+  },
 });

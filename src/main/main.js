@@ -1,6 +1,7 @@
 const { app, BrowserWindow, ipcMain, dialog } = require('electron');
 const path = require('path');
 const { createSettingsWindow } = require('./settings-window');
+const { initAutoUpdater, checkForUpdates } = require('./auto-updater');
 const { getWindowBounds, trackWindowState } = require('./window-state-manager');
 const {
   loadSettings,
@@ -160,6 +161,9 @@ function createWindow() {
     // Quit the app when main window is closed on all platforms
     app.quit();
   });
+
+  // Initialize auto-updater after window is created
+  initAutoUpdater(mainWindow);
 }
 
 app.whenReady().then(() => {
@@ -861,6 +865,11 @@ app.whenReady().then(() => {
       console.error('Error getting item volumes:', error);
       return {};
     }
+  });
+
+  // Auto-updater IPC handler
+  ipcMain.handle('app:checkForUpdates', async () => {
+    checkForUpdates();
   });
 
   app.on('activate', () => {

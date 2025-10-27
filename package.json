@@ -1,17 +1,26 @@
 {
   "name": "quantum-forge",
   "productName": "Quantum Forge",
-  "version": "1.0.0",
+  "version": "0.5.0",
   "description": "Eve Online Industry Management Tool",
   "main": "src/main/main.js",
   "scripts": {
     "start": "electron .",
     "dev": "NODE_ENV=development electron .",
-    "build": "electron-builder",
-    "build:win": "electron-builder --win",
-    "build:mac": "electron-builder --mac",
-    "build:linux": "electron-builder --linux",
-    "build:all": "electron-builder -mwl",
+    "build": "electron-builder && npm run rebuild",
+    "build:win": "electron-builder --win && npm run rebuild",
+    "build:mac": "electron-builder --mac && npm run rebuild",
+    "build:linux": "electron-builder --linux && npm run rebuild",
+    "build:all": "electron-builder -mwl && npm run rebuild",
+    "release": "electron-builder --publish always && npm run rebuild",
+    "release:win": "electron-builder --win --publish always && npm run rebuild",
+    "release:mac": "electron-builder --mac --publish always && npm run rebuild",
+    "version:patch": "npm version patch",
+    "version:minor": "npm version minor",
+    "version:major": "npm version major",
+    "rebuild": "electron-rebuild",
+    "postinstall": "electron-builder install-app-deps",
+    "clean": "rm -rf dist/",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [
@@ -23,6 +32,11 @@
   ],
   "author": "",
   "license": "MIT",
+  "homepage": "https://github.com/YOUR_GITHUB_USERNAME/QuantumForge",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/YOUR_GITHUB_USERNAME/QuantumForge.git"
+  },
   "type": "commonjs",
   "devDependencies": {
     "electron": "^38.2.2",
@@ -33,46 +47,97 @@
     "appId": "com.quantumforge.app",
     "productName": "Quantum Forge",
     "directories": {
-      "output": "dist"
+      "output": "dist",
+      "buildResources": "build"
     },
     "files": [
       "src/**/*",
       "public/**/*",
       "package.json"
     ],
+    "publish": {
+      "provider": "github",
+      "owner": "YOUR_GITHUB_USERNAME",
+      "repo": "QuantumForge",
+      "releaseType": "release"
+    },
     "mac": {
       "category": "public.app-category.productivity",
       "target": [
-        "dmg",
-        "zip"
+        {
+          "target": "dmg",
+          "arch": ["x64", "arm64"]
+        },
+        {
+          "target": "zip",
+          "arch": ["x64", "arm64"]
+        }
       ],
-      "icon": "build/icon.icns"
+      "icon": "build/icon.icns",
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist"
+    },
+    "dmg": {
+      "contents": [
+        {
+          "x": 130,
+          "y": 220
+        },
+        {
+          "x": 410,
+          "y": 220,
+          "type": "link",
+          "path": "/Applications"
+        }
+      ],
+      "background": "build/background.png",
+      "window": {
+        "width": 540,
+        "height": 380
+      }
     },
     "win": {
       "target": [
-        "nsis",
-        "portable"
+        {
+          "target": "nsis",
+          "arch": ["x64", "ia32"]
+        },
+        {
+          "target": "portable",
+          "arch": ["x64"]
+        }
       ],
       "icon": "build/icon.ico"
-    },
-    "linux": {
-      "target": [
-        "AppImage",
-        "deb",
-        "rpm"
-      ],
-      "category": "Utility",
-      "icon": "build/icons"
     },
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
-      "createStartMenuShortcut": true
+      "createStartMenuShortcut": true,
+      "installerHeader": "build/installerHeader.png",
+      "installerSidebar": "build/installerSidebar.png",
+      "uninstallerSidebar": "build/installerSidebar.png",
+      "installerHeaderIcon": "build/icon.ico",
+      "deleteAppDataOnUninstall": false,
+      "allowElevation": true,
+      "perMachine": false
+    },
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "category": "Utility",
+      "icon": "build/icons",
+      "maintainer": "Quantum Forge Development Team"
     }
   },
   "dependencies": {
     "better-sqlite3": "^12.4.1",
+    "electron-log": "^5.4.3",
+    "electron-updater": "^6.6.2",
     "sqlite3": "^5.1.7",
     "unbzip2-stream": "^1.4.3"
   }
