@@ -59,6 +59,15 @@ const ALL_COLUMNS = [
   { id: 'm3-inputs', label: 'M³ Inputs', default: false, sortable: true, align: 'right' },
   { id: 'm3-outputs', label: 'M³ Outputs', default: false, sortable: true, align: 'right' },
   { id: 'current-sell-orders', label: 'Current Sell Orders', default: false, sortable: true, align: 'right' },
+
+  // New Market Trend Columns
+  { id: 'profit-velocity', label: 'Profit Velocity (ISK/Day)', default: false, sortable: true, align: 'right' },
+  { id: 'market-saturation', label: 'Market Saturation Index', default: false, sortable: true, align: 'right' },
+  { id: 'price-momentum', label: 'Price Momentum', default: false, sortable: true, align: 'right' },
+  { id: 'profit-stability', label: 'Profit Stability Index', default: false, sortable: true, align: 'right' },
+  { id: 'demand-growth', label: 'Demand Growth Rate', default: false, sortable: true, align: 'right' },
+  { id: 'material-cost-volatility', label: 'Material Cost Volatility', default: false, sortable: true, align: 'right' },
+  { id: 'market-health-score', label: 'Market Health Score', default: false, sortable: true, align: 'right' },
 ];
 
 let visibleColumns = loadColumnConfig();
@@ -428,6 +437,15 @@ async function calculateBlueprintData(blueprint, facility, svrPeriod, defaultCha
     const intermediateComponents = result.breakdown?.[0]?.intermediateComponents || [];
     const manufacturingSteps = 1 + intermediateComponents.length;
 
+    // Calculate new market trend metrics
+    const profitVelocity = await calculateProfitVelocity(blueprint.productTypeID, pricing.profit, 30);
+    const marketSaturation = await calculateMarketSaturation(blueprint.productTypeID, currentSellOrders, 30);
+    const priceMomentum = await calculatePriceMomentum(blueprint.productTypeID);
+    const profitStability = await calculateProfitStability(blueprint.productTypeID, pricing.profit, 28);
+    const demandGrowth = await calculateDemandGrowth(blueprint.productTypeID);
+    const materialCostVolatility = await calculateMaterialCostVolatility(result.materials, 30);
+    const marketHealthScore = calculateMarketHealthScore(svr, marketSaturation, priceMomentum, profitStability);
+
     return {
       blueprintTypeId: blueprint.typeID,
       category: blueprint.category || 'Unknown',
@@ -455,6 +473,14 @@ async function calculateBlueprintData(blueprint, facility, svrPeriod, defaultCha
       m3Inputs: totalInputVolume,
       m3Outputs: totalOutputVolume,
       currentSellOrders,
+      // New market trend metrics
+      profitVelocity,
+      marketSaturation,
+      priceMomentum,
+      profitStability,
+      demandGrowth,
+      materialCostVolatility,
+      marketHealthScore,
     };
   } catch (error) {
     console.error(`Error calculating data for ${blueprint.typeName}:`, error);
@@ -550,6 +576,265 @@ async function calculateTotalSellVolume(productTypeId) {
     return totalSellVolume;
   } catch (error) {
     console.error('Error calculating total sell volume:', error);
+    return 0;
+  }
+}
+
+// Calculate Profit Velocity (ISK/Day)
+// Formula: (Average profit per unit) × (Average units sold per day)
+async function calculateProfitVelocity(productTypeId, profitPerUnit, period = 30) {
+  try {
+    const marketSettings = await window.electronAPI.market.getSettings();
+    const regionId = marketSettings.regionId || 10000002;
+
+    const allHistory = await window.electronAPI.market.fetchHistory(regionId, productTypeId);
+    if (!allHistory || allHistory.length === 0) return 0;
+
+    // Filter to recent period
+    const cutoffDate = new Date();
+    cutoffDate.setDate(cutoffDate.getDate() - period);
+    const recentHistory = allHistory.filter(day => new Date(day.date) >= cutoffDate);
+    if (recentHistory.length === 0) return 0;
+
+    // Calculate average daily sales volume
+    const totalSold = recentHistory.reduce((sum, day) => sum + (day.volume || 0), 0);
+    const avgDailySales = totalSold / recentHistory.length;
+
+    // Profit Velocity = profit per unit × average daily sales
+    return profitPerUnit * avgDailySales;
+  } catch (error) {
+    console.error('Error calculating profit velocity:', error);
+    return 0;
+  }
+}
+
+// Calculate Market Saturation Index (MSI)
+// Formula: Total Sell Volume Listed / Average Daily Sales Volume
+async function calculateMarketSaturation(productTypeId, totalSellVolume, period = 30) {
+  try {
+    const marketSettings = await window.electronAPI.market.getSettings();
+    const regionId = marketSettings.regionId || 10000002;
+
+    const allHistory = await window.electronAPI.market.fetchHistory(regionId, productTypeId);
+    if (!allHistory || allHistory.length === 0) return 0;
+
+    // Filter to recent period
+    const cutoffDate = new Date();
+    cutoffDate.setDate(cutoffDate.getDate() - period);
+    const recentHistory = allHistory.filter(day => new Date(day.date) >= cutoffDate);
+    if (recentHistory.length === 0) return 0;
+
+    // Calculate average daily sales volume
+    const totalSold = recentHistory.reduce((sum, day) => sum + (day.volume || 0), 0);
+    const avgDailySales = totalSold / recentHistory.length;
+
+    if (avgDailySales === 0) return 0;
+
+    // MSI = sell orders volume / daily sales volume
+    // Higher MSI = oversupply, Lower MSI = healthy demand
+    return totalSellVolume / avgDailySales;
+  } catch (error) {
+    console.error('Error calculating market saturation:', error);
+    return 0;
+  }
+}
+
+// Calculate Price Momentum
+// Formula: (MA_7d - MA_30d) / MA_30d
+async function calculatePriceMomentum(productTypeId) {
+  try {
+    const marketSettings = await window.electronAPI.market.getSettings();
+    const regionId = marketSettings.regionId || 10000002;
+
+    const allHistory = await window.electronAPI.market.fetchHistory(regionId, productTypeId);
+    if (!allHistory || allHistory.length < 30) return 0; // Need at least 30 days
+
+    // Sort by date descending (most recent first)
+    const sortedHistory = [...allHistory].sort((a, b) => new Date(b.date) - new Date(a.date));
+
+    // Calculate 7-day moving average
+    const last7Days = sortedHistory.slice(0, 7);
+    const ma7 = last7Days.reduce((sum, day) => sum + (day.average || 0), 0) / last7Days.length;
+
+    // Calculate 30-day moving average
+    const last30Days = sortedHistory.slice(0, 30);
+    const ma30 = last30Days.reduce((sum, day) => sum + (day.average || 0), 0) / last30Days.length;
+
+    if (ma30 === 0) return 0;
+
+    // Momentum = (MA_7d - MA_30d) / MA_30d
+    // Positive = price rising, Negative = price falling
+    return (ma7 - ma30) / ma30;
+  } catch (error) {
+    console.error('Error calculating price momentum:', error);
+    return 0;
+  }
+}
+
+// Calculate Profit Stability Index (PSI)
+// Formula: 1 - (Standard Deviation of Weekly Margin / Average Weekly Margin)
+async function calculateProfitStability(productTypeId, currentProfit, period = 28) {
+  try {
+    const marketSettings = await window.electronAPI.market.getSettings();
+    const regionId = marketSettings.regionId || 10000002;
+
+    const allHistory = await window.electronAPI.market.fetchHistory(regionId, productTypeId);
+    if (!allHistory || allHistory.length < period) return 0;
+
+    // Get recent period
+    const cutoffDate = new Date();
+    cutoffDate.setDate(cutoffDate.getDate() - period);
+    const recentHistory = allHistory.filter(day => new Date(day.date) >= cutoffDate);
+    if (recentHistory.length === 0) return 0;
+
+    // Calculate daily profit margins (approximation using price changes)
+    const dailyMargins = recentHistory.map(day => day.average || 0);
+
+    // Calculate mean and standard deviation
+    const mean = dailyMargins.reduce((sum, val) => sum + val, 0) / dailyMargins.length;
+    const variance = dailyMargins.reduce((sum, val) => sum + Math.pow(val - mean, 2), 0) / dailyMargins.length;
+    const stdDev = Math.sqrt(variance);
+
+    if (mean === 0) return 0;
+
+    // PSI = 1 - (StdDev / Mean)
+    // Higher PSI = more stable profits
+    const psi = 1 - (stdDev / mean);
+    return Math.max(0, Math.min(1, psi)); // Clamp between 0 and 1
+  } catch (error) {
+    console.error('Error calculating profit stability:', error);
+    return 0;
+  }
+}
+
+// Calculate Demand Growth Rate (DGR)
+// Formula: (Avg daily sales last 7 days - Avg daily sales previous 7 days) / Avg daily sales previous 7 days
+async function calculateDemandGrowth(productTypeId) {
+  try {
+    const marketSettings = await window.electronAPI.market.getSettings();
+    const regionId = marketSettings.regionId || 10000002;
+
+    const allHistory = await window.electronAPI.market.fetchHistory(regionId, productTypeId);
+    if (!allHistory || allHistory.length < 14) return 0; // Need at least 14 days
+
+    // Sort by date descending (most recent first)
+    const sortedHistory = [...allHistory].sort((a, b) => new Date(b.date) - new Date(a.date));
+
+    // Last 7 days
+    const last7Days = sortedHistory.slice(0, 7);
+    const avgLast7 = last7Days.reduce((sum, day) => sum + (day.volume || 0), 0) / last7Days.length;
+
+    // Previous 7 days (days 8-14)
+    const previous7Days = sortedHistory.slice(7, 14);
+    const avgPrevious7 = previous7Days.reduce((sum, day) => sum + (day.volume || 0), 0) / previous7Days.length;
+
+    if (avgPrevious7 === 0) return 0;
+
+    // DGR = (recent - previous) / previous
+    // Positive = demand growing, Negative = demand shrinking
+    return (avgLast7 - avgPrevious7) / avgPrevious7;
+  } catch (error) {
+    console.error('Error calculating demand growth:', error);
+    return 0;
+  }
+}
+
+// Calculate Material Cost Volatility (MCV)
+// Formula: σ(material adjusted prices) / mean(material adjusted prices)
+async function calculateMaterialCostVolatility(materials, period = 30) {
+  try {
+    if (!materials || Object.keys(materials).length === 0) return 0;
+
+    const marketSettings = await window.electronAPI.market.getSettings();
+    const regionId = marketSettings.regionId || 10000002;
+
+    // Collect price history for all materials
+    const materialPriceHistories = [];
+    for (const [typeId, quantity] of Object.entries(materials)) {
+      try {
+        const history = await window.electronAPI.market.fetchHistory(regionId, parseInt(typeId));
+        if (history && history.length > 0) {
+          materialPriceHistories.push({ typeId: parseInt(typeId), quantity, history });
+        }
+      } catch (error) {
+        console.error(`Error fetching history for material ${typeId}:`, error);
+      }
+    }
+
+    if (materialPriceHistories.length === 0) return 0;
+
+    // Calculate daily total material costs
+    const cutoffDate = new Date();
+    cutoffDate.setDate(cutoffDate.getDate() - period);
+
+    // Get all unique dates
+    const allDates = new Set();
+    materialPriceHistories.forEach(mph => {
+      mph.history.forEach(day => {
+        const dayDate = new Date(day.date);
+        if (dayDate >= cutoffDate) {
+          allDates.add(day.date);
+        }
+      });
+    });
+
+    const sortedDates = Array.from(allDates).sort();
+    if (sortedDates.length < 2) return 0;
+
+    // Calculate total material cost for each date
+    const dailyCosts = sortedDates.map(date => {
+      let totalCost = 0;
+      materialPriceHistories.forEach(mph => {
+        const dayData = mph.history.find(d => d.date === date);
+        if (dayData) {
+          totalCost += (dayData.average || 0) * mph.quantity;
+        }
+      });
+      return totalCost;
+    }).filter(cost => cost > 0);
+
+    if (dailyCosts.length < 2) return 0;
+
+    // Calculate mean and standard deviation
+    const mean = dailyCosts.reduce((sum, val) => sum + val, 0) / dailyCosts.length;
+    const variance = dailyCosts.reduce((sum, val) => sum + Math.pow(val - mean, 2), 0) / dailyCosts.length;
+    const stdDev = Math.sqrt(variance);
+
+    if (mean === 0) return 0;
+
+    // MCV = StdDev / Mean (coefficient of variation)
+    // Higher MCV = more volatile material costs
+    return stdDev / mean;
+  } catch (error) {
+    console.error('Error calculating material cost volatility:', error);
+    return 0;
+  }
+}
+
+// Calculate Market Health Score (Composite Score)
+// Formula: 0.3 × SVR + 0.3 × (1 - MSI) + 0.2 × Momentum + 0.2 × PSI
+function calculateMarketHealthScore(svr, msi, momentum, psi) {
+  try {
+    // Normalize SVR to 0-1 range (cap at 2.0 for very high SVR)
+    const normalizedSVR = Math.min(svr / 2.0, 1.0);
+
+    // Normalize MSI to 0-1 range (inverse - lower is better, cap at 10 days)
+    const normalizedMSI = Math.max(0, 1 - (msi / 10));
+
+    // Normalize Momentum to 0-1 range (assuming -50% to +50% range)
+    const normalizedMomentum = Math.max(0, Math.min(1, (momentum + 0.5) / 1.0));
+
+    // PSI is already 0-1
+
+    // Weighted composite score
+    const healthScore = (0.3 * normalizedSVR) +
+                       (0.3 * normalizedMSI) +
+                       (0.2 * normalizedMomentum) +
+                       (0.2 * psi);
+
+    return healthScore;
+  } catch (error) {
+    console.error('Error calculating market health score:', error);
     return 0;
   }
 }
@@ -737,6 +1022,34 @@ function sortTable(column, direction = null) {
       case 'roi':
         aVal = a.roi;
         bVal = b.roi;
+        break;
+      case 'profit-velocity':
+        aVal = a.profitVelocity || 0;
+        bVal = b.profitVelocity || 0;
+        break;
+      case 'market-saturation':
+        aVal = a.marketSaturation || 0;
+        bVal = b.marketSaturation || 0;
+        break;
+      case 'price-momentum':
+        aVal = a.priceMomentum || 0;
+        bVal = b.priceMomentum || 0;
+        break;
+      case 'profit-stability':
+        aVal = a.profitStability || 0;
+        bVal = b.profitStability || 0;
+        break;
+      case 'demand-growth':
+        aVal = a.demandGrowth || 0;
+        bVal = b.demandGrowth || 0;
+        break;
+      case 'material-cost-volatility':
+        aVal = a.materialCostVolatility || 0;
+        bVal = b.materialCostVolatility || 0;
+        break;
+      case 'market-health-score':
+        aVal = a.marketHealthScore || 0;
+        bVal = b.marketHealthScore || 0;
         break;
       default:
         return 0;
@@ -1121,6 +1434,46 @@ function getCellContent(columnId, item) {
       return `<td class="text-right">${item.m3Outputs?.toFixed(2) || '0.00'}</td>`;
     case 'current-sell-orders':
       return `<td class="text-right">${item.currentSellOrders?.toLocaleString() || '0'}</td>`;
+
+    // New Market Trend Columns
+    case 'profit-velocity': {
+      const pvClass = (item.profitVelocity || 0) > 0 ? 'positive' : 'neutral';
+      return `<td class="text-right ${pvClass}">${formatISK(item.profitVelocity || 0)}</td>`;
+    }
+    case 'market-saturation': {
+      // Lower MSI is better (less saturated)
+      const msi = item.marketSaturation || 0;
+      const msiClass = msi < 3 ? 'positive' : msi < 7 ? 'neutral' : 'negative';
+      return `<td class="text-right ${msiClass}">${msi.toFixed(2)}</td>`;
+    }
+    case 'price-momentum': {
+      const momentum = item.priceMomentum || 0;
+      const momentumClass = momentum > 0.05 ? 'positive' : momentum < -0.05 ? 'negative' : 'neutral';
+      const momentumPct = (momentum * 100).toFixed(2);
+      return `<td class="text-right ${momentumClass}">${momentumPct}%</td>`;
+    }
+    case 'profit-stability': {
+      const psi = item.profitStability || 0;
+      const psiClass = psi > 0.7 ? 'positive' : psi > 0.4 ? 'neutral' : 'negative';
+      return `<td class="text-right ${psiClass}">${psi.toFixed(3)}</td>`;
+    }
+    case 'demand-growth': {
+      const dgr = item.demandGrowth || 0;
+      const dgrClass = dgr > 0.1 ? 'positive' : dgr < -0.1 ? 'negative' : 'neutral';
+      const dgrPct = (dgr * 100).toFixed(2);
+      return `<td class="text-right ${dgrClass}">${dgrPct}%</td>`;
+    }
+    case 'material-cost-volatility': {
+      const mcv = item.materialCostVolatility || 0;
+      const mcvClass = mcv < 0.15 ? 'positive' : mcv < 0.3 ? 'neutral' : 'negative';
+      return `<td class="text-right ${mcvClass}">${mcv.toFixed(3)}</td>`;
+    }
+    case 'market-health-score': {
+      const mhs = item.marketHealthScore || 0;
+      const mhsClass = mhs > 0.7 ? 'positive' : mhs > 0.4 ? 'neutral' : 'negative';
+      return `<td class="text-right ${mhsClass}">${mhs.toFixed(3)}</td>`;
+    }
+
     default:
       return '<td>N/A</td>';
   }
