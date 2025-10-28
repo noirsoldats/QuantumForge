@@ -37,6 +37,11 @@ function populateSettings() {
   if (desktopNotifications) {
     desktopNotifications.checked = currentSettings.general?.desktopNotifications !== false;
   }
+
+  const updatesNotification = document.getElementById('updates-notification');
+  if (updatesNotification) {
+    updatesNotification.checked = currentSettings.general?.updatesNotification !== false;
+  }
 }
 
 // Save a specific setting
@@ -120,6 +125,15 @@ document.addEventListener('DOMContentLoaded', async () => {
     desktopNotifications.addEventListener('change', (e) => {
       console.log('Desktop notifications:', e.target.checked);
       saveSetting('general', 'desktopNotifications', e.target.checked);
+    });
+  }
+
+  // Updates notification
+  const updatesNotification = document.getElementById('updates-notification');
+  if (updatesNotification) {
+    updatesNotification.addEventListener('change', (e) => {
+      console.log('Updates notification:', e.target.checked);
+      saveSetting('general', 'updatesNotification', e.target.checked);
     });
   }
 
@@ -353,20 +367,33 @@ async function loadSdeStatus() {
   try {
     const status = await window.electronAPI.sde.checkUpdate();
     sdeUpdateStatus = status;
-    updateSdeUI(status);
+
+    // Load validation status from settings
+    const settings = await window.electronAPI.settings.load();
+    const validationStatus = settings.sde?.validationStatus;
+
+    // Check if backup exists
+    const hasBackup = await window.electronAPI.sde.hasBackup();
+    const backupVersion = hasBackup ? await window.electronAPI.sde.getBackupVersion() : null;
+
+    updateSdeUI(status, validationStatus, hasBackup, backupVersion);
   } catch (error) {
     console.error('Error loading SDE status:', error);
-    updateSdeUI({ error: error.message });
+    updateSdeUI({ error: error.message }, null, false, null);
   }
 }
 
 // Update SDE UI elements
-function updateSdeUI(status) {
+function updateSdeUI(status, validationStatus, hasBackup, backupVersion) {
   const currentVersionEl = document.getElementById('sde-current-version');
   const latestVersionEl = document.getElementById('sde-latest-version');
   const minimumVersionEl = document.getElementById('sde-minimum-version');
   const statusEl = document.getElementById('sde-status');
   const updateBtn = document.getElementById('sde-update-btn');
+  const validationIndicator = document.getElementById('validation-indicator');
+  const validationText = document.getElementById('validation-text');
+  const backupStatusEl = document.getElementById('sde-backup-status');
+  const restoreBtn = document.getElementById('sde-restore-btn');
 
   if (status.error) {
     if (currentVersionEl) currentVersionEl.textContent = 'Error';
@@ -415,6 +442,67 @@ function updateSdeUI(status) {
   if (updateBtn) {
     updateBtn.disabled = !status.needsUpdate && !status.isCritical;
   }
+
+  // Validation status indicator
+  if (validationIndicator && validationText) {
+    if (validationStatus && validationStatus.passed) {
+      validationIndicator.className = 'validation-indicator passed';
+      validationIndicator.innerHTML = `
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
+          <polyline points="22 4 12 14.01 9 11.01"></polyline>
+        </svg>
+        <span id="validation-text">Passed</span>
+      `;
+    } else if (validationStatus && !validationStatus.passed) {
+      validationIndicator.className = 'validation-indicator failed';
+      validationIndicator.innerHTML = `
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="10"></circle>
+          <line x1="15" y1="9" x2="9" y2="15"></line>
+          <line x1="9" y1="9" x2="15" y2="15"></line>
+        </svg>
+        <span id="validation-text">Failed</span>
+      `;
+    } else {
+      validationIndicator.className = 'validation-indicator unknown';
+      validationIndicator.innerHTML = `
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="10"></circle>
+          <line x1="12" y1="16" x2="12" y2="12"></line>
+          <line x1="12" y1="8" x2="12.01" y2="8"></line>
+        </svg>
+        <span id="validation-text">Unknown</span>
+      `;
+    }
+
+    // Make validation indicator clickable to show details
+    if (validationStatus) {
+      validationIndicator.style.cursor = 'pointer';
+      validationIndicator.onclick = () => {
+        showValidationResults({
+          ...validationStatus,
+          details: [], // We don't store full details in settings
+        });
+      };
+    }
+  }
+
+  // Backup status
+  if (backupStatusEl) {
+    if (hasBackup) {
+      backupStatusEl.textContent = backupVersion ? `Yes (v${backupVersion})` : 'Yes';
+      backupStatusEl.className = 'sde-value up-to-date';
+    } else {
+      backupStatusEl.textContent = 'No';
+      backupStatusEl.className = 'sde-value';
+    }
+  }
+
+  // Restore button
+  if (restoreBtn) {
+    restoreBtn.disabled = !hasBackup;
+  }
 }
 
 // Check for SDE updates
@@ -448,24 +536,38 @@ async function downloadSde() {
   // Listen for progress updates
   window.electronAPI.sde.onProgress((progress) => {
     if (progressBar && progressText) {
-      if (progress.stage === 'downloading') {
-        progressBar.style.width = `${progress.percent}%`;
+      progressBar.style.width = `${progress.percent || 0}%`;
+
+      if (progress.message) {
+        progressText.textContent = progress.message;
+      } else if (progress.stage === 'downloading') {
         progressText.textContent = `Downloading: ${progress.downloadedMB} MB / ${progress.totalMB} MB (${progress.percent}%)`;
       } else if (progress.stage === 'decompressing') {
-        progressBar.style.width = '100%';
         progressText.textContent = 'Decompressing database...';
+      } else if (progress.stage === 'validating') {
+        progressText.textContent = 'Validating database...';
+      } else if (progress.stage === 'backing up') {
+        progressText.textContent = 'Backing up current SDE...';
+      } else if (progress.stage === 'installing') {
+        progressText.textContent = 'Installing new SDE...';
       } else if (progress.stage === 'complete') {
-        progressBar.style.width = '100%';
         progressText.textContent = 'Complete!';
       }
     }
   });
 
   try {
-    const result = await window.electronAPI.sde.download();
+    // Use downloadAndValidate instead of download
+    const result = await window.electronAPI.sde.downloadAndValidate();
 
     if (result.success) {
-      console.log('SDE download successful');
+      console.log('SDE download and validation successful');
+
+      // Show validation results
+      if (result.validationResults) {
+        showValidationResults(result.validationResults);
+      }
+
       await loadSdeStatus();
 
       setTimeout(() => {
@@ -473,7 +575,15 @@ async function downloadSde() {
         if (progressBar) progressBar.style.width = '0%';
       }, 2000);
     } else {
-      throw new Error(result.error || 'Download failed');
+      // Show validation failure if available
+      if (result.validationResults && !result.validationResults.passed) {
+        showValidationResults(result.validationResults);
+      } else {
+        throw new Error(result.error || 'Download failed');
+      }
+
+      if (progressContainer) progressContainer.style.display = 'none';
+      if (progressBar) progressBar.style.width = '0%';
     }
   } catch (error) {
     console.error('Error downloading SDE:', error);
@@ -485,6 +595,131 @@ async function downloadSde() {
     window.electronAPI.sde.removeProgressListener();
     if (updateBtn) updateBtn.disabled = false;
   }
+}
+
+// Validate current SDE
+async function validateCurrentSde() {
+  const validateBtn = document.getElementById('sde-validate-btn');
+
+  if (validateBtn) {
+    validateBtn.disabled = true;
+    const originalText = validateBtn.textContent;
+    validateBtn.textContent = 'Validating...';
+
+    try {
+      const result = await window.electronAPI.sde.validateCurrent();
+
+      // Show validation results
+      showValidationResults(result);
+
+      // Reload SDE status to update validation indicator
+      await loadSdeStatus();
+    } catch (error) {
+      console.error('Validation error:', error);
+      alert(`Validation failed: ${error.message}`);
+    } finally {
+      validateBtn.disabled = false;
+      validateBtn.textContent = originalText;
+    }
+  }
+}
+
+// Restore backup SDE
+async function restoreBackupSde() {
+  const restoreBtn = document.getElementById('sde-restore-btn');
+
+  // Confirm with user
+  const confirmed = confirm('Are you sure you want to restore the previous SDE version? This will replace your current SDE database.');
+
+  if (!confirmed) {
+    return;
+  }
+
+  if (restoreBtn) {
+    restoreBtn.disabled = true;
+    const originalText = restoreBtn.textContent;
+    restoreBtn.textContent = 'Restoring...';
+
+    try {
+      const result = await window.electronAPI.sde.restoreBackup();
+
+      if (result.success) {
+        alert('SDE successfully restored from backup.');
+
+        // Reload SDE status
+        await loadSdeStatus();
+      } else {
+        alert(`Failed to restore backup: ${result.error || 'Unknown error'}`);
+      }
+    } catch (error) {
+      console.error('Restore error:', error);
+      alert(`Restore failed: ${error.message}`);
+    } finally {
+      restoreBtn.disabled = false;
+      restoreBtn.textContent = originalText;
+    }
+  }
+}
+
+// Show validation results in modal
+function showValidationResults(results) {
+  const modal = document.getElementById('validation-modal');
+  const summary = document.getElementById('validation-summary');
+  const details = document.getElementById('validation-details');
+
+  if (!modal || !summary || !details) return;
+
+  // Build summary
+  const summaryClass = results.passed ? 'validation-passed' : 'validation-failed';
+  summary.innerHTML = `
+    <div class="${summaryClass}">
+      <div class="validation-icon">
+        ${results.passed
+          ? '<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>'
+          : '<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="15" y1="9" x2="9" y2="15"></line><line x1="9" y1="9" x2="15" y2="15"></line></svg>'
+        }
+      </div>
+      <h3>${results.passed ? 'Validation Passed' : 'Validation Failed'}</h3>
+      <p>${results.summary}</p>
+      ${results.executionTime ? `<small>Completed in ${results.executionTime}ms</small>` : ''}
+    </div>
+  `;
+
+  // Build details
+  if (results.details && results.details.length > 0) {
+    details.innerHTML = `
+      <h4>Detailed Results (${results.passedChecks || 0}/${results.totalChecks || 0} checks passed)</h4>
+      <div class="validation-checks">
+        ${results.details.map(detail => `
+          <div class="validation-check ${detail.passed ? 'passed' : 'failed'}">
+            ${detail.passed
+              ? '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"></polyline></svg>'
+              : '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>'
+            }
+            <span>${detail.check}</span>
+          </div>
+        `).join('')}
+      </div>
+    `;
+  } else if (results.failedChecks && results.failedChecks.length > 0) {
+    // Show failed checks if details not available
+    details.innerHTML = `
+      <h4>Failed Checks</h4>
+      <div class="validation-checks">
+        ${results.failedChecks.map(failed => `
+          <div class="validation-check failed">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+            <span>${failed.check}: ${failed.error}</span>
+          </div>
+        `).join('')}
+      </div>
+    `;
+  } else {
+    details.innerHTML = '';
+  }
+
+  // Show modal
+  modal.style.display = 'flex';
 }
 
 // Initialize SDE controls
@@ -499,6 +734,42 @@ function initializeSdeControls() {
   const checkBtn = document.getElementById('sde-check-btn');
   if (checkBtn) {
     checkBtn.addEventListener('click', checkSdeUpdate);
+  }
+
+  const validateBtn = document.getElementById('sde-validate-btn');
+  if (validateBtn) {
+    validateBtn.addEventListener('click', validateCurrentSde);
+  }
+
+  const restoreBtn = document.getElementById('sde-restore-btn');
+  if (restoreBtn) {
+    restoreBtn.addEventListener('click', restoreBackupSde);
+  }
+
+  // Modal close handlers
+  const modalCloseBtn = document.getElementById('validation-modal-close');
+  const modalOkBtn = document.getElementById('validation-modal-ok');
+  const modal = document.getElementById('validation-modal');
+
+  if (modalCloseBtn && modal) {
+    modalCloseBtn.addEventListener('click', () => {
+      modal.style.display = 'none';
+    });
+  }
+
+  if (modalOkBtn && modal) {
+    modalOkBtn.addEventListener('click', () => {
+      modal.style.display = 'none';
+    });
+  }
+
+  // Close modal on outside click
+  if (modal) {
+    modal.addEventListener('click', (e) => {
+      if (e.target === modal) {
+        modal.style.display = 'none';
+      }
+    });
   }
 }
 

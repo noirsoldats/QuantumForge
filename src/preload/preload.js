@@ -32,6 +32,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   sde: {
     checkUpdate: () => ipcRenderer.invoke('sde:checkUpdate'),
     download: () => ipcRenderer.invoke('sde:download'),
+    downloadAndValidate: () => ipcRenderer.invoke('sde:downloadAndValidate'),
+    validateCurrent: () => ipcRenderer.invoke('sde:validateCurrent'),
+    restoreBackup: () => ipcRenderer.invoke('sde:restoreBackup'),
+    hasBackup: () => ipcRenderer.invoke('sde:hasBackup'),
+    getBackupVersion: () => ipcRenderer.invoke('sde:getBackupVersion'),
     getCurrentVersion: () => ipcRenderer.invoke('sde:getCurrentVersion'),
     getLatestVersion: () => ipcRenderer.invoke('sde:getLatestVersion'),
     getMinimumVersion: () => ipcRenderer.invoke('sde:getMinimumVersion'),
@@ -40,6 +45,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getPath: () => ipcRenderer.invoke('sde:getPath'),
     onProgress: (callback) => ipcRenderer.on('sde:progress', (event, progress) => callback(progress)),
     removeProgressListener: () => ipcRenderer.removeAllListeners('sde:progress'),
+    onUpdateAvailable: (callback) => ipcRenderer.on('sde:update-available', (event, updateInfo) => callback(updateInfo)),
+    removeUpdateListener: () => ipcRenderer.removeAllListeners('sde:update-available'),
     // Skill lookups
     getSkillName: (skillId) => ipcRenderer.invoke('sde:getSkillName', skillId),
     getSkillNames: (skillIds) => ipcRenderer.invoke('sde:getSkillNames', skillIds),
@@ -170,5 +177,18 @@ contextBridge.exposeInMainWorld('electronAPI', {
     onUpdateDownloadProgress: (callback) => ipcRenderer.on('update-download-progress', (event, progress) => callback(progress)),
     onUpdateDownloaded: (callback) => ipcRenderer.on('update-downloaded', (event, info) => callback(info)),
     onUpdateError: (callback) => ipcRenderer.on('update-error', (event, error) => callback(error)),
+  },
+
+  // Startup API (for splash screen)
+  startup: {
+    onProgress: (callback) => ipcRenderer.on('startup:progress', (event, progress) => callback(progress)),
+    onRequireAction: (callback) => ipcRenderer.on('startup:requireAction', (event, action) => callback(action)),
+    onError: (callback) => ipcRenderer.on('startup:error', (event, error) => callback(error)),
+    onComplete: (callback) => ipcRenderer.on('startup:complete', () => callback()),
+    updateApp: () => ipcRenderer.send('startup:updateApp'),
+    skipAppUpdate: () => ipcRenderer.send('startup:skipAppUpdate'),
+    downloadSDE: () => ipcRenderer.send('startup:downloadSDE'),
+    skipSDEUpdate: () => ipcRenderer.send('startup:skipSDEUpdate'),
+    retry: () => ipcRenderer.send('startup:retry'),
   },
 });

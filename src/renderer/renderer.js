@@ -1,12 +1,78 @@
 // Renderer process scripts
 // This file runs in the web page context
 
-console.log('Quantum Forge initialized');
+console.log('Quantum Forge renderer initialized');
+console.log('[SDE] Registering update listener...');
 
 let currentDefaultCharacterId = null;
 
+// Listen for SDE update available
+window.electronAPI.sde.onUpdateAvailable((updateInfo) => {
+  console.log('[SDE] Renderer received update notification:', updateInfo);
+  showUpdateModal(updateInfo);
+});
+
+console.log('[SDE] Update listener registered');
+
+// Show SDE update modal
+function showUpdateModal(updateInfo) {
+  const modal = document.getElementById('sde-update-modal');
+  const currentVersionEl = document.getElementById('update-current-version');
+  const latestVersionEl = document.getElementById('update-latest-version');
+  const messageEl = document.getElementById('update-message');
+
+  if (!modal) return;
+
+  // Update content
+  if (currentVersionEl) {
+    currentVersionEl.textContent = updateInfo.currentVersion || 'Not installed';
+  }
+
+  if (latestVersionEl) {
+    latestVersionEl.textContent = updateInfo.latestVersion || 'Unknown';
+  }
+
+  if (messageEl) {
+    if (updateInfo.isCritical) {
+      messageEl.textContent = 'A critical SDE update is required. Please update as soon as possible.';
+    } else {
+      messageEl.textContent = 'A new version of the Eve Online Static Data Export is available.';
+    }
+  }
+
+  // Show modal
+  modal.style.display = 'flex';
+}
+
 document.addEventListener('DOMContentLoaded', async () => {
   console.log('DOM loaded');
+
+  // SDE Update modal handlers
+  const updateModal = document.getElementById('sde-update-modal');
+  const updateNowBtn = document.getElementById('update-now-btn');
+  const updateLaterBtn = document.getElementById('update-later-btn');
+  const updateSettingsBtn = document.getElementById('update-settings-btn');
+
+  if (updateNowBtn) {
+    updateNowBtn.addEventListener('click', () => {
+      // Open settings and close modal
+      if (updateModal) updateModal.style.display = 'none';
+      window.electronAPI.openSettings();
+    });
+  }
+
+  if (updateLaterBtn) {
+    updateLaterBtn.addEventListener('click', () => {
+      if (updateModal) updateModal.style.display = 'none';
+    });
+  }
+
+  if (updateSettingsBtn) {
+    updateSettingsBtn.addEventListener('click', () => {
+      if (updateModal) updateModal.style.display = 'none';
+      window.electronAPI.openSettings();
+    });
+  }
 
   // Settings button handler
   const settingsBtn = document.getElementById('settings-btn');

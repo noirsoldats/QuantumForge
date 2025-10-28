@@ -91,6 +91,16 @@
                 <span class="toggle-slider"></span>
               </label>
             </div>
+            <div class="setting-item">
+              <div class="setting-info">
+                <label>Updates Notification</label>
+                <span class="setting-description">Show notifications when SDE updates are available</span>
+              </div>
+              <label class="toggle">
+                <input type="checkbox" id="updates-notification" checked>
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
           </div>
 
           <div class="settings-section">
@@ -113,6 +123,23 @@
                   <span class="sde-label">Status:</span>
                   <span class="sde-value" id="sde-status">Checking...</span>
                 </div>
+                <div class="sde-status-item">
+                  <span class="sde-label">Validation Status:</span>
+                  <span class="sde-value" id="sde-validation-status">
+                    <span class="validation-indicator unknown" id="validation-indicator">
+                      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <circle cx="12" cy="12" r="10"></circle>
+                        <line x1="12" y1="16" x2="12" y2="12"></line>
+                        <line x1="12" y1="8" x2="12.01" y2="8"></line>
+                      </svg>
+                      <span id="validation-text">Unknown</span>
+                    </span>
+                  </span>
+                </div>
+                <div class="sde-status-item">
+                  <span class="sde-label">Backup Available:</span>
+                  <span class="sde-value" id="sde-backup-status">Checking...</span>
+                </div>
               </div>
 
               <div class="sde-actions">
@@ -123,10 +150,26 @@
                     <path d="M3 22v-6h6"></path>
                     <path d="M21 12a9 9 0 0 1-15 6.7L3 16"></path>
                   </svg>
-                  Update SDE
+                  Download & Validate SDE
                 </button>
                 <button class="secondary-button" id="sde-check-btn">
                   Check for Updates
+                </button>
+              </div>
+
+              <div class="sde-actions" style="margin-top: 10px;">
+                <button class="secondary-button" id="sde-validate-btn">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <polyline points="20 6 9 17 4 12"></polyline>
+                  </svg>
+                  Test Current SDE
+                </button>
+                <button class="secondary-button" id="sde-restore-btn" disabled>
+                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <polyline points="1 4 1 10 7 10"></polyline>
+                    <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path>
+                  </svg>
+                  Restore Previous SDE
                 </button>
               </div>
 
@@ -208,6 +251,24 @@
       </main>
     </div>
   </div>
+
+  <!-- Validation Results Modal -->
+  <div id="validation-modal" class="modal" style="display: none;">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2>SDE Validation Results</h2>
+        <button class="modal-close" id="validation-modal-close">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div id="validation-summary" class="validation-summary"></div>
+        <div id="validation-details" class="validation-details"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="secondary-button" id="validation-modal-ok">OK</button>
+      </div>
+    </div>
+  </div>
+
   <script src="../src/renderer/settings-renderer.js"></script>
 </body>
 </html>

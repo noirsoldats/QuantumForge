@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'">
+  <title>Loading Quantum Forge</title>
+  <link rel="stylesheet" href="splash.css">
+</head>
+<body>
+  <div id="splash-container">
+    <!-- Header with Logo/Title -->
+    <div class="splash-header">
+      <h1>Quantum Forge</h1>
+      <p class="subtitle">Eve Online Industry Manager</p>
+    </div>
+
+    <!-- Main Content Area -->
+    <div class="splash-content">
+      <!-- Progress Tasks List -->
+      <div id="tasks-container" class="tasks-container">
+        <div class="task-item" data-task="database">
+          <div class="task-icon">
+            <div class="spinner"></div>
+            <svg class="checkmark" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3">
+              <polyline points="20 6 9 17 4 12"></polyline>
+            </svg>
+          </div>
+          <div class="task-text">
+            <div class="task-name">Initialize Database</div>
+            <div class="task-status">Pending...</div>
+          </div>
+        </div>
+
+        <div class="task-item" data-task="appUpdate">
+          <div class="task-icon">
+            <div class="spinner"></div>
+            <svg class="checkmark" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3">
+              <polyline points="20 6 9 17 4 12"></polyline>
+            </svg>
+          </div>
+          <div class="task-text">
+            <div class="task-name">Check Application Updates</div>
+            <div class="task-status">Pending...</div>
+          </div>
+        </div>
+
+        <div class="task-item" data-task="sdeCheck">
+          <div class="task-icon">
+            <div class="spinner"></div>
+            <svg class="checkmark" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3">
+              <polyline points="20 6 9 17 4 12"></polyline>
+            </svg>
+          </div>
+          <div class="task-text">
+            <div class="task-name">Check Static Data Export</div>
+            <div class="task-status">Pending...</div>
+          </div>
+        </div>
+
+        <div class="task-item" data-task="sdeDownload" style="display: none;">
+          <div class="task-icon">
+            <div class="spinner"></div>
+            <svg class="checkmark" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3">
+              <polyline points="20 6 9 17 4 12"></polyline>
+            </svg>
+          </div>
+          <div class="task-text">
+            <div class="task-name">Download SDE</div>
+            <div class="task-status">Preparing...</div>
+          </div>
+          <div class="task-progress">
+            <div class="progress-bar">
+              <div class="progress-fill"></div>
+            </div>
+            <div class="progress-text">0%</div>
+          </div>
+        </div>
+
+        <div class="task-item" data-task="sdeValidate">
+          <div class="task-icon">
+            <div class="spinner"></div>
+            <svg class="checkmark" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3">
+              <polyline points="20 6 9 17 4 12"></polyline>
+            </svg>
+          </div>
+          <div class="task-text">
+            <div class="task-name">Validate SDE</div>
+            <div class="task-status">Pending...</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Action Required Panel (hidden by default) -->
+      <div id="action-panel" class="action-panel" style="display: none;">
+        <div class="action-icon">
+          <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="10"></circle>
+            <line x1="12" y1="16" x2="12" y2="12"></line>
+            <line x1="12" y1="8" x2="12.01" y2="8"></line>
+          </svg>
+        </div>
+        <h2 id="action-title">Action Required</h2>
+        <p id="action-message">Please make a decision to continue.</p>
+        <div id="action-details" class="action-details"></div>
+        <div id="action-buttons" class="action-buttons"></div>
+      </div>
+
+      <!-- Error Panel (hidden by default) -->
+      <div id="error-panel" class="error-panel" style="display: none;">
+        <div class="error-icon">
+          <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="10"></circle>
+            <line x1="15" y1="9" x2="9" y2="15"></line>
+            <line x1="9" y1="9" x2="15" y2="15"></line>
+          </svg>
+        </div>
+        <h2>Error</h2>
+        <p id="error-message">An error occurred during startup.</p>
+        <div id="error-buttons" class="action-buttons">
+          <button class="primary-button" id="retry-btn">Retry</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Footer with Overall Progress -->
+    <div class="splash-footer">
+      <div id="overall-status" class="overall-status">Initializing...</div>
+    </div>
+  </div>
+
+  <script src="../src/renderer/splash-renderer.js"></script>
+</body>
+</html>

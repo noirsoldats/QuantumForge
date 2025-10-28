@@ -14,6 +14,7 @@ const defaultSettings = {
     minimizeToTray: false,
     theme: 'dark',
     desktopNotifications: true,
+    updatesNotification: true,
   },
   accounts: {
     characters: [],
@@ -40,6 +41,12 @@ const defaultSettings = {
     warningThreshold: 0.3, // Warn if price deviates >30% from historical
   },
   owned_blueprints: [],
+  sde: {
+    validationStatus: null, // { passed: true/false, date: ISO date string, summary: string, totalChecks: number }
+    lastUpdateCheck: null, // ISO date string
+    updateAvailable: false,
+    latestAvailableVersion: null,
+  },
 };
 
 /**

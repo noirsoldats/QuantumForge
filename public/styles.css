@@ -217,3 +217,57 @@ main {
   transform: translateY(-5px);
   box-shadow: 0 10px 25px rgba(100, 180, 255, 0.3);
 }
+
+/* SDE Update Modal */
+.update-info {
+  text-align: center;
+  padding: 20px;
+}
+
+.update-icon {
+  margin-bottom: 20px;
+  color: #64b4ff;
+}
+
+.update-info p {
+  font-size: 16px;
+  color: #cbd5e1;
+  margin-bottom: 24px;
+  line-height: 1.5;
+}
+
+.update-versions {
+  display: flex;
+  justify-content: center;
+  gap: 40px;
+  margin-top: 20px;
+}
+
+.version-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+.version-label {
+  font-size: 12px;
+  color: #94a3b8;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.version-value {
+  font-size: 18px;
+  font-weight: 600;
+  color: #fff;
+  padding: 8px 16px;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 6px;
+}
+
+.version-value.highlight {
+  color: #4ade80;
+  background: rgba(74, 222, 128, 0.1);
+  border: 1px solid rgba(74, 222, 128, 0.3);
+}

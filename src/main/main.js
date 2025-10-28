@@ -3,6 +3,7 @@ const path = require('path');
 const { createSettingsWindow } = require('./settings-window');
 const { initAutoUpdater, checkForUpdates } = require('./auto-updater');
 const { getWindowBounds, trackWindowState } = require('./window-state-manager');
+const { runStartupChecks } = require('./startup-manager');
 const {
   loadSettings,
   saveSettings,
@@ -85,11 +86,37 @@ const {
 
 let mainWindow;
 
+/**
+ * Create splash screen window
+ */
+function createSplashWindow() {
+  const splashWindow = new BrowserWindow({
+    width: 700,
+    height: 550,
+    frame: false,
+    resizable: false,
+    center: true,
+    alwaysOnTop: true,
+    webPreferences: {
+      preload: path.join(__dirname, '../preload/preload.js'),
+      nodeIntegration: false,
+      contextIsolation: true,
+    },
+    title: 'Loading Quantum Forge',
+    backgroundColor: '#1e1e2e',
+  });
+
+  splashWindow.loadFile(path.join(__dirname, '../../public/splash.html'));
+
+  return splashWindow;
+}
+
 function createWindow() {
   const windowBounds = getWindowBounds('main', { width: 1200, height: 800 });
 
   mainWindow = new BrowserWindow({
     ...windowBounds,
+    show: false, // Don't show until ready
     webPreferences: {
       preload: path.join(__dirname, '../preload/preload.js'),
       nodeIntegration: false,
@@ -166,11 +193,39 @@ function createWindow() {
   initAutoUpdater(mainWindow);
 }
 
-app.whenReady().then(() => {
-  // Initialize market database
-  initializeMarketDatabase();
+app.whenReady().then(async () => {
+  console.log('[App] Application ready, creating splash screen...');
 
-  createWindow();
+  // Create splash window first
+  const splashWindow = createSplashWindow();
+
+  // Wait for splash window to load before running checks
+  splashWindow.webContents.once('did-finish-load', async () => {
+    console.log('[App] Splash window loaded, running startup checks...');
+
+    // Run all startup checks
+    const success = await runStartupChecks(splashWindow);
+
+    if (success) {
+      // Startup completed successfully, create main window
+      console.log('[App] Startup checks complete, creating main window...');
+
+      // Small delay to show completion message
+      await new Promise(resolve => setTimeout(resolve, 500));
+
+      // Create main window
+      createWindow();
+
+      // Close splash window after main window is visible
+      mainWindow.once('ready-to-show', () => {
+        mainWindow.show();
+        splashWindow.close();
+      });
+    } else {
+      console.error('[App] Startup checks failed');
+      // Splash window will show error UI, user can retry or exit
+    }
+  });
 
   // Handle IPC for opening settings
   ipcMain.on('open-settings', () => {
@@ -292,6 +347,96 @@ app.whenReady().then(() => {
     } catch (error) {
       console.error('SDE download error:', error);
       return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('sde:downloadAndValidate', async (event) => {
+    try {
+      const { downloadAndValidateSDE } = require('./sde-manager');
+      const result = await downloadAndValidateSDE((progress) => {
+        event.sender.send('sde:progress', progress);
+      });
+
+      // If successful, save validation status to settings
+      if (result.success) {
+        const { updateSettings } = require('./settings-manager');
+        updateSettings('sde', {
+          validationStatus: {
+            passed: result.validationResults.passed,
+            date: new Date().toISOString(),
+            summary: result.validationResults.summary,
+            totalChecks: result.validationResults.totalChecks,
+          },
+        });
+      }
+
+      return result;
+    } catch (error) {
+      console.error('SDE download and validate error:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('sde:validateCurrent', async () => {
+    try {
+      const { validateCurrentSDE } = require('./sde-manager');
+      const result = await validateCurrentSDE();
+
+      // Save validation status to settings
+      const { updateSettings } = require('./settings-manager');
+      updateSettings('sde', {
+        validationStatus: {
+          passed: result.passed,
+          date: new Date().toISOString(),
+          summary: result.summary || result.error || 'Validation completed',
+          totalChecks: result.totalChecks || 0,
+        },
+      });
+
+      return result;
+    } catch (error) {
+      console.error('SDE validation error:', error);
+      return { passed: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('sde:restoreBackup', () => {
+    try {
+      const { restorePreviousSDE } = require('./sde-manager');
+      const success = restorePreviousSDE();
+
+      if (success) {
+        // Clear validation status after restore
+        const { updateSettings } = require('./settings-manager');
+        updateSettings('sde', {
+          validationStatus: null,
+        });
+      }
+
+      return { success };
+    } catch (error) {
+      console.error('SDE restore error:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('sde:hasBackup', () => {
+    try {
+      const { hasBackup } = require('./sde-manager');
+      return hasBackup();
+    } catch (error) {
+      console.error('SDE hasBackup error:', error);
+      return false;
+    }
+  });
+
+  ipcMain.handle('sde:getBackupVersion', () => {
+    try {
+      const { getBackupVersion } = require('./sde-manager');
+      return getBackupVersion();
+    } catch (error) {
+      console.error('SDE getBackupVersion error:', error);
+      return null;
     }
   });
 
