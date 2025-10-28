@@ -137,6 +137,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getOwnedBlueprintME: (characterId, blueprintTypeId) => ipcRenderer.invoke('calculator:getOwnedBlueprintME', characterId, blueprintTypeId),
     getRigBonuses: (rigTypeId) => ipcRenderer.invoke('calculator:getRigBonuses', rigTypeId),
     getAllBlueprints: (limit) => ipcRenderer.invoke('calculator:getAllBlueprints', limit),
+    // Invention API
+    getInventionData: (blueprintTypeId) => ipcRenderer.invoke('calculator:getInventionData', blueprintTypeId),
+    getAllDecryptors: () => ipcRenderer.invoke('calculator:getAllDecryptors'),
+    calculateInventionProbability: (baseProbability, skills, decryptorMultiplier) =>
+      ipcRenderer.invoke('calculator:calculateInventionProbability', baseProbability, skills, decryptorMultiplier),
+    findBestDecryptor: (inventionData, materialPrices, productPrice, skills) =>
+      ipcRenderer.invoke('calculator:findBestDecryptor', inventionData, materialPrices, productPrice, skills),
   },
 
   // Cost Indices API

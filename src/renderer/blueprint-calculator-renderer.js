@@ -380,6 +380,12 @@ async function displayMaterialsCalculation(result, runs, facilityId = null) {
       pricingEl.style.display = 'none';
     }
   }
+
+  // Display invention analysis
+  // Pass the blueprint typeId to check if it can be used for invention
+  console.log('About to call displayInventionAnalysis with blueprintTypeId:', currentBlueprint.typeID);
+  await displayInventionAnalysis(currentBlueprint.typeID, runs);
+  console.log('displayInventionAnalysis completed');
 }
 
 // Display total materials summary
@@ -986,5 +992,395 @@ async function displayPricingInformation(pricing) {
     pricingEl.style.display = 'block';
   } catch (error) {
     console.error('Error displaying pricing information:', error);
+  }
+}
+
+// Display invention analysis
+async function displayInventionAnalysis(blueprintTypeId, runs, cachedInventionData = null, cachedSelectedIndex = 0) {
+  const inventionEl = document.getElementById('invention-display');
+
+  try {
+    const contentEl = document.getElementById('invention-content');
+
+    if (!inventionEl || !contentEl) {
+      console.warn('Invention display elements not found in DOM');
+      return;
+    }
+
+    // Get invention data (use cached if available from product selection change)
+    let inventionData;
+    if (cachedInventionData) {
+      console.log('Using cached invention data');
+      inventionData = cachedInventionData;
+    } else {
+      console.log('Fetching invention data for blueprint:', blueprintTypeId);
+      inventionData = await window.electronAPI.calculator.getInventionData(blueprintTypeId);
+      console.log('Invention data received:', inventionData);
+    }
+
+    // If no invention data (T1 blueprint that cannot be invented), hide the section
+    if (!inventionData || !inventionData.products || inventionData.products.length === 0) {
+      console.log('No invention data or products, hiding section');
+      inventionEl.style.display = 'none';
+      return;
+    }
+
+    // Validate we have materials
+    if (!inventionData.materials || inventionData.materials.length === 0) {
+      console.warn('No invention materials found for blueprint:', blueprintTypeId);
+      inventionEl.style.display = 'none';
+      return;
+    }
+
+    console.log('Invention data valid, proceeding with display');
+    console.log(`Found ${inventionData.products.length} possible invention target(s)`);
+
+    // Select which product to analyze (use cached index or default to first)
+    let selectedProductIndex = cachedSelectedIndex;
+
+    // If there are multiple products, we'll show a selector
+    const hasMultipleProducts = inventionData.products.length > 1;
+
+    // Format ISK values
+    const formatISK = (value) => {
+      if (!value || value === 0) return '0.00 ISK';
+      return value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' ISK';
+    };
+
+    // Get market settings for pricing
+    const marketSettings = await window.electronAPI.market.getSettings();
+    const regionId = marketSettings.regionId || 10000002;
+    const locationId = marketSettings.locationId || null;
+
+    // Get material prices (just unit prices for backend calculation)
+    const materialPrices = {};
+    console.log('Fetching prices for invention materials:', inventionData.materials);
+
+    for (const material of inventionData.materials) {
+      // Get typeId (handle both typeId and typeID from SDE)
+      const materialTypeId = material.typeID || material.typeId;
+
+      // Skip materials without valid typeId
+      if (!materialTypeId || materialTypeId === null || materialTypeId === undefined) {
+        console.warn('Skipping material with invalid typeId:', material);
+        continue;
+      }
+
+      try {
+        console.log(`Fetching price for ${material.typeName} (${materialTypeId}) in region ${regionId}, location ${locationId}`);
+        const priceData = await window.electronAPI.market.calculatePrice(
+          materialTypeId,
+          regionId,
+          locationId,
+          marketSettings.inputMaterials?.priceType || 'vwap',
+          1  // Get unit price
+        );
+        console.log(`Price data received:`, priceData);
+        // The price structure returns 'price' not 'unitPrice'
+        materialPrices[materialTypeId] = priceData.price || priceData.unitPrice || 0;
+        console.log(`Set material price for ${materialTypeId} to ${materialPrices[materialTypeId]}`);
+      } catch (error) {
+        console.error(`Error getting price for material ${materialTypeId}:`, error);
+        materialPrices[materialTypeId] = 0;
+      }
+    }
+
+    console.log('Material prices collected:', materialPrices);
+
+    // Get decryptor prices for accurate cost comparison
+    const allDecryptors = await window.electronAPI.calculator.getAllDecryptors();
+    for (const decryptor of allDecryptors) {
+      try {
+        const decryptorPriceData = await window.electronAPI.market.calculatePrice(
+          decryptor.typeID,
+          regionId,
+          locationId,
+          marketSettings.inputMaterials?.priceType || 'vwap',
+          1  // Get unit price
+        );
+        materialPrices[decryptor.typeID] = decryptorPriceData.price || decryptorPriceData.unitPrice || 0;
+      } catch (error) {
+        console.warn(`Could not get price for decryptor ${decryptor.typeName}:`, error);
+        materialPrices[decryptor.typeID] = 0;
+      }
+    }
+
+    // Get selected product based on index
+    const selectedProduct = inventionData.products[selectedProductIndex];
+
+    // Get product price (the manufactured item's value, not the blueprint itself)
+    // Blueprints aren't tradeable, so we use the manufactured product for pricing
+    let productPrice = 0;
+    const manufacturedProductTypeId = selectedProduct.manufacturedProduct?.typeID || selectedProduct.manufacturedProduct?.typeId;
+
+    if (manufacturedProductTypeId) {
+      try {
+        console.log(`Fetching price for manufactured product: ${selectedProduct.manufacturedProduct?.typeName} (${manufacturedProductTypeId})`);
+        const productPriceData = await window.electronAPI.market.calculatePrice(
+          manufacturedProductTypeId,
+          regionId,
+          locationId,
+          marketSettings.outputProducts?.priceType || 'vwap',
+          1
+        );
+        productPrice = productPriceData.price || productPriceData.unitPrice || 0;
+        console.log(`Manufactured product price: ${productPrice} ISK`);
+      } catch (error) {
+        console.error('Error getting manufactured product price:', error);
+      }
+    } else {
+      console.warn('No manufactured product found for invention analysis');
+    }
+
+    // Get character skills for invention calculation
+    const skills = {};
+    if (currentDefaultCharacter?.characterId) {
+      try {
+        // Get encryption skill
+        const encryptionSkillId = 21790; // Encryption Methods
+        skills.encryption = await window.electronAPI.skills.getEffectiveLevel(
+          currentDefaultCharacter.characterId,
+          encryptionSkillId
+        ) || 0;
+
+        // Get datacore skills (we'll use the required skills from invention data)
+        if (inventionData.skills && inventionData.skills.length >= 2) {
+          const datacore1SkillId = inventionData.skills[0].skillID || inventionData.skills[0].skillId;
+          const datacore2SkillId = inventionData.skills[1].skillID || inventionData.skills[1].skillId;
+
+          console.log('Fetching skill levels for:', datacore1SkillId, datacore2SkillId);
+
+          skills.datacore1 = await window.electronAPI.skills.getEffectiveLevel(
+            currentDefaultCharacter.characterId,
+            datacore1SkillId
+          ) || 0;
+
+          skills.datacore2 = await window.electronAPI.skills.getEffectiveLevel(
+            currentDefaultCharacter.characterId,
+            datacore2SkillId
+          ) || 0;
+
+          // Store skill names for display
+          skills.datacore1Name = inventionData.skills[0].skillName;
+          skills.datacore2Name = inventionData.skills[1].skillName;
+        } else {
+          skills.datacore1 = 0;
+          skills.datacore2 = 0;
+        }
+      } catch (error) {
+        console.error('Error getting character skills:', error);
+        skills.encryption = 0;
+        skills.datacore1 = 0;
+        skills.datacore2 = 0;
+      }
+    } else {
+      skills.encryption = 0;
+      skills.datacore1 = 0;
+      skills.datacore2 = 0;
+    }
+
+    // Create a modified invention data with the selected product
+    const selectedInventionData = {
+      materials: inventionData.materials,
+      product: selectedProduct,
+      baseProbability: selectedProduct.baseProbability,
+      skills: inventionData.skills,
+      time: inventionData.time
+    };
+
+    // Find best decryptor for the selected product
+    const bestDecryptorResult = await window.electronAPI.calculator.findBestDecryptor(
+      selectedInventionData,
+      materialPrices,
+      productPrice,
+      skills
+    );
+
+    console.log('Best decryptor result:', bestDecryptorResult);
+
+    // Validate we got a result
+    if (!bestDecryptorResult || !bestDecryptorResult.best) {
+      console.error('Invalid decryptor result:', bestDecryptorResult);
+      inventionEl.style.display = 'none';
+      return;
+    }
+
+    // Normalize the result structure (backend returns 'best', we use 'bestOption')
+    const bestOption = bestDecryptorResult.best;
+    const noDecryptorOption = bestDecryptorResult.noDecryptor;
+
+    console.log('Best option for display:', bestOption);
+    console.log('Material prices used:', materialPrices);
+
+    let html = '<div class="invention-breakdown">';
+
+    // Product Selector (if multiple products available)
+    if (hasMultipleProducts) {
+      html += '<div class="invention-section invention-product-selector">';
+      html += '<h5>Select Invention Target</h5>';
+      html += '<div class="invention-row">';
+      html += '<label for="invention-product-select">Target Blueprint:</label>';
+      html += '<select id="invention-product-select" class="control-input">';
+      inventionData.products.forEach((product, index) => {
+        const selected = index === selectedProductIndex ? ' selected' : '';
+        html += `<option value="${index}"${selected}>${product.typeName}</option>`;
+      });
+      html += '</select>';
+      html += '</div>';
+      html += '</div>';
+    }
+
+    // Product Information
+    html += '<div class="invention-section">';
+    html += '<h5>Invention Target</h5>';
+    html += '<div class="invention-row">';
+    html += `<span>Invented Blueprint:</span>`;
+    html += `<span class="invention-value">${selectedProduct.typeName}</span>`;
+    html += '</div>';
+    html += '<div class="invention-row">';
+    html += `<span>Manufactures:</span>`;
+    html += `<span class="invention-value">${selectedProduct.manufacturedProduct?.typeName || 'Unknown'}</span>`;
+    html += '</div>';
+    html += '<div class="invention-row">';
+    html += `<span>Base Probability:</span>`;
+    html += `<span class="invention-value">${(selectedProduct.baseProbability * 100).toFixed(2)}%</span>`;
+    html += '</div>';
+    html += '</div>';
+
+    // Skills Information
+    html += '<div class="invention-section">';
+    html += '<h5>Character Skills</h5>';
+    html += '<div class="invention-row">';
+    html += `<span>Encryption Methods:</span>`;
+    html += `<span class="invention-value">Level ${skills.encryption || 0}</span>`;
+    html += '</div>';
+    if (skills.datacore1Name && skills.datacore2Name) {
+      html += '<div class="invention-row">';
+      html += `<span>${skills.datacore1Name}:</span>`;
+      html += `<span class="invention-value">Level ${skills.datacore1 || 0}</span>`;
+      html += '</div>';
+      html += '<div class="invention-row">';
+      html += `<span>${skills.datacore2Name}:</span>`;
+      html += `<span class="invention-value">Level ${skills.datacore2 || 0}</span>`;
+      html += '</div>';
+    }
+    html += '</div>';
+
+    // Best Decryptor Results
+    html += '<div class="invention-section">';
+    html += '<h5>Optimal Decryptor</h5>';
+
+    if (bestOption.name !== 'No Decryptor' && bestOption.typeID) {
+      html += '<div class="invention-row">';
+      html += `<span>Decryptor:</span>`;
+      html += `<span class="invention-value">${bestOption.name}</span>`;
+      html += '</div>';
+      html += '<div class="invention-row">';
+      html += `<span>Success Probability:</span>`;
+      html += `<span class="invention-value">${(bestOption.probability * 100).toFixed(2)}%</span>`;
+      html += '</div>';
+      html += '<div class="invention-row">';
+      html += `<span>ME Modifier:</span>`;
+      html += `<span class="invention-value">${bestOption.meModifier >= 0 ? '+' : ''}${bestOption.meModifier}</span>`;
+      html += '</div>';
+      html += '<div class="invention-row">';
+      html += `<span>TE Modifier:</span>`;
+      html += `<span class="invention-value">${bestOption.teModifier >= 0 ? '+' : ''}${bestOption.teModifier}</span>`;
+      html += '</div>';
+      html += '<div class="invention-row">';
+      html += `<span>Runs Modifier:</span>`;
+      html += `<span class="invention-value">${bestOption.runsModifier >= 0 ? '+' : ''}${bestOption.runsModifier}</span>`;
+      html += '</div>';
+    } else {
+      html += '<div class="invention-row">';
+      html += `<span>Decryptor:</span>`;
+      html += `<span class="invention-value">No Decryptor (Most Cost-Effective)</span>`;
+      html += '</div>';
+      html += '<div class="invention-row">';
+      html += `<span>Success Probability:</span>`;
+      html += `<span class="invention-value">${(bestOption.probability * 100).toFixed(2)}%</span>`;
+      html += '</div>';
+    }
+    html += '</div>';
+
+    // Cost Analysis
+    html += '<div class="invention-section">';
+    html += '<h5>Invention Costs</h5>';
+    html += '<div class="invention-row">';
+    html += `<span>Material Cost per Attempt:</span>`;
+    html += `<span class="invention-value">${formatISK(bestOption.materialCost)}</span>`;
+    html += '</div>';
+
+    if (bestOption.decryptorCost && bestOption.decryptorCost > 0) {
+      html += '<div class="invention-row">';
+      html += `<span>Decryptor Cost per Attempt:</span>`;
+      html += `<span class="invention-value">${formatISK(bestOption.decryptorCost)}</span>`;
+      html += '</div>';
+    }
+
+    html += '<div class="invention-row">';
+    html += `<span>Job Cost per Attempt:</span>`;
+    html += `<span class="invention-value">${formatISK(bestOption.jobCost)}</span>`;
+    html += '</div>';
+    html += '<div class="invention-row">';
+    html += `<span>Total Cost per Attempt:</span>`;
+    html += `<span class="invention-value">${formatISK(bestOption.totalCostPerAttempt)}</span>`;
+    html += '</div>';
+    html += '<div class="invention-row">';
+    html += `<span>Runs per Invented BPC:</span>`;
+    html += `<span class="invention-value">${bestOption.runsPerBPC || 1}</span>`;
+    html += '</div>';
+    html += '<div class="invention-row">';
+    html += `<span>Average Cost per Successful Invention:</span>`;
+    html += `<span class="invention-value">${formatISK(bestOption.costPerSuccess)}</span>`;
+    html += '</div>';
+    html += '<div class="invention-row invention-highlight">';
+    html += `<span><strong>Average Cost per Run:</strong></span>`;
+    html += `<span class="invention-value"><strong>${formatISK(bestOption.costPerRun)}</strong></span>`;
+    html += '</div>';
+    html += '</div>';
+
+    // Comparison with No Decryptor
+    if (bestOption.typeID && noDecryptorOption) {
+      const savingsPerRun = noDecryptorOption.costPerRun - bestOption.costPerRun;
+      if (savingsPerRun > 0) {
+        html += '<div class="invention-section invention-savings">';
+        html += '<h5>Decryptor Benefit</h5>';
+        html += '<div class="invention-row">';
+        html += `<span>Cost Savings per Run vs. No Decryptor:</span>`;
+        html += `<span class="invention-value positive">${formatISK(savingsPerRun)}</span>`;
+        html += '</div>';
+        html += '<div class="invention-row">';
+        html += `<span>Savings Percentage:</span>`;
+        html += `<span class="invention-value positive">${((savingsPerRun / noDecryptorOption.costPerRun) * 100).toFixed(2)}%</span>`;
+        html += '</div>';
+        html += '</div>';
+      }
+    }
+
+    html += '</div>'; // Close invention-breakdown
+
+    contentEl.innerHTML = html;
+    inventionEl.style.display = 'block';
+
+    // Add event listener for product selector (if multiple products)
+    if (hasMultipleProducts) {
+      const productSelector = document.getElementById('invention-product-select');
+      if (productSelector) {
+        productSelector.addEventListener('change', async (e) => {
+          const newIndex = parseInt(e.target.value, 10);
+          console.log(`Product selection changed to index ${newIndex}: ${inventionData.products[newIndex].typeName}`);
+          // Recursively call display function with new selection
+          await displayInventionAnalysis(blueprintTypeId, runs, inventionData, newIndex);
+        });
+      }
+    }
+  } catch (error) {
+    console.error('Error displaying invention analysis:', error);
+    // Hide invention display on error
+    const inventionEl = document.getElementById('invention-display');
+    if (inventionEl) {
+      inventionEl.style.display = 'none';
+    }
   }
 }

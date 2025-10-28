@@ -1,4 +1,5 @@
 const { getMarketDatabase } = require('./market-database');
+const { getUserAgent } = require('./user-agent');
 
 /**
  * Retry a fetch operation with exponential backoff
@@ -16,6 +17,11 @@ async function retryFetch(fetchFn, maxRetries = 3, initialDelay = 1000) {
       return response;
     } catch (error) {
       lastError = error;
+
+      // Don't retry if error is marked as non-retryable (e.g., 400/404 errors)
+      if (error.noRetry) {
+        throw error;
+      }
 
       // Don't retry if it's the last attempt
       if (attempt === maxRetries) {
@@ -125,11 +131,17 @@ async function fetchMarketOrders(regionId, typeId = null, locationFilter = null,
     const firstResponse = await retryFetch(async () => {
       const response = await fetch(`${baseUrl}&page=1`, {
         headers: {
-          'User-Agent': 'Quantum Forge Industry Tool',
+          'User-Agent': getUserAgent(),
         },
       });
 
       if (!response.ok) {
+        // Don't retry on 400 errors - item doesn't exist in market
+        if (response.status === 400 || response.status === 404) {
+          const error = new Error(`Item not available in market: ${response.status} ${response.statusText}`);
+          error.noRetry = true;
+          throw error;
+        }
         throw new Error(`Failed to fetch market orders: ${response.status} ${response.statusText}`);
       }
 
@@ -154,11 +166,17 @@ async function fetchMarketOrders(regionId, typeId = null, locationFilter = null,
           retryFetch(async () => {
             const response = await fetch(`${baseUrl}&page=${page}`, {
               headers: {
-                'User-Agent': 'Quantum Forge Industry Tool',
+                'User-Agent': getUserAgent(),
               },
             });
 
             if (!response.ok) {
+              // Don't retry on 400 errors - item doesn't exist in market
+              if (response.status === 400 || response.status === 404) {
+                const error = new Error(`Item not available in market: ${response.status} ${response.statusText}`);
+                error.noRetry = true;
+                throw error;
+              }
               throw new Error(`Failed to fetch page ${page}: ${response.status} ${response.statusText}`);
             }
 
@@ -212,6 +230,11 @@ async function fetchMarketOrders(regionId, typeId = null, locationFilter = null,
 
     return allOrders;
   } catch (error) {
+    // Special handling for items not available in market (T2 Blueprints, etc.)
+    if (error.noRetry) {
+      console.log(`Item ${typeId} not available in market (expected for T2 Blueprints, etc.) - using fallback pricing`);
+      return []; // Return empty array for items without market data
+    }
     console.error('Error fetching market orders:', error);
     // Return cached data on error
     return getCachedMarketOrders(regionId, typeId, locationFilter);
@@ -336,11 +359,17 @@ async function fetchMarketHistory(regionId, typeId, forceRefresh = false) {
     const response = await retryFetch(async () => {
       const res = await fetch(url, {
         headers: {
-          'User-Agent': 'Quantum Forge Industry Tool',
+          'User-Agent': getUserAgent(),
         },
       });
 
       if (!res.ok) {
+        // Don't retry on 400 errors - item doesn't exist in market
+        if (res.status === 400 || res.status === 404) {
+          const error = new Error(`Item not available in market: ${res.status} ${res.statusText}`);
+          error.noRetry = true;
+          throw error;
+        }
         throw new Error(`Failed to fetch market history: ${res.status} ${res.statusText}`);
       }
 
@@ -361,6 +390,11 @@ async function fetchMarketHistory(regionId, typeId, forceRefresh = false) {
 
     return history;
   } catch (error) {
+    // Special handling for items not available in market (T2 Blueprints, etc.)
+    if (error.noRetry) {
+      console.log(`Item ${typeId} not available in market (expected for T2 Blueprints, etc.) - using fallback pricing`);
+      return []; // Return empty array for items without market data
+    }
     console.error('Error fetching market history:', error);
     // Return cached data on error
     return getCachedMarketHistory(regionId, typeId);

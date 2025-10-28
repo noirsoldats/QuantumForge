@@ -1,5 +1,6 @@
 const { refreshAccessToken, isTokenExpired } = require('./esi-auth');
 const { getCharacter, updateCharacterTokens } = require('./settings-manager');
+const { getUserAgent } = require('./user-agent');
 
 /**
  * Fetch corporation blueprints from ESI
@@ -42,7 +43,7 @@ async function fetchCorporationBlueprints(characterId, corporationId) {
         {
           headers: {
             'Authorization': `Bearer ${character.accessToken}`,
-            'User-Agent': 'Quantum Forge Industry Tool',
+            'User-Agent': getUserAgent(),
           },
         }
       );
@@ -134,7 +135,7 @@ async function fetchCharacterBlueprints(characterId) {
         {
           headers: {
             'Authorization': `Bearer ${character.accessToken}`,
-            'User-Agent': 'Quantum Forge Industry Tool',
+            'User-Agent': getUserAgent(),
           },
         }
       );

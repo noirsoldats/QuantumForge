@@ -631,6 +631,27 @@ app.whenReady().then(async () => {
     return getAllBlueprints(limit);
   });
 
+  // Invention IPC handlers
+  ipcMain.handle('calculator:getInventionData', (event, blueprintTypeId) => {
+    const { getInventionData } = require('./blueprint-calculator');
+    return getInventionData(blueprintTypeId);
+  });
+
+  ipcMain.handle('calculator:getAllDecryptors', () => {
+    const { getAllDecryptors } = require('./blueprint-calculator');
+    return getAllDecryptors();
+  });
+
+  ipcMain.handle('calculator:calculateInventionProbability', (event, baseProbability, skills, decryptorMultiplier) => {
+    const { calculateInventionProbability } = require('./blueprint-calculator');
+    return calculateInventionProbability(baseProbability, skills, decryptorMultiplier);
+  });
+
+  ipcMain.handle('calculator:findBestDecryptor', (event, inventionData, materialPrices, productPrice, skills) => {
+    const { findBestDecryptor } = require('./blueprint-calculator');
+    return findBestDecryptor(inventionData, materialPrices, productPrice, skills);
+  });
+
   // Handle IPC for market data operations
   ipcMain.handle('market:getSettings', () => {
     return getMarketSettings();

@@ -2,6 +2,7 @@ const { shell } = require('electron');
 const crypto = require('crypto');
 const { URL } = require('url');
 const http = require('http');
+const { getUserAgent } = require('./user-agent');
 
 // ESI OAuth Configuration
 const ESI_CONFIG = {
@@ -262,7 +263,7 @@ async function getCharacterInfo(accessToken) {
     `https://esi.evetech.net/latest/characters/${verifyData.CharacterID}/?datasource=tranquility`,
     {
       headers: {
-        'User-Agent': 'Quantum Forge Industry Tool',
+        'User-Agent': getUserAgent(),
       },
     }
   );

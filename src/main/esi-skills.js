@@ -1,5 +1,6 @@
 const { refreshAccessToken, isTokenExpired } = require('./esi-auth');
 const { getCharacter, updateCharacterTokens } = require('./settings-manager');
+const { getUserAgent } = require('./user-agent');
 
 /**
  * Fetch character skills from ESI
@@ -28,7 +29,7 @@ async function fetchCharacterSkills(characterId) {
       {
         headers: {
           'Authorization': `Bearer ${character.accessToken}`,
-          'User-Agent': 'Quantum Forge Industry Tool',
+          'User-Agent': getUserAgent(),
         },
       }
     );

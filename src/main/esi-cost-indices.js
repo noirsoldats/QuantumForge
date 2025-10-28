@@ -1,4 +1,5 @@
 const { getMarketDatabase } = require('./market-database');
+const { getUserAgent } = require('./user-agent');
 
 /**
  * Retry a fetch operation with exponential backoff
@@ -108,7 +109,7 @@ async function fetchCostIndices(forceRefresh = false) {
     const response = await retryFetch(async () => {
       const res = await fetch(url, {
         headers: {
-          'User-Agent': 'Quantum Forge Industry Tool',
+          'User-Agent': getUserAgent(),
         },
       });
 

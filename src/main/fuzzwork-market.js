@@ -1,4 +1,5 @@
 const { getMarketDatabase } = require('./market-database');
+const { getUserAgent } = require('./user-agent');
 
 /**
  * Fetch historical market data from Fuzzwork
@@ -17,7 +18,7 @@ async function fetchFuzzworkHistory(typeId, regionId = 10000002, days = 365) {
 
     const response = await fetch(url, {
       headers: {
-        'User-Agent': 'Quantum Forge Industry Tool',
+        'User-Agent': getUserAgent(),
       },
     });
 
@@ -91,7 +92,7 @@ async function fetchBulkPrices(typeIds, regionId = 10000002) {
 
     const response = await fetch(url, {
       headers: {
-        'User-Agent': 'Quantum Forge Industry Tool',
+        'User-Agent': getUserAgent(),
       },
     });
 

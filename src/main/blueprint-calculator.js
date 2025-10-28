@@ -499,6 +499,309 @@ function getAllBlueprints(limit = null) {
   }
 }
 
+/**
+ * Get invention data for a blueprint
+ * @param {number} blueprintTypeId - T1 Blueprint type ID
+ * @returns {Object|null} Invention data including materials, product, probability, and skills
+ */
+function getInventionData(blueprintTypeId) {
+  console.log('[Invention] getInventionData called for blueprintTypeId:', blueprintTypeId);
+  try {
+    const dbPath = getSDEPath();
+    const db = new Database(dbPath, { readonly: true });
+
+    // Check if this blueprint can be used for invention (activityID = 8)
+    const hasInvention = db.prepare(`
+      SELECT 1
+      FROM industryActivity
+      WHERE typeID = ? AND activityID = 8
+    `).get(blueprintTypeId);
+
+    console.log('[Invention] hasInvention check result:', hasInvention);
+
+    if (!hasInvention) {
+      db.close();
+      console.log('[Invention] No invention activity found, returning null');
+      return null;
+    }
+
+    // Get invention materials (datacores, data interfaces, optional items)
+    const materials = db.prepare(`
+      SELECT iam.materialTypeID as typeID, iam.quantity, it.typeName
+      FROM industryActivityMaterials iam
+      LEFT JOIN invTypes it ON iam.materialTypeID = it.typeID
+      WHERE iam.typeID = ? AND iam.activityID = 8
+      ORDER BY iam.quantity DESC
+    `).all(blueprintTypeId);
+
+    // Get ALL invention products (some blueprints have multiple T2 variants)
+    const products = db.prepare(`
+      SELECT iap.productTypeID as typeID, iap.quantity, it.typeName
+      FROM industryActivityProducts iap
+      LEFT JOIN invTypes it ON iap.productTypeID = it.typeID
+      WHERE iap.typeID = ? AND iap.activityID = 8
+      ORDER BY it.typeName
+    `).all(blueprintTypeId);
+
+    // Get the manufactured products for each invention product
+    // This is needed for market pricing since blueprints themselves aren't tradeable
+    const productsWithManufactured = products.map(product => {
+      const manufacturedProduct = db.prepare(`
+        SELECT iap.productTypeID as typeID, it.typeName
+        FROM industryActivityProducts iap
+        LEFT JOIN invTypes it ON iap.productTypeID = it.typeID
+        WHERE iap.typeID = ? AND iap.activityID = 1
+        LIMIT 1
+      `).get(product.typeID);
+
+      // Get base invention probability for this specific product
+      const probability = db.prepare(`
+        SELECT probability
+        FROM industryActivityProbabilities
+        WHERE typeID = ? AND activityID = 8 AND productTypeID = ?
+        LIMIT 1
+      `).get(blueprintTypeId, product.typeID);
+
+      return {
+        ...product,
+        manufacturedProduct: manufacturedProduct || null,
+        baseProbability: probability ? probability.probability : 0
+      };
+    });
+
+    // Get required skills with names
+    const skills = db.prepare(`
+      SELECT ias.skillID, ias.level, it.typeName as skillName
+      FROM industryActivitySkills ias
+      LEFT JOIN invTypes it ON ias.skillID = it.typeID
+      WHERE ias.typeID = ? AND ias.activityID = 8
+      ORDER BY ias.level DESC
+    `).all(blueprintTypeId);
+
+    // Get invention time
+    const time = db.prepare(`
+      SELECT time
+      FROM industryActivity
+      WHERE typeID = ? AND activityID = 8
+    `).get(blueprintTypeId);
+
+    db.close();
+
+    const result = {
+      materials: materials || [],
+      products: productsWithManufactured || [],
+      skills: skills || [],
+      time: time ? time.time : 0
+    };
+
+    console.log('[Invention] Returning invention data - materials count:', result.materials.length, 'products count:', result.products.length);
+    if (result.products.length > 0) {
+      console.log('[Invention] First product:', result.products[0].typeName, 'manufactures:', result.products[0].manufacturedProduct?.typeName);
+    }
+    return result;
+  } catch (error) {
+    console.error('[Invention] Error getting invention data:', error);
+    return null;
+  }
+}
+
+/**
+ * Get all decryptors with their modifiers
+ * @returns {Array} Array of decryptors with their modifiers
+ */
+function getAllDecryptors() {
+  try {
+    const dbPath = getSDEPath();
+    const db = new Database(dbPath, { readonly: true });
+
+    // Decryptors are in groupID 1304
+    const decryptors = db.prepare(`
+      SELECT
+        t.typeID,
+        t.typeName,
+        MAX(CASE WHEN tattr.attributeID = 1112 THEN COALESCE(tattr.valueFloat, tattr.valueInt) END) as probabilityMultiplier,
+        MAX(CASE WHEN tattr.attributeID = 1113 THEN COALESCE(tattr.valueFloat, tattr.valueInt) END) as meModifier,
+        MAX(CASE WHEN tattr.attributeID = 1114 THEN COALESCE(tattr.valueFloat, tattr.valueInt) END) as teModifier,
+        MAX(CASE WHEN tattr.attributeID = 1124 THEN COALESCE(tattr.valueFloat, tattr.valueInt) END) as runsModifier
+      FROM invTypes t
+      LEFT JOIN dgmTypeAttributes tattr ON tattr.typeID = t.typeID AND tattr.attributeID IN (1112, 1113, 1114, 1124)
+      WHERE t.groupID = 1304
+      GROUP BY t.typeID, t.typeName
+      ORDER BY t.typeName
+    `).all();
+
+    db.close();
+    return decryptors;
+  } catch (error) {
+    console.error('Error getting decryptors:', error);
+    return [];
+  }
+}
+
+/**
+ * Calculate invention probability based on skills and decryptor
+ * Formula: Base × (1 + EncryptionSkill/40) × (1 + (Datacore1 + Datacore2)/30) × DecryptorMultiplier
+ * @param {number} baseProbability - Base probability from SDE
+ * @param {Object} skills - Character skills { encryption: level, datacore1: level, datacore2: level }
+ * @param {number} decryptorMultiplier - Decryptor probability multiplier (default 1.0 for no decryptor)
+ * @returns {number} Final probability (0-1)
+ */
+function calculateInventionProbability(baseProbability, skills = {}, decryptorMultiplier = 1.0) {
+  const encryptionLevel = skills.encryption || 0;
+  const datacore1Level = skills.datacore1 || 0;
+  const datacore2Level = skills.datacore2 || 0;
+
+  const encryptionBonus = 1 + (encryptionLevel / 40);
+  const datacoreBonus = 1 + ((datacore1Level + datacore2Level) / 30);
+
+  const finalProbability = baseProbability * encryptionBonus * datacoreBonus * decryptorMultiplier;
+
+  return Math.min(finalProbability, 1.0); // Cap at 100%
+}
+
+/**
+ * Calculate invention cost per successful run
+ * @param {Object} inventionData - Invention data from getInventionData
+ * @param {Object} materialPrices - Map of typeID -> price
+ * @param {number} probability - Success probability (0-1)
+ * @param {Object} decryptor - Optional decryptor object with typeID and runsModifier
+ * @param {number} decryptorPrice - Price of decryptor (if used)
+ * @returns {Object} Cost breakdown
+ */
+function calculateInventionCost(inventionData, materialPrices, probability, decryptor = null, decryptorPrice = 0) {
+  // Calculate material costs (datacores, data interfaces, etc - NOT including decryptor)
+  let materialCost = 0;
+  inventionData.materials.forEach(mat => {
+    const price = materialPrices[mat.typeID] || 0;
+    materialCost += price * mat.quantity;
+  });
+
+  // Job cost for invention - approximately 2% of material costs as a simplified estimate
+  // In reality this uses EIV and system cost index, but for now we'll use a simple approximation
+  const jobCostPercentage = 0.02; // 2% of material costs
+  const jobCost = materialCost * jobCostPercentage;
+
+  // Total cost per attempt = materials + decryptor + job cost
+  const totalCostPerAttempt = materialCost + decryptorPrice + jobCost;
+
+  // Cost per successful invention = cost per attempt / probability
+  const costPerSuccess = probability > 0 ? totalCostPerAttempt / probability : 0;
+
+  // Calculate runs per invented blueprint
+  // Base runs comes from the invention product quantity (e.g., 1 for ships, 10 for ammo)
+  const baseRuns = inventionData.product?.quantity || 1;
+  const runsModifier = decryptor ? (decryptor.runsModifier || 0) : 0;
+  const totalRuns = baseRuns + runsModifier;
+
+  // Cost per run = cost per successful invention / number of runs on that blueprint
+  const costPerRun = totalRuns > 0 ? costPerSuccess / totalRuns : costPerSuccess;
+
+  return {
+    materialCost,
+    decryptorCost: decryptorPrice,
+    jobCost,
+    totalCostPerAttempt,
+    probability,
+    costPerSuccess,
+    runsPerBPC: totalRuns,
+    costPerRun
+  };
+}
+
+/**
+ * Find the most profitable decryptor for invention
+ * @param {Object} inventionData - Invention data from getInventionData
+ * @param {Object} materialPrices - Map of typeID -> price (includes materials and decryptors)
+ * @param {Object} productPrice - Price of the invented blueprint product
+ * @param {Object} skills - Character skills for invention
+ * @returns {Object} Best decryptor analysis with comparison
+ */
+function findBestDecryptor(inventionData, materialPrices, productPrice, skills = {}) {
+  const decryptors = getAllDecryptors();
+  const baseProbability = inventionData.baseProbability;
+
+  // Calculate for no decryptor
+  const noDecryptorProb = calculateInventionProbability(baseProbability, skills, 1.0);
+  const noDecryptorCost = calculateInventionCost(inventionData, materialPrices, noDecryptorProb, null, 0);
+
+  let bestOption = {
+    name: 'No Decryptor',
+    typeID: null,
+    probability: noDecryptorProb,
+    costPerSuccess: noDecryptorCost.costPerSuccess,
+    costPerRun: noDecryptorCost.costPerRun,
+    runsPerBPC: noDecryptorCost.runsPerBPC,
+    materialCost: noDecryptorCost.materialCost,
+    decryptorCost: noDecryptorCost.decryptorCost,
+    jobCost: noDecryptorCost.jobCost,
+    totalCostPerAttempt: noDecryptorCost.totalCostPerAttempt,
+    meModifier: 0,
+    teModifier: 0,
+    runsModifier: 0
+  };
+
+  // Compare with each decryptor (use costPerRun for comparison)
+  decryptors.forEach(dec => {
+    const decPrice = materialPrices[dec.typeID] || 0;
+    const decProb = calculateInventionProbability(baseProbability, skills, dec.probabilityMultiplier || 1.0);
+    const decCost = calculateInventionCost(inventionData, materialPrices, decProb, dec, decPrice);
+
+    if (decCost.costPerRun < bestOption.costPerRun) {
+      bestOption = {
+        name: dec.typeName,
+        typeID: dec.typeID,
+        probability: decProb,
+        costPerSuccess: decCost.costPerSuccess,
+        costPerRun: decCost.costPerRun,
+        runsPerBPC: decCost.runsPerBPC,
+        materialCost: decCost.materialCost,
+        decryptorCost: decCost.decryptorCost,
+        jobCost: decCost.jobCost,
+        totalCostPerAttempt: decCost.totalCostPerAttempt,
+        meModifier: dec.meModifier || 0,
+        teModifier: dec.teModifier || 0,
+        runsModifier: dec.runsModifier || 0,
+        probabilityMultiplier: dec.probabilityMultiplier || 1.0
+      };
+    }
+  });
+
+  return {
+    best: bestOption,
+    noDecryptor: {
+      probability: noDecryptorProb,
+      costPerSuccess: noDecryptorCost.costPerSuccess,
+      totalCost: noDecryptorCost.totalCostPerAttempt
+    },
+    allOptions: [
+      {
+        name: 'No Decryptor',
+        typeID: null,
+        probability: noDecryptorProb,
+        costPerSuccess: noDecryptorCost.costPerSuccess,
+        meModifier: 0,
+        teModifier: 0,
+        runsModifier: 0
+      },
+      ...decryptors.map(dec => {
+        const decPrice = materialPrices[dec.typeID] || 0;
+        const decProb = calculateInventionProbability(baseProbability, skills, dec.probabilityMultiplier || 1.0);
+        const decCost = calculateInventionCost(inventionData, materialPrices, decProb, dec, decPrice);
+        return {
+          name: dec.typeName,
+          typeID: dec.typeID,
+          probability: decProb,
+          costPerSuccess: decCost.costPerSuccess,
+          meModifier: dec.meModifier || 0,
+          teModifier: dec.teModifier || 0,
+          runsModifier: dec.runsModifier || 0,
+          probabilityMultiplier: dec.probabilityMultiplier || 1.0
+        };
+      })
+    ]
+  };
+}
+
 module.exports = {
   getBlueprintMaterials,
   getBlueprintProduct,
@@ -510,5 +813,11 @@ module.exports = {
   searchBlueprints,
   getAllBlueprints,
   getDefaultFacility,
-  getProductGroupId
+  getProductGroupId,
+  // Invention functions
+  getInventionData,
+  getAllDecryptors,
+  calculateInventionProbability,
+  calculateInventionCost,
+  findBestDecryptor
 };

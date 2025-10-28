@@ -5,6 +5,7 @@ const https = require('https');
 const { pipeline } = require('stream/promises');
 const { createWriteStream, createReadStream } = require('fs');
 const unbzip2Stream = require('unbzip2-stream');
+const { getUserAgent } = require('./user-agent');
 
 // Fuzzwork SDE SQLite URLs
 const FUZZWORK_BASE_URL = 'https://www.fuzzwork.co.uk/dump';
@@ -176,7 +177,7 @@ function downloadFile(url, dest, progressCallback = null) {
 
     const options = {
       headers: {
-        'User-Agent': 'Quantum-Forge/1.0 (EVE Online Industry Tool)',
+        'User-Agent': getUserAgent(),
       },
     };
 
