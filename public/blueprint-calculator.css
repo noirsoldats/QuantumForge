@@ -917,3 +917,36 @@
   border-color: #ffa500;
   box-shadow: 0 0 5px rgba(255, 165, 0, 0.3);
 }
+
+/* Invention Decryptor Selector */
+.invention-decryptor-selector {
+  background: rgba(255, 165, 0, 0.08);
+  border: 1px solid rgba(255, 165, 0, 0.25);
+}
+
+.invention-decryptor-selector h5 {
+  color: #ffa500;
+}
+
+#decryptor-select {
+  width: 100%;
+  max-width: 500px;
+  padding: 8px;
+  font-size: 0.95em;
+  background: rgba(0, 0, 0, 0.3);
+  color: #e0e0e0;
+  border: 1px solid rgba(255, 165, 0, 0.3);
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+#decryptor-select:hover {
+  border-color: rgba(255, 165, 0, 0.5);
+  background: rgba(0, 0, 0, 0.4);
+}
+
+#decryptor-select:focus {
+  outline: none;
+  border-color: #ffa500;
+  box-shadow: 0 0 5px rgba(255, 165, 0, 0.3);
+}

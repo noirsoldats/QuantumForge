@@ -1208,8 +1208,13 @@ async function displayInventionAnalysis(blueprintTypeId, runs, cachedInventionDa
     // Normalize the result structure (backend returns 'best', we use 'bestOption')
     const bestOption = bestDecryptorResult.best;
     const noDecryptorOption = bestDecryptorResult.noDecryptor;
+    const allOptions = bestDecryptorResult.allOptions || [];
+
+    // Track which decryptor to display (starts with optimal)
+    let displayOption = bestOption;
 
     console.log('Best option for display:', bestOption);
+    console.log('All options count:', allOptions.length);
     console.log('Material prices used:', materialPrices);
 
     let html = '<div class="invention-breakdown">';
@@ -1303,8 +1308,24 @@ async function displayInventionAnalysis(blueprintTypeId, runs, cachedInventionDa
     }
     html += '</div>';
 
-    // Cost Analysis
-    html += '<div class="invention-section">';
+    // Decryptor Selector
+    html += '<div class="invention-section invention-decryptor-selector">';
+    html += '<h5>Select Decryptor to Analyze</h5>';
+    html += '<div class="invention-row">';
+    html += '<label for="decryptor-select">Choose Decryptor:</label>';
+    html += '<select id="decryptor-select" class="control-input">';
+    // Add "Optimal Decryptor" option at the top
+    html += `<option value="optimal" selected>Optimal Decryptor (${bestOption.name})</option>`;
+    html += '<option disabled>──────────</option>'; // Separator
+    allOptions.forEach((option, index) => {
+      html += `<option value="${index}">${option.name}</option>`;
+    });
+    html += '</select>';
+    html += '</div>';
+    html += '</div>';
+
+    // Cost Analysis (will be updated by selector)
+    html += '<div class="invention-section" id="invention-costs-section">';
     html += '<h5>Invention Costs</h5>';
     html += '<div class="invention-row">';
     html += `<span>Material Cost per Attempt:</span>`;
@@ -1363,6 +1384,70 @@ async function displayInventionAnalysis(blueprintTypeId, runs, cachedInventionDa
     contentEl.innerHTML = html;
     inventionEl.style.display = 'block';
 
+    // Function to update costs display based on selected decryptor
+    function updateCostsDisplay(selectedOption) {
+      const costsSection = document.getElementById('invention-costs-section');
+      if (!costsSection) return;
+
+      // Check if this is the optimal selection (compare by name and cost per run to be safe)
+      const isOptimal = selectedOption.name === bestOption.name &&
+                       Math.abs(selectedOption.costPerRun - bestOption.costPerRun) < 0.01;
+
+      let costsHtml = '<h5>Invention Costs';
+      if (!isOptimal) {
+        costsHtml += ' <span style="color: #ffa500; font-size: 0.9em;">(Custom Selection)</span>';
+      }
+      costsHtml += '</h5>';
+
+      costsHtml += '<div class="invention-row">';
+      costsHtml += `<span>Material Cost per Attempt:</span>`;
+      costsHtml += `<span class="invention-value">${formatISK(selectedOption.materialCost)}</span>`;
+      costsHtml += '</div>';
+
+      if (selectedOption.decryptorCost && selectedOption.decryptorCost > 0) {
+        costsHtml += '<div class="invention-row">';
+        costsHtml += `<span>Decryptor Cost per Attempt:</span>`;
+        costsHtml += `<span class="invention-value">${formatISK(selectedOption.decryptorCost)}</span>`;
+        costsHtml += '</div>';
+      }
+
+      costsHtml += '<div class="invention-row">';
+      costsHtml += `<span>Job Cost per Attempt:</span>`;
+      costsHtml += `<span class="invention-value">${formatISK(selectedOption.jobCost)}</span>`;
+      costsHtml += '</div>';
+      costsHtml += '<div class="invention-row">';
+      costsHtml += `<span>Total Cost per Attempt:</span>`;
+      costsHtml += `<span class="invention-value">${formatISK(selectedOption.totalCostPerAttempt)}</span>`;
+      costsHtml += '</div>';
+      costsHtml += '<div class="invention-row">';
+      costsHtml += `<span>Runs per Invented BPC:</span>`;
+      costsHtml += `<span class="invention-value">${selectedOption.runsPerBPC || 1}</span>`;
+      costsHtml += '</div>';
+      costsHtml += '<div class="invention-row">';
+      costsHtml += `<span>Average Cost per Successful Invention:</span>`;
+      costsHtml += `<span class="invention-value">${formatISK(selectedOption.costPerSuccess)}</span>`;
+      costsHtml += '</div>';
+      costsHtml += '<div class="invention-row invention-highlight">';
+      costsHtml += `<span><strong>Average Cost per Run:</strong></span>`;
+      costsHtml += `<span class="invention-value"><strong>${formatISK(selectedOption.costPerRun)}</strong></span>`;
+      costsHtml += '</div>';
+
+      // Show comparison if not already optimal
+      if (!isOptimal) {
+        const costDiff = selectedOption.costPerRun - bestOption.costPerRun;
+        if (Math.abs(costDiff) > 0.01) {
+          costsHtml += '<div class="invention-row" style="margin-top: 10px; padding-top: 10px; border-top: 1px solid rgba(255, 165, 0, 0.2);">';
+          costsHtml += `<span>Difference vs. Optimal:</span>`;
+          const color = costDiff > 0 ? '#ff4757' : '#2ed573';
+          const sign = costDiff > 0 ? '+' : '';
+          costsHtml += `<span class="invention-value" style="color: ${color};">${sign}${formatISK(costDiff)}</span>`;
+          costsHtml += '</div>';
+        }
+      }
+
+      costsSection.innerHTML = costsHtml;
+    }
+
     // Add event listener for product selector (if multiple products)
     if (hasMultipleProducts) {
       const productSelector = document.getElementById('invention-product-select');
@@ -1374,6 +1459,26 @@ async function displayInventionAnalysis(blueprintTypeId, runs, cachedInventionDa
           await displayInventionAnalysis(blueprintTypeId, runs, inventionData, newIndex);
         });
       }
+    }
+
+    // Add event listener for decryptor selector
+    const decryptorSelector = document.getElementById('decryptor-select');
+    if (decryptorSelector) {
+      decryptorSelector.addEventListener('change', (e) => {
+        const selectedValue = e.target.value;
+        let selectedOption;
+
+        if (selectedValue === 'optimal') {
+          selectedOption = bestOption;
+          console.log('Decryptor selection changed to: Optimal (automatic)');
+        } else {
+          const selectedIndex = parseInt(selectedValue, 10);
+          selectedOption = allOptions[selectedIndex];
+          console.log(`Decryptor selection changed to: ${selectedOption.name}`);
+        }
+
+        updateCostsDisplay(selectedOption);
+      });
     }
   } catch (error) {
     console.error('Error displaying invention analysis:', error);
