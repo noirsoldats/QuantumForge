@@ -1189,11 +1189,13 @@ async function displayInventionAnalysis(blueprintTypeId, runs, cachedInventionDa
     };
 
     // Find best decryptor for the selected product
+    // Pass null for facility - backend will use default facility
     const bestDecryptorResult = await window.electronAPI.calculator.findBestDecryptor(
       selectedInventionData,
       materialPrices,
       productPrice,
-      skills
+      skills,
+      null  // facility - use default
     );
 
     console.log('Best decryptor result:', bestDecryptorResult);
@@ -1324,6 +1326,29 @@ async function displayInventionAnalysis(blueprintTypeId, runs, cachedInventionDa
     html += '</div>';
     html += '</div>';
 
+    // Output Blueprint Stats (will be updated by selector)
+    // Invented T2 blueprints start with base ME: 2, base TE: 4
+    const baseME = 2;
+    const baseTE = 4;
+    const finalME = baseME + (bestOption.meModifier || 0);
+    const finalTE = baseTE + (bestOption.teModifier || 0);
+
+    html += '<div class="invention-section" id="invention-output-blueprint-section">';
+    html += '<h5>Output Blueprint Stats</h5>';
+    html += '<div class="invention-row">';
+    html += `<span>Total Runs:</span>`;
+    html += `<span class="invention-value">${bestOption.runsPerBPC || 1}</span>`;
+    html += '</div>';
+    html += '<div class="invention-row">';
+    html += `<span>Material Efficiency (ME):</span>`;
+    html += `<span class="invention-value">${finalME}</span>`;
+    html += '</div>';
+    html += '<div class="invention-row">';
+    html += `<span>Time Efficiency (TE):</span>`;
+    html += `<span class="invention-value">${finalTE}</span>`;
+    html += '</div>';
+    html += '</div>';
+
     // Cost Analysis (will be updated by selector)
     html += '<div class="invention-section" id="invention-costs-section">';
     html += '<h5>Invention Costs</h5>';
@@ -1387,11 +1412,34 @@ async function displayInventionAnalysis(blueprintTypeId, runs, cachedInventionDa
     // Function to update costs display based on selected decryptor
     function updateCostsDisplay(selectedOption) {
       const costsSection = document.getElementById('invention-costs-section');
-      if (!costsSection) return;
+      const blueprintSection = document.getElementById('invention-output-blueprint-section');
+      if (!costsSection || !blueprintSection) return;
 
       // Check if this is the optimal selection (compare by name and cost per run to be safe)
       const isOptimal = selectedOption.name === bestOption.name &&
                        Math.abs(selectedOption.costPerRun - bestOption.costPerRun) < 0.01;
+
+      // Update Output Blueprint Stats
+      // Invented T2 blueprints start with base ME: 2, base TE: 4
+      const baseME = 2;
+      const baseTE = 4;
+      const finalME = baseME + (selectedOption.meModifier || 0);
+      const finalTE = baseTE + (selectedOption.teModifier || 0);
+
+      let blueprintHtml = '<h5>Output Blueprint Stats</h5>';
+      blueprintHtml += '<div class="invention-row">';
+      blueprintHtml += `<span>Total Runs:</span>`;
+      blueprintHtml += `<span class="invention-value">${selectedOption.runsPerBPC || 1}</span>`;
+      blueprintHtml += '</div>';
+      blueprintHtml += '<div class="invention-row">';
+      blueprintHtml += `<span>Material Efficiency (ME):</span>`;
+      blueprintHtml += `<span class="invention-value">${finalME}</span>`;
+      blueprintHtml += '</div>';
+      blueprintHtml += '<div class="invention-row">';
+      blueprintHtml += `<span>Time Efficiency (TE):</span>`;
+      blueprintHtml += `<span class="invention-value">${finalTE}</span>`;
+      blueprintHtml += '</div>';
+      blueprintSection.innerHTML = blueprintHtml;
 
       let costsHtml = '<h5>Invention Costs';
       if (!isOptimal) {

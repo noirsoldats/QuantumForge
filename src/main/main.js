@@ -647,9 +647,13 @@ app.whenReady().then(async () => {
     return calculateInventionProbability(baseProbability, skills, decryptorMultiplier);
   });
 
-  ipcMain.handle('calculator:findBestDecryptor', (event, inventionData, materialPrices, productPrice, skills) => {
-    const { findBestDecryptor } = require('./blueprint-calculator');
-    return findBestDecryptor(inventionData, materialPrices, productPrice, skills);
+  ipcMain.handle('calculator:findBestDecryptor', (event, inventionData, materialPrices, productPrice, skills, facility) => {
+    const { findBestDecryptor, getDefaultFacility } = require('./blueprint-calculator');
+
+    // Use provided facility or fall back to default facility
+    const facilityToUse = facility || getDefaultFacility();
+
+    return findBestDecryptor(inventionData, materialPrices, productPrice, skills, facilityToUse);
   });
 
   // Handle IPC for market data operations

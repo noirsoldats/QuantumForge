@@ -2,6 +2,7 @@ const { getSDEDatabase } = require('./sde-database');
 const path = require('path');
 const Database = require('better-sqlite3');
 const { app } = require('electron');
+const { getCostIndices } = require('./esi-cost-indices');
 
 /**
  * Get the path to the SDE database
@@ -660,15 +661,94 @@ function calculateInventionProbability(baseProbability, skills = {}, decryptorMu
 }
 
 /**
+ * Get system invention cost index from ESI data
+ * @param {number} solarSystemId - Solar system ID
+ * @returns {number} Cost index as decimal (e.g., 0.02 for 2%)
+ */
+function getSystemInventionCostIndex(solarSystemId) {
+  if (!solarSystemId) {
+    return 0;
+  }
+
+  try {
+    const indices = getCostIndices(solarSystemId);
+    const inventionIndex = indices.find(idx => idx.activity === 'invention');
+    return inventionIndex ? inventionIndex.costIndex : 0;
+  } catch (error) {
+    console.error('Error getting system invention cost index:', error);
+    return 0;
+  }
+}
+
+/**
+ * Get invention facility bonuses from structure and rigs
+ * @param {Object} facility - Facility configuration object
+ * @returns {Object} { costReductionPercent, facilityTaxPercent }
+ */
+function getInventionFacilityBonuses(facility) {
+  const bonuses = {
+    costReductionPercent: 0,
+    facilityTaxPercent: 0  // Default 0% for player-owned structures
+  };
+
+  if (!facility || !facility.structureTypeId) {
+    return bonuses;
+  }
+
+  try {
+    const db = new Database(getSDEPath(), { readonly: true });
+
+    // Query structure base invention cost bonus (attribute ID 2783)
+    const structureBonus = db.prepare(`
+      SELECT COALESCE(valueFloat, valueInt) as value
+      FROM dgmTypeAttributes
+      WHERE typeID = ? AND attributeID = 2783
+    `).get(facility.structureTypeId);
+
+    if (structureBonus && structureBonus.value) {
+      // Convert from percentage to decimal (e.g., -1 becomes 0.01 for 1% reduction)
+      bonuses.costReductionPercent = Math.abs(structureBonus.value) / 100;
+    }
+
+    // Apply rig bonuses if present
+    if (facility.rigs && Array.isArray(facility.rigs)) {
+      for (const rig of facility.rigs) {
+        if (!rig.typeId) continue;
+
+        // Query rig invention cost bonus (same attribute ID 2783)
+        const rigBonus = db.prepare(`
+          SELECT COALESCE(valueFloat, valueInt) as value
+          FROM dgmTypeAttributes
+          WHERE typeID = ? AND attributeID = 2783
+        `).get(rig.typeId);
+
+        if (rigBonus && rigBonus.value) {
+          // Rig bonuses are additive
+          bonuses.costReductionPercent += Math.abs(rigBonus.value) / 100;
+        }
+      }
+    }
+
+    db.close();
+  } catch (error) {
+    console.error('Error getting invention facility bonuses:', error);
+  }
+
+  return bonuses;
+}
+
+/**
  * Calculate invention cost per successful run
  * @param {Object} inventionData - Invention data from getInventionData
  * @param {Object} materialPrices - Map of typeID -> price
  * @param {number} probability - Success probability (0-1)
  * @param {Object} decryptor - Optional decryptor object with typeID and runsModifier
  * @param {number} decryptorPrice - Price of decryptor (if used)
+ * @param {number} manufacturedProductEIV - EIV of the manufactured product (for job cost calculation)
+ * @param {Object} facility - Facility configuration (for cost bonuses and system cost index)
  * @returns {Object} Cost breakdown
  */
-function calculateInventionCost(inventionData, materialPrices, probability, decryptor = null, decryptorPrice = 0) {
+function calculateInventionCost(inventionData, materialPrices, probability, decryptor = null, decryptorPrice = 0, manufacturedProductEIV = 0, facility = null) {
   // Calculate material costs (datacores, data interfaces, etc - NOT including decryptor)
   let materialCost = 0;
   inventionData.materials.forEach(mat => {
@@ -676,10 +756,36 @@ function calculateInventionCost(inventionData, materialPrices, probability, decr
     materialCost += price * mat.quantity;
   });
 
-  // Job cost for invention - approximately 2% of material costs as a simplified estimate
-  // In reality this uses EIV and system cost index, but for now we'll use a simple approximation
-  const jobCostPercentage = 0.02; // 2% of material costs
-  const jobCost = materialCost * jobCostPercentage;
+  // Job cost calculation using correct Eve Online formula:
+  // Job Base Cost (JBC) = 2% of EIV of Manufactured Product
+  // Job Gross Cost = JBC × System Invention Cost Index% - JBC × Structure Cost Reduction%
+  // Taxes Total = JBC × Facility Tax% + JBC × 4% (SCC surcharge)
+  // Job Total Cost = Job Gross Cost + Taxes Total
+
+  let jobCost = 0;
+
+  if (manufacturedProductEIV > 0) {
+    // Step 1: Job Base Cost = 2% of manufactured product EIV
+    const jobBaseCost = manufacturedProductEIV * 0.02;
+
+    // Step 2: Get facility bonuses
+    const facilityBonuses = getInventionFacilityBonuses(facility);
+
+    // Step 3: Get system cost index
+    const systemCostIndex = facility ? getSystemInventionCostIndex(facility.systemId) : 0;
+
+    // Step 4: Calculate Job Gross Cost
+    // Apply system cost index multiplier, then subtract structure cost reduction
+    const jobGrossCost = (jobBaseCost * systemCostIndex) * (1 - facilityBonuses.costReductionPercent);
+
+    // Step 5: Calculate Taxes
+    const sccSurcharge = jobBaseCost * 0.04; // 4% SCC surcharge
+    const facilityTax = jobBaseCost * facilityBonuses.facilityTaxPercent;
+    const taxesTotal = sccSurcharge + facilityTax;
+
+    // Step 6: Total Job Cost
+    jobCost = jobGrossCost + taxesTotal;
+  }
 
   // Total cost per attempt = materials + decryptor + job cost
   const totalCostPerAttempt = materialCost + decryptorPrice + jobCost;
@@ -712,17 +818,18 @@ function calculateInventionCost(inventionData, materialPrices, probability, decr
  * Find the most profitable decryptor for invention
  * @param {Object} inventionData - Invention data from getInventionData
  * @param {Object} materialPrices - Map of typeID -> price (includes materials and decryptors)
- * @param {Object} productPrice - Price of the invented blueprint product
+ * @param {number} productPrice - Price of the manufactured product (for EIV calculation)
  * @param {Object} skills - Character skills for invention
+ * @param {Object} facility - Facility configuration for cost bonuses and system cost index
  * @returns {Object} Best decryptor analysis with comparison
  */
-function findBestDecryptor(inventionData, materialPrices, productPrice, skills = {}) {
+function findBestDecryptor(inventionData, materialPrices, productPrice, skills = {}, facility = null) {
   const decryptors = getAllDecryptors();
   const baseProbability = inventionData.baseProbability;
 
   // Calculate for no decryptor
   const noDecryptorProb = calculateInventionProbability(baseProbability, skills, 1.0);
-  const noDecryptorCost = calculateInventionCost(inventionData, materialPrices, noDecryptorProb, null, 0);
+  const noDecryptorCost = calculateInventionCost(inventionData, materialPrices, noDecryptorProb, null, 0, productPrice, facility);
 
   let bestOption = {
     name: 'No Decryptor',
@@ -744,7 +851,7 @@ function findBestDecryptor(inventionData, materialPrices, productPrice, skills =
   decryptors.forEach(dec => {
     const decPrice = materialPrices[dec.typeID] || 0;
     const decProb = calculateInventionProbability(baseProbability, skills, dec.probabilityMultiplier || 1.0);
-    const decCost = calculateInventionCost(inventionData, materialPrices, decProb, dec, decPrice);
+    const decCost = calculateInventionCost(inventionData, materialPrices, decProb, dec, decPrice, productPrice, facility);
 
     if (decCost.costPerRun < bestOption.costPerRun) {
       bestOption = {
@@ -792,7 +899,7 @@ function findBestDecryptor(inventionData, materialPrices, productPrice, skills =
       ...decryptors.map(dec => {
         const decPrice = materialPrices[dec.typeID] || 0;
         const decProb = calculateInventionProbability(baseProbability, skills, dec.probabilityMultiplier || 1.0);
-        const decCost = calculateInventionCost(inventionData, materialPrices, decProb, dec, decPrice);
+        const decCost = calculateInventionCost(inventionData, materialPrices, decProb, dec, decPrice, productPrice, facility);
         return {
           name: dec.typeName,
           typeID: dec.typeID,
