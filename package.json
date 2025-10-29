@@ -1,7 +1,7 @@
 {
   "name": "quantum-forge",
   "productName": "Quantum Forge",
-  "version": "0.5.3",
+  "version": "0.5.4",
   "description": "Eve Online Industry Management Tool",
   "main": "src/main/main.js",
   "scripts": {
