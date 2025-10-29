@@ -1,14 +1,16 @@
 name: Build
 
 on:
-  push:
-    branches:
-      - main
-      - develop
-  pull_request:
-    branches:
-      - main
-      - develop
+  workflow_dispatch:  # Allows manual trigger from GitHub Actions tab
+  # Uncomment below to enable automatic builds on push/PR
+  # push:
+  #   branches:
+  #     - main
+  #     - develop
+  # pull_request:
+  #   branches:
+  #     - main
+  #     - develop
 
 jobs:
   build:

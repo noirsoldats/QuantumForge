@@ -6,9 +6,9 @@ This directory contains GitHub Actions workflows for automated building and rele
 
 ### 1. Build Workflow (`build.yml`)
 
-**Trigger**: Runs on every push and pull request to `main` and `develop` branches
+**Trigger**: Manual only (via workflow_dispatch)
 
-**Purpose**: Builds the application for all platforms to ensure the code compiles correctly
+**Purpose**: On-demand builds for testing purposes without creating a release
 
 **Platforms**:
 - macOS (x64 and ARM64)
@@ -42,15 +42,15 @@ This directory contains GitHub Actions workflows for automated building and rele
 
 ## How to Use
 
-### Testing Builds
+### Manual Builds (Optional)
 
-Simply push your code to `main` or `develop` branch:
+If you want to test a build without creating a release:
 
-```bash
-git push origin main
-```
-
-The build workflow will automatically run and create artifacts you can download from the Actions tab.
+1. Go to **Actions** tab on GitHub
+2. Select **Build** workflow
+3. Click **Run workflow**
+4. Choose the branch and click **Run workflow**
+5. Download artifacts when complete
 
 ### Creating a Release
 

@@ -37,7 +37,7 @@ git commit -m "Your changes"
 git push origin main
 ```
 
-GitHub Actions will automatically build for all platforms and show you if there are any build errors.
+**Note**: Automatic builds are disabled. Only releases (tags) trigger builds. If you need to test a build before releasing, use the manual workflow trigger in the Actions tab.
 
 ### Creating a Release
 
