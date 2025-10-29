@@ -815,109 +815,319 @@ function calculateInventionCost(inventionData, materialPrices, probability, decr
 }
 
 /**
+ * Calculate manufacturing cost for invented blueprint at specific ME level
+ * @param {number} inventedBlueprintTypeId - TypeID of the invented T2 blueprint
+ * @param {number} meLevel - Material Efficiency level (base ME + decryptor modifier)
+ * @param {number} runs - Number of runs to manufacture
+ * @param {Object} facility - Facility configuration
+ * @param {Object} materialPrices - Map of typeID -> price
+ * @returns {Object} Manufacturing cost breakdown
+ */
+async function calculateManufacturingCost(inventedBlueprintTypeId, meLevel, runs, facility, materialPrices) {
+  try {
+    console.log('[Manufacturing Cost] Starting calculation:');
+    console.log(`  - Invented Blueprint TypeID: ${inventedBlueprintTypeId}`);
+    console.log(`  - ME Level: ${meLevel}`);
+    console.log(`  - Runs: ${runs}`);
+    console.log(`  - Material Prices keys count: ${materialPrices ? Object.keys(materialPrices).length : 0}`);
+
+    // Use the existing calculateBlueprintMaterials function
+    const materialCalc = await calculateBlueprintMaterials(
+      inventedBlueprintTypeId,
+      runs,
+      meLevel,
+      null,  // characterId - not needed for this calculation
+      facility,
+      0      // depth
+    );
+
+    console.log('[Manufacturing Cost] Material calculation result:', materialCalc);
+
+    // Validate material calculation result
+    if (!materialCalc) {
+      console.error('[Manufacturing Cost] materialCalc is null or undefined');
+      return {
+        materialCost: 0,
+        jobCost: 0,
+        totalCost: 0,
+        costPerRun: 0
+      };
+    }
+
+    if (!materialCalc.materials) {
+      console.error('[Manufacturing Cost] materialCalc.materials is null or undefined. Full object:', JSON.stringify(materialCalc));
+      return {
+        materialCost: 0,
+        jobCost: 0,
+        totalCost: 0,
+        costPerRun: 0
+      };
+    }
+
+    if (typeof materialCalc.materials !== 'object') {
+      console.error('[Manufacturing Cost] materialCalc.materials is not an object, it is:', typeof materialCalc.materials);
+      return {
+        materialCost: 0,
+        jobCost: 0,
+        totalCost: 0,
+        costPerRun: 0
+      };
+    }
+
+    console.log(`  - Materials count: ${Object.keys(materialCalc.materials).length}`);
+
+    // Calculate total material cost
+    let totalMaterialCost = 0;
+    let materialsWithPrices = 0;
+    let materialsWithoutPrices = [];
+
+    // materialCalc.materials is an object with typeID as keys and quantities as values
+    for (const [typeId, quantity] of Object.entries(materialCalc.materials)) {
+      const price = materialPrices[typeId] || 0;
+
+      if (price > 0) {
+        materialsWithPrices++;
+        console.log(`  - Material ${typeId}: quantity=${quantity}, price=${price}, cost=${price * quantity}`);
+      } else {
+        materialsWithoutPrices.push(typeId);
+      }
+
+      totalMaterialCost += price * quantity;
+    }
+
+    console.log(`[Manufacturing Cost] Materials with prices: ${materialsWithPrices}/${Object.keys(materialCalc.materials).length}`);
+    if (materialsWithoutPrices.length > 0) {
+      console.log(`[Manufacturing Cost] Materials WITHOUT prices: ${materialsWithoutPrices.join(', ')}`);
+    }
+
+    console.log(`[Manufacturing Cost] Total Material Cost: ${totalMaterialCost} ISK`);
+
+    // Get manufacturing job cost
+    // For T2 manufacturing, job cost is typically based on blueprint value
+    // For now, use a simplified 1% of material cost estimate
+    // TODO: Implement proper manufacturing job cost calculation
+    const jobCost = totalMaterialCost * 0.01;
+
+    console.log(`[Manufacturing Cost] Job Cost: ${jobCost} ISK`);
+
+    return {
+      materialCost: totalMaterialCost,
+      jobCost: jobCost,
+      totalCost: totalMaterialCost + jobCost,
+      costPerRun: runs > 0 ? (totalMaterialCost + jobCost) / runs : 0
+    };
+  } catch (error) {
+    console.error('Error calculating manufacturing cost:', error);
+    return {
+      materialCost: 0,
+      jobCost: 0,
+      totalCost: 0,
+      costPerRun: 0
+    };
+  }
+}
+
+/**
+ * Calculate manufacturing time for invented blueprint at specific TE level
+ * @param {number} inventedBlueprintTypeId - TypeID of the invented T2 blueprint
+ * @param {number} teLevel - Time Efficiency level (base TE + decryptor modifier)
+ * @param {number} runs - Number of runs to manufacture
+ * @param {Object} facility - Facility configuration
+ * @returns {Object} Manufacturing time breakdown
+ */
+function calculateManufacturingTime(inventedBlueprintTypeId, teLevel, runs, facility) {
+  try {
+    const db = new Database(getSDEPath(), { readonly: true });
+
+    // Get base manufacturing time from SDE (activityID = 1 is manufacturing)
+    const timeData = db.prepare(`
+      SELECT time
+      FROM industryActivity
+      WHERE typeID = ? AND activityID = 1
+    `).get(inventedBlueprintTypeId);
+
+    db.close();
+
+    if (!timeData || !timeData.time) {
+      return {
+        baseTime: 0,
+        adjustedTime: 0,
+        timePerRun: 0
+      };
+    }
+
+    const baseTime = timeData.time;
+
+    // Apply TE modifier
+    // Each level of TE reduces time by 1% (formula: time * (1 - TE/100))
+    const teModifier = 1 - (teLevel / 100);
+    const adjustedTime = baseTime * teModifier * runs;
+
+    // TODO: Apply facility time bonuses if provided
+
+    return {
+      baseTime: baseTime * runs,
+      adjustedTime: adjustedTime,
+      timePerRun: runs > 0 ? adjustedTime / runs : 0
+    };
+  } catch (error) {
+    console.error('Error calculating manufacturing time:', error);
+    return {
+      baseTime: 0,
+      adjustedTime: 0,
+      timePerRun: 0
+    };
+  }
+}
+
+/**
  * Find the most profitable decryptor for invention
  * @param {Object} inventionData - Invention data from getInventionData
  * @param {Object} materialPrices - Map of typeID -> price (includes materials and decryptors)
  * @param {number} productPrice - Price of the manufactured product (for EIV calculation)
  * @param {Object} skills - Character skills for invention
  * @param {Object} facility - Facility configuration for cost bonuses and system cost index
- * @returns {Object} Best decryptor analysis with comparison
+ * @param {string} optimizationStrategy - Strategy for selecting best decryptor ('invention-only', 'total-per-item', 'total-full-bpc', 'time-optimized', 'custom-volume')
+ * @param {number} customVolume - Number of items to manufacture (used with 'custom-volume' strategy)
+ * @returns {Promise<Object>} Best decryptor analysis with comparison
  */
-function findBestDecryptor(inventionData, materialPrices, productPrice, skills = {}, facility = null) {
+async function findBestDecryptor(inventionData, materialPrices, productPrice, skills = {}, facility = null, optimizationStrategy = 'total-per-item', customVolume = 1) {
+  console.log(`[findBestDecryptor] Called with optimizationStrategy: ${optimizationStrategy}, customVolume: ${customVolume}`);
+
   const decryptors = getAllDecryptors();
   const baseProbability = inventionData.baseProbability;
+  const inventedBlueprintTypeId = inventionData.product?.typeID || inventionData.products?.[0]?.typeID;
 
-  // Calculate for no decryptor
-  const noDecryptorProb = calculateInventionProbability(baseProbability, skills, 1.0);
-  const noDecryptorCost = calculateInventionCost(inventionData, materialPrices, noDecryptorProb, null, 0, productPrice, facility);
+  // Helper function to calculate option metrics with manufacturing costs
+  const calculateOptionMetrics = async (decryptor, decryptorPrice) => {
+    const meModifier = decryptor ? (decryptor.meModifier || 0) : 0;
+    const teModifier = decryptor ? (decryptor.teModifier || 0) : 0;
+    const runsModifier = decryptor ? (decryptor.runsModifier || 0) : 0;
+    const probMultiplier = decryptor ? (decryptor.probabilityMultiplier || 1.0) : 1.0;
 
-  let bestOption = {
-    name: 'No Decryptor',
-    typeID: null,
-    probability: noDecryptorProb,
-    costPerSuccess: noDecryptorCost.costPerSuccess,
-    costPerRun: noDecryptorCost.costPerRun,
-    runsPerBPC: noDecryptorCost.runsPerBPC,
-    materialCost: noDecryptorCost.materialCost,
-    decryptorCost: noDecryptorCost.decryptorCost,
-    jobCost: noDecryptorCost.jobCost,
-    totalCostPerAttempt: noDecryptorCost.totalCostPerAttempt,
-    meModifier: 0,
-    teModifier: 0,
-    runsModifier: 0
+    // Calculate invention costs
+    const prob = calculateInventionProbability(baseProbability, skills, probMultiplier);
+    const invCost = calculateInventionCost(inventionData, materialPrices, prob, decryptor, decryptorPrice, productPrice, facility);
+
+    // Calculate manufacturing costs at this ME level (base ME + decryptor modifier)
+    const baseME = 2; // Invented T2 blueprints start at ME 2
+    const finalME = baseME + meModifier;
+    const baseTE = 4; // Invented T2 blueprints start at TE 4
+    const finalTE = baseTE + teModifier;
+
+    let mfgCostPerItem = 0;
+    let mfgCostFullBPC = 0;
+    let mfgTimePerItem = 0;
+
+    if (inventedBlueprintTypeId) {
+      console.log(`[Decryptor Option] Calculating for: ${decryptor ? decryptor.typeName : 'No Decryptor'}`);
+      console.log(`  - Final ME: ${finalME}, Final TE: ${finalTE}, Runs per BPC: ${invCost.runsPerBPC}`);
+
+      // Manufacturing cost for 1 item
+      const mfgCost1 = await calculateManufacturingCost(inventedBlueprintTypeId, finalME, 1, facility, materialPrices);
+      mfgCostPerItem = mfgCost1.costPerRun;
+      console.log(`  - Manufacturing cost per item: ${mfgCostPerItem} ISK`);
+
+      // Manufacturing cost for all runs on BPC
+      const mfgCostAll = await calculateManufacturingCost(inventedBlueprintTypeId, finalME, invCost.runsPerBPC, facility, materialPrices);
+      mfgCostFullBPC = mfgCostAll.totalCost;
+      console.log(`  - Manufacturing cost full BPC: ${mfgCostFullBPC} ISK`);
+
+      // Manufacturing time
+      const mfgTime = calculateManufacturingTime(inventedBlueprintTypeId, finalTE, 1, facility);
+      mfgTimePerItem = mfgTime.timePerRun;
+    } else {
+      console.log('[Decryptor Option] No inventedBlueprintTypeId found!');
+    }
+
+    // Calculate optimization metric based on strategy
+    let optimizationMetric;
+    switch (optimizationStrategy) {
+      case 'invention-only':
+        optimizationMetric = invCost.costPerRun;
+        break;
+      case 'total-per-item':
+        optimizationMetric = invCost.costPerRun + mfgCostPerItem;
+        break;
+      case 'total-full-bpc':
+        optimizationMetric = (invCost.costPerRun * invCost.runsPerBPC) + mfgCostFullBPC;
+        break;
+      case 'time-optimized':
+        optimizationMetric = mfgTimePerItem; // Lower is better
+        break;
+      case 'custom-volume':
+        optimizationMetric = (invCost.costPerRun * customVolume) + (mfgCostPerItem * customVolume);
+        break;
+      default:
+        optimizationMetric = invCost.costPerRun + mfgCostPerItem;
+    }
+
+    console.log(`[Decryptor: ${decryptor ? decryptor.typeName : 'None'}] Strategy: ${optimizationStrategy}, Metric: ${optimizationMetric}, costPerRun: ${invCost.costPerRun}, mfgCostPerItem: ${mfgCostPerItem}, mfgTime: ${mfgTimePerItem}`);
+
+    return {
+      name: decryptor ? decryptor.typeName : 'No Decryptor',
+      typeID: decryptor ? decryptor.typeID : null,
+      probability: prob,
+      costPerSuccess: invCost.costPerSuccess,
+      costPerRun: invCost.costPerRun,
+      runsPerBPC: invCost.runsPerBPC,
+      materialCost: invCost.materialCost,
+      decryptorCost: invCost.decryptorCost,
+      jobCost: invCost.jobCost,
+      totalCostPerAttempt: invCost.totalCostPerAttempt,
+      meModifier,
+      teModifier,
+      runsModifier,
+      probabilityMultiplier: probMultiplier,
+      // New manufacturing metrics
+      manufacturingCostPerItem: mfgCostPerItem,
+      manufacturingCostFullBPC: mfgCostFullBPC,
+      manufacturingTimePerItem: mfgTimePerItem,
+      totalCostPerItem: invCost.costPerRun + mfgCostPerItem,
+      totalCostFullBPC: (invCost.costPerRun * invCost.runsPerBPC) + mfgCostFullBPC,
+      optimizationMetric,
+      optimizationStrategy
+    };
   };
 
-  // Compare with each decryptor (use costPerRun for comparison)
-  decryptors.forEach(dec => {
-    const decPrice = materialPrices[dec.typeID] || 0;
-    const decProb = calculateInventionProbability(baseProbability, skills, dec.probabilityMultiplier || 1.0);
-    const decCost = calculateInventionCost(inventionData, materialPrices, decProb, dec, decPrice, productPrice, facility);
+  // Calculate for no decryptor
+  let bestOption = await calculateOptionMetrics(null, 0);
 
-    if (decCost.costPerRun < bestOption.costPerRun) {
-      bestOption = {
-        name: dec.typeName,
-        typeID: dec.typeID,
-        probability: decProb,
-        costPerSuccess: decCost.costPerSuccess,
-        costPerRun: decCost.costPerRun,
-        runsPerBPC: decCost.runsPerBPC,
-        materialCost: decCost.materialCost,
-        decryptorCost: decCost.decryptorCost,
-        jobCost: decCost.jobCost,
-        totalCostPerAttempt: decCost.totalCostPerAttempt,
-        meModifier: dec.meModifier || 0,
-        teModifier: dec.teModifier || 0,
-        runsModifier: dec.runsModifier || 0,
-        probabilityMultiplier: dec.probabilityMultiplier || 1.0
-      };
+  // Compare with each decryptor
+  for (const dec of decryptors) {
+    const decPrice = materialPrices[dec.typeID] || 0;
+    const option = await calculateOptionMetrics(dec, decPrice);
+
+    // Compare using optimization metric
+    if (option.optimizationMetric < bestOption.optimizationMetric) {
+      console.log(`[findBestDecryptor] New best: ${option.name} with metric ${option.optimizationMetric} (was: ${bestOption.name} with ${bestOption.optimizationMetric})`);
+      bestOption = option;
     }
-  });
+  }
+
+  console.log(`[findBestDecryptor] Final best decryptor: ${bestOption.name} with metric ${bestOption.optimizationMetric}`);
+
+  // Build allOptions array with full metrics for all decryptors
+  const allOptions = [await calculateOptionMetrics(null, 0)];
+  for (const dec of decryptors) {
+    const decPrice = materialPrices[dec.typeID] || 0;
+    allOptions.push(await calculateOptionMetrics(dec, decPrice));
+  }
+
+  // Get no decryptor option for comparison
+  const noDecryptorOption = allOptions[0];
 
   return {
     best: bestOption,
     noDecryptor: {
-      probability: noDecryptorProb,
-      costPerSuccess: noDecryptorCost.costPerSuccess,
-      totalCost: noDecryptorCost.totalCostPerAttempt
+      probability: noDecryptorOption.probability,
+      costPerSuccess: noDecryptorOption.costPerSuccess,
+      totalCost: noDecryptorOption.totalCostPerAttempt,
+      totalCostPerItem: noDecryptorOption.totalCostPerItem,
+      manufacturingCostPerItem: noDecryptorOption.manufacturingCostPerItem
     },
-    allOptions: [
-      {
-        name: 'No Decryptor',
-        typeID: null,
-        probability: noDecryptorProb,
-        costPerSuccess: noDecryptorCost.costPerSuccess,
-        costPerRun: noDecryptorCost.costPerRun,
-        runsPerBPC: noDecryptorCost.runsPerBPC,
-        materialCost: noDecryptorCost.materialCost,
-        decryptorCost: noDecryptorCost.decryptorCost,
-        jobCost: noDecryptorCost.jobCost,
-        totalCostPerAttempt: noDecryptorCost.totalCostPerAttempt,
-        meModifier: 0,
-        teModifier: 0,
-        runsModifier: 0
-      },
-      ...decryptors.map(dec => {
-        const decPrice = materialPrices[dec.typeID] || 0;
-        const decProb = calculateInventionProbability(baseProbability, skills, dec.probabilityMultiplier || 1.0);
-        const decCost = calculateInventionCost(inventionData, materialPrices, decProb, dec, decPrice, productPrice, facility);
-        return {
-          name: dec.typeName,
-          typeID: dec.typeID,
-          probability: decProb,
-          costPerSuccess: decCost.costPerSuccess,
-          costPerRun: decCost.costPerRun,
-          runsPerBPC: decCost.runsPerBPC,
-          materialCost: decCost.materialCost,
-          decryptorCost: decCost.decryptorCost,
-          jobCost: decCost.jobCost,
-          totalCostPerAttempt: decCost.totalCostPerAttempt,
-          meModifier: dec.meModifier || 0,
-          teModifier: dec.teModifier || 0,
-          runsModifier: dec.runsModifier || 0,
-          probabilityMultiplier: dec.probabilityMultiplier || 1.0
-        };
-      })
-    ]
+    allOptions: allOptions,
+    optimizationStrategy: optimizationStrategy
   };
 }
 

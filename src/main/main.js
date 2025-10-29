@@ -642,18 +642,31 @@ app.whenReady().then(async () => {
     return getAllDecryptors();
   });
 
+  ipcMain.handle('calculator:getBlueprintMaterials', (event, blueprintTypeId) => {
+    const { getBlueprintMaterials } = require('./blueprint-calculator');
+    return getBlueprintMaterials(blueprintTypeId);
+  });
+
   ipcMain.handle('calculator:calculateInventionProbability', (event, baseProbability, skills, decryptorMultiplier) => {
     const { calculateInventionProbability } = require('./blueprint-calculator');
     return calculateInventionProbability(baseProbability, skills, decryptorMultiplier);
   });
 
-  ipcMain.handle('calculator:findBestDecryptor', (event, inventionData, materialPrices, productPrice, skills, facility) => {
+  ipcMain.handle('calculator:findBestDecryptor', async (event, inventionData, materialPrices, productPrice, skills, facility, optimizationStrategy, customVolume) => {
+    console.log('[IPC Handler] Received optimizationStrategy:', optimizationStrategy, 'customVolume:', customVolume);
+
     const { findBestDecryptor, getDefaultFacility } = require('./blueprint-calculator');
 
     // Use provided facility or fall back to default facility
     const facilityToUse = facility || getDefaultFacility();
 
-    return findBestDecryptor(inventionData, materialPrices, productPrice, skills, facilityToUse);
+    // Default optimization strategy if not provided
+    const strategy = optimizationStrategy || 'total-per-item';
+    const volume = customVolume || 1;
+
+    console.log('[IPC Handler] Using strategy:', strategy, 'volume:', volume);
+
+    return await findBestDecryptor(inventionData, materialPrices, productPrice, skills, facilityToUse, strategy, volume);
   });
 
   // Handle IPC for market data operations

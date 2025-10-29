@@ -229,6 +229,8 @@ function calculateMedian(values) {
 async function calculateRealisticPrice(typeId, regionId, locationId, priceType, quantity, settings = {}) {
   const isBuy = priceType === 'buy';
 
+  console.log(`[Price Calc] TypeID: ${typeId}, Region: ${regionId}, Location: ${locationId}, Type: ${priceType}, Qty: ${quantity}`);
+
   // Check for user override first
   const override = getPriceOverride(typeId);
   if (override) {
@@ -248,16 +250,21 @@ async function calculateRealisticPrice(typeId, regionId, locationId, priceType, 
   let orders = getCachedMarketOrders(regionId, typeId);
   let history = getCachedMarketHistory(regionId, typeId);
 
+  console.log(`[Price Calc] Initial orders: ${orders ? orders.length : 0}, history: ${history ? history.length : 0}`);
+
   // If no cached data, fetch from ESI
   if (!orders || orders.length === 0 || !history || history.length === 0) {
     const marketData = await fetchMarketData(regionId, typeId);
     orders = marketData.orders;
     history = marketData.history;
+    console.log(`[Price Calc] After fetch - orders: ${orders ? orders.length : 0}, history: ${history ? history.length : 0}`);
   }
 
   // Filter orders by location if specified
   if (locationId) {
+    const beforeFilter = orders.length;
     orders = orders.filter(o => o.location_id === locationId);
+    console.log(`[Price Calc] Location filter: ${beforeFilter} → ${orders.length} orders`);
   }
 
   // Calculate historical averages
@@ -298,8 +305,11 @@ async function calculateRealisticPrice(typeId, regionId, locationId, priceType, 
     ? (isBuy ? Math.max(...relevantOrders.map(o => o.price)) : Math.min(...relevantOrders.map(o => o.price)))
     : 0;
 
+  console.log(`[Price Calc] Relevant orders (is_buy=${isBuy}): ${relevantOrders.length}, Immediate price: ${immediatePrice}`);
+
   // Determine which method to use
   const requestedMethod = settings.priceMethod || 'hybrid';
+  console.log(`[Price Calc] Requested method: ${requestedMethod}`);
 
   switch (requestedMethod) {
     case 'immediate':

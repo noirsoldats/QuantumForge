@@ -1047,6 +1047,35 @@ async function displayInventionAnalysis(blueprintTypeId, runs, cachedInventionDa
       return value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' ISK';
     };
 
+    // Format time values (seconds to human-readable)
+    const formatTime = (seconds) => {
+      if (!seconds || seconds === 0) return '0s';
+      const days = Math.floor(seconds / 86400);
+      const hours = Math.floor((seconds % 86400) / 3600);
+      const minutes = Math.floor((seconds % 3600) / 60);
+      const secs = Math.floor(seconds % 60);
+
+      const parts = [];
+      if (days > 0) parts.push(`${days}d`);
+      if (hours > 0) parts.push(`${hours}h`);
+      if (minutes > 0) parts.push(`${minutes}m`);
+      if (secs > 0 || parts.length === 0) parts.push(`${secs}s`);
+
+      return parts.join(' ');
+    };
+
+    // Get display name for optimization strategy
+    const getStrategyDisplayName = (strategy) => {
+      const strategyNames = {
+        'invention-only': 'Invention Cost Only',
+        'total-per-item': 'Total Cost per Item',
+        'total-full-bpc': 'Total Cost for Full BPC',
+        'time-optimized': 'Fastest Manufacturing Time',
+        'custom-volume': 'Custom Volume'
+      };
+      return strategyNames[strategy] || strategy;
+    };
+
     // Get market settings for pricing
     const marketSettings = await window.electronAPI.market.getSettings();
     const regionId = marketSettings.regionId || 10000002;
@@ -1102,6 +1131,73 @@ async function displayInventionAnalysis(blueprintTypeId, runs, cachedInventionDa
       } catch (error) {
         console.warn(`Could not get price for decryptor ${decryptor.typeName}:`, error);
         materialPrices[decryptor.typeID] = 0;
+      }
+    }
+
+    // IMPORTANT: We need to fetch prices for ALL materials that will be used in manufacturing
+    // The backend calculateManufacturingCost() will recursively expand intermediate components
+    // Ask the backend what materials it needs, then fetch prices for ALL of them
+    console.log('DEBUG: inventionData.product:', inventionData.product);
+    console.log('DEBUG: inventionData.products:', inventionData.products);
+    console.log('DEBUG: selectedProductIndex:', selectedProductIndex);
+
+    // Try multiple ways to get the invented blueprint typeID
+    const productForMaterialPrices = inventionData.product ||
+                                     (inventionData.products && inventionData.products[selectedProductIndex]) ||
+                                     null;
+
+    console.log('DEBUG: productForMaterialPrices:', productForMaterialPrices);
+
+    const inventedBlueprintTypeId = productForMaterialPrices?.typeID || productForMaterialPrices?.typeId;
+    console.log(`DEBUG: inventedBlueprintTypeId = ${inventedBlueprintTypeId}`);
+
+    if (inventedBlueprintTypeId) {
+      console.log(`Fetching manufacturing material list for invented blueprint ${inventedBlueprintTypeId}`);
+      try {
+        const baselineME = 2;
+        const facilityId = document.getElementById('facility-select').value || null;
+
+        // Get the full expanded material list from the backend
+        const materialCalc = await window.electronAPI.calculator.calculateMaterials(
+          inventedBlueprintTypeId,
+          1,
+          baselineME,
+          currentDefaultCharacter?.characterId || null,
+          facilityId
+        );
+
+        if (materialCalc && materialCalc.materials) {
+          const materialIds = Object.keys(materialCalc.materials);
+          console.log(`Got ${materialIds.length} materials from backend, fetching prices...`);
+
+          // Fetch prices for ALL materials
+          for (const materialTypeId of materialIds) {
+            const materialTypeIdNum = parseInt(materialTypeId);
+
+            // Skip if we already have this price
+            if (materialPrices[materialTypeIdNum]) {
+              continue;
+            }
+
+            try {
+              const materialPriceData = await window.electronAPI.market.calculatePrice(
+                materialTypeIdNum,
+                regionId,
+                locationId,
+                'immediate',
+                1
+              );
+              materialPrices[materialTypeIdNum] = materialPriceData.price || materialPriceData.unitPrice || 0;
+            } catch (error) {
+              console.warn(`Could not get price for material ${materialTypeIdNum}:`, error);
+              materialPrices[materialTypeIdNum] = 0;
+            }
+          }
+
+          console.log(`Total material prices now: ${Object.keys(materialPrices).length}`);
+        }
+      } catch (error) {
+        console.error('Error fetching manufacturing material prices:', error);
       }
     }
 
@@ -1188,6 +1284,24 @@ async function displayInventionAnalysis(blueprintTypeId, runs, cachedInventionDa
       time: inventionData.time
     };
 
+    // Get optimization strategy and custom volume from UI
+    let optimizationStrategy = 'total-per-item'; // default
+    let customVolume = 1; // default
+    const strategySelector = document.getElementById('optimization-strategy');
+    const volumeInput = document.getElementById('manufacturing-volume');
+
+    if (strategySelector) {
+      optimizationStrategy = strategySelector.value;
+    }
+
+    if (volumeInput && optimizationStrategy === 'custom-volume') {
+      customVolume = parseInt(volumeInput.value, 10) || 1;
+    }
+
+    console.log(`[Frontend] Finding best decryptor with strategy: '${optimizationStrategy}', volume: ${customVolume}`);
+    console.log(`[Frontend] Strategy selector element exists: ${!!strategySelector}`);
+    console.log(`[Frontend] Strategy selector value: ${strategySelector ? strategySelector.value : 'N/A'}`);
+
     // Find best decryptor for the selected product
     // Pass null for facility - backend will use default facility
     const bestDecryptorResult = await window.electronAPI.calculator.findBestDecryptor(
@@ -1195,10 +1309,12 @@ async function displayInventionAnalysis(blueprintTypeId, runs, cachedInventionDa
       materialPrices,
       productPrice,
       skills,
-      null  // facility - use default
+      null,  // facility - use default
+      optimizationStrategy,
+      customVolume
     );
 
-    console.log('Best decryptor result:', bestDecryptorResult);
+    console.log('[Frontend] Best decryptor result:', bestDecryptorResult);
 
     // Validate we got a result
     if (!bestDecryptorResult || !bestDecryptorResult.best) {
@@ -1273,8 +1389,29 @@ async function displayInventionAnalysis(blueprintTypeId, runs, cachedInventionDa
     }
     html += '</div>';
 
+    // Optimization Strategy Selector
+    html += '<div class="invention-section invention-optimization-selector">';
+    html += '<h5>Optimization Strategy</h5>';
+    html += '<div class="invention-row">';
+    html += '<label for="optimization-strategy">Optimize For:</label>';
+    html += '<select id="optimization-strategy" class="control-input">';
+    html += `<option value="invention-only"${optimizationStrategy === 'invention-only' ? ' selected' : ''}>Invention Cost Only</option>`;
+    html += `<option value="total-per-item"${optimizationStrategy === 'total-per-item' ? ' selected' : ''}>Total Cost per Item (Recommended)</option>`;
+    html += `<option value="total-full-bpc"${optimizationStrategy === 'total-full-bpc' ? ' selected' : ''}>Total Cost for Full BPC</option>`;
+    html += `<option value="time-optimized"${optimizationStrategy === 'time-optimized' ? ' selected' : ''}>Fastest Manufacturing Time</option>`;
+    html += `<option value="custom-volume"${optimizationStrategy === 'custom-volume' ? ' selected' : ''}>Custom Volume...</option>`;
+    html += '</select>';
+    html += '</div>';
+    // Custom volume input (hidden by default)
+    const showCustomVolume = optimizationStrategy === 'custom-volume' ? '' : 'none';
+    html += `<div id="custom-volume-input" class="invention-row" style="display:${showCustomVolume};">`;
+    html += '<label for="manufacturing-volume">Manufacturing Volume:</label>';
+    html += `<input type="number" id="manufacturing-volume" class="control-input" min="1" value="${customVolume}">`;
+    html += '</div>';
+    html += '</div>';
+
     // Best Decryptor Results
-    html += '<div class="invention-section">';
+    html += '<div class="invention-section invention-optimal-decryptor">';
     html += '<h5>Optimal Decryptor</h5>';
 
     if (bestOption.name !== 'No Decryptor' && bestOption.typeID) {
@@ -1386,6 +1523,50 @@ async function displayInventionAnalysis(blueprintTypeId, runs, cachedInventionDa
     html += '</div>';
     html += '</div>';
 
+    // Economic Analysis - Manufacturing Costs
+    html += '<div class="invention-section" id="invention-economic-analysis-section">';
+    html += '<h5>Economic Analysis</h5>';
+
+    // Show current optimization strategy
+    html += '<div class="invention-row">';
+    html += `<span>Optimization Strategy:</span>`;
+    html += `<span class="invention-value">${getStrategyDisplayName(bestDecryptorResult.optimizationStrategy)}</span>`;
+    html += '</div>';
+
+    // Manufacturing cost per item
+    html += '<div class="invention-row">';
+    html += `<span>Manufacturing Cost per Item:</span>`;
+    html += `<span class="invention-value">${formatISK(bestOption.manufacturingCostPerItem || 0)}</span>`;
+    html += '</div>';
+
+    // Manufacturing cost for full BPC
+    html += '<div class="invention-row">';
+    html += `<span>Manufacturing Cost for Full BPC (${bestOption.runsPerBPC || 1} runs):</span>`;
+    html += `<span class="invention-value">${formatISK(bestOption.manufacturingCostFullBPC || 0)}</span>`;
+    html += '</div>';
+
+    // Manufacturing time per item
+    if (bestOption.manufacturingTimePerItem && bestOption.manufacturingTimePerItem > 0) {
+      html += '<div class="invention-row">';
+      html += `<span>Manufacturing Time per Item:</span>`;
+      html += `<span class="invention-value">${formatTime(bestOption.manufacturingTimePerItem)}</span>`;
+      html += '</div>';
+    }
+
+    // Total cost per item (invention + manufacturing)
+    html += '<div class="invention-row invention-highlight">';
+    html += `<span><strong>Total Cost per Item:</strong></span>`;
+    html += `<span class="invention-value"><strong>${formatISK(bestOption.totalCostPerItem || 0)}</strong></span>`;
+    html += '</div>';
+
+    // Total cost for full BPC
+    html += '<div class="invention-row">';
+    html += `<span>Total Cost for Full BPC:</span>`;
+    html += `<span class="invention-value">${formatISK(bestOption.totalCostFullBPC || 0)}</span>`;
+    html += '</div>';
+
+    html += '</div>';
+
     // Comparison with No Decryptor
     if (bestOption.typeID && noDecryptorOption) {
       const savingsPerRun = noDecryptorOption.costPerRun - bestOption.costPerRun;
@@ -1494,6 +1675,52 @@ async function displayInventionAnalysis(blueprintTypeId, runs, cachedInventionDa
       }
 
       costsSection.innerHTML = costsHtml;
+
+      // Update Economic Analysis Section
+      const economicSection = document.getElementById('invention-economic-analysis-section');
+      if (economicSection) {
+        let economicHtml = '<h5>Economic Analysis</h5>';
+
+        // Show current optimization strategy
+        economicHtml += '<div class="invention-row">';
+        economicHtml += `<span>Optimization Strategy:</span>`;
+        economicHtml += `<span class="invention-value">${getStrategyDisplayName(selectedOption.optimizationStrategy || 'total-per-item')}</span>`;
+        economicHtml += '</div>';
+
+        // Manufacturing cost per item
+        economicHtml += '<div class="invention-row">';
+        economicHtml += `<span>Manufacturing Cost per Item:</span>`;
+        economicHtml += `<span class="invention-value">${formatISK(selectedOption.manufacturingCostPerItem || 0)}</span>`;
+        economicHtml += '</div>';
+
+        // Manufacturing cost for full BPC
+        economicHtml += '<div class="invention-row">';
+        economicHtml += `<span>Manufacturing Cost for Full BPC (${selectedOption.runsPerBPC || 1} runs):</span>`;
+        economicHtml += `<span class="invention-value">${formatISK(selectedOption.manufacturingCostFullBPC || 0)}</span>`;
+        economicHtml += '</div>';
+
+        // Manufacturing time per item
+        if (selectedOption.manufacturingTimePerItem && selectedOption.manufacturingTimePerItem > 0) {
+          economicHtml += '<div class="invention-row">';
+          economicHtml += `<span>Manufacturing Time per Item:</span>`;
+          economicHtml += `<span class="invention-value">${formatTime(selectedOption.manufacturingTimePerItem)}</span>`;
+          economicHtml += '</div>';
+        }
+
+        // Total cost per item (invention + manufacturing)
+        economicHtml += '<div class="invention-row invention-highlight">';
+        economicHtml += `<span><strong>Total Cost per Item:</strong></span>`;
+        economicHtml += `<span class="invention-value"><strong>${formatISK(selectedOption.totalCostPerItem || 0)}</strong></span>`;
+        economicHtml += '</div>';
+
+        // Total cost for full BPC
+        economicHtml += '<div class="invention-row">';
+        economicHtml += `<span>Total Cost for Full BPC:</span>`;
+        economicHtml += `<span class="invention-value">${formatISK(selectedOption.totalCostFullBPC || 0)}</span>`;
+        economicHtml += '</div>';
+
+        economicSection.innerHTML = economicHtml;
+      }
     }
 
     // Add event listener for product selector (if multiple products)
@@ -1507,6 +1734,133 @@ async function displayInventionAnalysis(blueprintTypeId, runs, cachedInventionDa
           await displayInventionAnalysis(blueprintTypeId, runs, inventionData, newIndex);
         });
       }
+    }
+
+    // Add event listener for optimization strategy selector
+    const optimizationStrategySelector = document.getElementById('optimization-strategy');
+    if (optimizationStrategySelector) {
+      optimizationStrategySelector.addEventListener('change', async (e) => {
+        const selectedStrategy = e.target.value;
+        console.log(`Optimization strategy changed to: ${selectedStrategy}`);
+
+        // Show/hide custom volume input
+        const customVolumeInput = document.getElementById('custom-volume-input');
+        if (customVolumeInput) {
+          if (selectedStrategy === 'custom-volume') {
+            customVolumeInput.style.display = '';
+          } else {
+            customVolumeInput.style.display = 'none';
+          }
+        }
+
+        // Hide sections below and show loading indicator
+        const optimalDecryptorSection = document.querySelector('.invention-optimal-decryptor');
+        const decryptorSelector = document.querySelector('.invention-decryptor-selector');
+        const outputBlueprintSection = document.getElementById('invention-output-blueprint-section');
+        const costsSection = document.getElementById('invention-costs-section');
+        const economicSection = document.getElementById('invention-economic-analysis-section');
+        const comparisonSection = document.querySelector('.invention-savings');
+
+        // Hide sections
+        if (optimalDecryptorSection) optimalDecryptorSection.style.display = 'none';
+        if (decryptorSelector) decryptorSelector.style.display = 'none';
+        if (outputBlueprintSection) outputBlueprintSection.style.display = 'none';
+        if (costsSection) costsSection.style.display = 'none';
+        if (economicSection) economicSection.style.display = 'none';
+        if (comparisonSection) comparisonSection.style.display = 'none';
+
+        // Show loading indicator
+        let loadingDiv = document.getElementById('invention-loading-indicator');
+        if (!loadingDiv) {
+          loadingDiv = document.createElement('div');
+          loadingDiv.id = 'invention-loading-indicator';
+          loadingDiv.className = 'invention-section invention-loading';
+          loadingDiv.innerHTML = `
+            <div style="text-align: center; padding: 20px;">
+              <div class="spinner" style="margin: 0 auto 15px;"></div>
+              <p style="color: #a0a0b0; margin: 0;">Recalculating optimal decryptor...</p>
+            </div>
+          `;
+          const optimizationSection = document.querySelector('.invention-optimization-selector');
+          if (optimizationSection && optimizationSection.nextSibling) {
+            optimizationSection.parentNode.insertBefore(loadingDiv, optimizationSection.nextSibling);
+          }
+        } else {
+          loadingDiv.style.display = 'block';
+        }
+
+        // Re-run invention analysis with new strategy
+        await displayInventionAnalysis(blueprintTypeId, runs, cachedInventionData, cachedSelectedIndex);
+
+        // Hide loading indicator and restore sections
+        if (loadingDiv) loadingDiv.style.display = 'none';
+        if (optimalDecryptorSection) optimalDecryptorSection.style.display = '';
+        if (decryptorSelector) decryptorSelector.style.display = '';
+        if (outputBlueprintSection) outputBlueprintSection.style.display = '';
+        if (costsSection) costsSection.style.display = '';
+        if (economicSection) economicSection.style.display = '';
+        if (comparisonSection) comparisonSection.style.display = '';
+      });
+    }
+
+    // Add event listener for custom volume input
+    const manufacturingVolumeInput = document.getElementById('manufacturing-volume');
+    if (manufacturingVolumeInput) {
+      manufacturingVolumeInput.addEventListener('change', async (e) => {
+        const volume = parseInt(e.target.value, 10);
+        console.log(`Manufacturing volume changed to: ${volume}`);
+
+        // Only re-run if custom-volume strategy is selected
+        const strategySelector = document.getElementById('optimization-strategy');
+        if (strategySelector && strategySelector.value === 'custom-volume') {
+          // Hide sections below and show loading indicator
+          const optimalDecryptorSection = document.querySelector('.invention-optimal-decryptor');
+          const decryptorSelector = document.querySelector('.invention-decryptor-selector');
+          const outputBlueprintSection = document.getElementById('invention-output-blueprint-section');
+          const costsSection = document.getElementById('invention-costs-section');
+          const economicSection = document.getElementById('invention-economic-analysis-section');
+          const comparisonSection = document.querySelector('.invention-savings');
+
+          // Hide sections
+          if (optimalDecryptorSection) optimalDecryptorSection.style.display = 'none';
+          if (decryptorSelector) decryptorSelector.style.display = 'none';
+          if (outputBlueprintSection) outputBlueprintSection.style.display = 'none';
+          if (costsSection) costsSection.style.display = 'none';
+          if (economicSection) economicSection.style.display = 'none';
+          if (comparisonSection) comparisonSection.style.display = 'none';
+
+          // Show loading indicator
+          let loadingDiv = document.getElementById('invention-loading-indicator');
+          if (!loadingDiv) {
+            loadingDiv = document.createElement('div');
+            loadingDiv.id = 'invention-loading-indicator';
+            loadingDiv.className = 'invention-section invention-loading';
+            loadingDiv.innerHTML = `
+              <div style="text-align: center; padding: 20px;">
+                <div class="spinner" style="margin: 0 auto 15px;"></div>
+                <p style="color: #a0a0b0; margin: 0;">Recalculating optimal decryptor...</p>
+              </div>
+            `;
+            const optimizationSection = document.querySelector('.invention-optimization-selector');
+            if (optimizationSection && optimizationSection.nextSibling) {
+              optimizationSection.parentNode.insertBefore(loadingDiv, optimizationSection.nextSibling);
+            }
+          } else {
+            loadingDiv.style.display = 'block';
+          }
+
+          await displayInventionAnalysis(blueprintTypeId, runs, cachedInventionData, cachedSelectedIndex);
+
+          // Hide loading indicator and restore sections
+          if (loadingDiv) loadingDiv.style.display = 'none';
+          if (optimalDecryptorSection) optimalDecryptorSection.style.display = '';
+          if (decryptorSelector) decryptorSelector.style.display = '';
+          if (outputBlueprintSection) outputBlueprintSection.style.display = '';
+          if (costsSection) costsSection.style.display = '';
+          if (economicSection) economicSection.style.display = '';
+          if (comparisonSection) comparisonSection.style.display = '';
+        }
+      });
     }
 
     // Add event listener for decryptor selector

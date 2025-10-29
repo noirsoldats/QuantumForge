@@ -950,3 +950,92 @@
   border-color: #ffa500;
   box-shadow: 0 0 5px rgba(255, 165, 0, 0.3);
 }
+
+/* Invention Optimization Selector */
+.invention-optimization-selector {
+  background: rgba(100, 180, 255, 0.08);
+  border: 1px solid rgba(100, 180, 255, 0.25);
+}
+
+.invention-optimization-selector h5 {
+  color: #64b4ff;
+}
+
+/* Optimal Decryptor Section */
+.invention-optimal-decryptor {
+  background: rgba(255, 165, 0, 0.08);
+  border: 1px solid rgba(255, 165, 0, 0.25);
+}
+
+.invention-optimal-decryptor h5 {
+  color: #ffa500;
+}
+
+#optimization-strategy {
+  width: 100%;
+  max-width: 500px;
+  padding: 8px;
+  font-size: 0.95em;
+  background: rgba(0, 0, 0, 0.3);
+  color: #e0e0e0;
+  border: 1px solid rgba(100, 180, 255, 0.3);
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+#optimization-strategy:hover {
+  border-color: rgba(100, 180, 255, 0.5);
+  background: rgba(0, 0, 0, 0.4);
+}
+
+#optimization-strategy:focus {
+  outline: none;
+  border-color: #64b4ff;
+  box-shadow: 0 0 5px rgba(100, 180, 255, 0.3);
+}
+
+#custom-volume-input {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(100, 180, 255, 0.2);
+}
+
+#manufacturing-volume {
+  width: 100%;
+  max-width: 200px;
+  padding: 8px;
+  font-size: 0.95em;
+  background: rgba(0, 0, 0, 0.3);
+  color: #e0e0e0;
+  border: 1px solid rgba(100, 180, 255, 0.3);
+  border-radius: 4px;
+}
+
+#manufacturing-volume:focus {
+  outline: none;
+  border-color: #64b4ff;
+  box-shadow: 0 0 5px rgba(100, 180, 255, 0.3);
+}
+
+/* Economic Analysis Section */
+.invention-economic-analysis-section {
+  background: rgba(46, 213, 115, 0.05);
+  border: 1px solid rgba(46, 213, 115, 0.2);
+}
+
+#invention-economic-analysis-section h5 {
+  color: #2ed573;
+}
+
+/* Invention Loading Indicator */
+.invention-loading {
+  background: rgba(100, 180, 255, 0.08);
+  border: 1px solid rgba(100, 180, 255, 0.25);
+  animation: fadeIn 0.3s ease;
+}
+
+.invention-loading .spinner {
+  width: 40px;
+  height: 40px;
+  border-width: 3px;
+}
