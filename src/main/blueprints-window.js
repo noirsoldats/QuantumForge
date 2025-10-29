@@ -1,4 +1,4 @@
-const { BrowserWindow } = require('electron');
+const { BrowserWindow, app } = require('electron');
 const path = require('path');
 const { getWindowBounds, trackWindowState } = require('./window-state-manager');
 
@@ -17,6 +17,7 @@ function createBlueprintsWindow(characterId) {
 
   const windowName = `blueprints-${characterId}`;
   const windowBounds = getWindowBounds(windowName, { width: 1200, height: 800 });
+  const version = app.getVersion();
 
   const blueprintsWindow = new BrowserWindow({
     ...windowBounds,
@@ -28,7 +29,7 @@ function createBlueprintsWindow(characterId) {
       contextIsolation: true,
       enableWebSQL: false,
     },
-    title: 'Blueprint Manager',
+    title: `Blueprint Manager - Quantum Forge v${version}`,
   });
 
   // Track window state changes

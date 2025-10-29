@@ -177,8 +177,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     openWindow: () => ipcRenderer.invoke('manufacturingSummary:openWindow'),
   },
 
-  // App API (updates, etc.)
+  // App API (updates, version, etc.)
   app: {
+    getVersion: () => ipcRenderer.invoke('app:getVersion'),
     checkForUpdates: () => ipcRenderer.invoke('app:checkForUpdates'),
     onUpdateAvailable: (callback) => ipcRenderer.on('update-available', (event, info) => callback(info)),
     onUpdateNotAvailable: (callback) => ipcRenderer.on('update-not-available', () => callback()),

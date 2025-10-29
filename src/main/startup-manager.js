@@ -79,25 +79,244 @@ async function runDatabaseInit(splashWindow) {
 async function runAppUpdateCheck(splashWindow) {
   console.log('[Startup] Checking for application updates...');
 
+  // Skip in development mode
+  if (process.env.NODE_ENV === 'development') {
+    console.log('[Startup] Skipping update check in development mode');
+    splashWindow.webContents.send('startup:progress', {
+      task: 'appUpdate',
+      status: 'Development mode',
+      complete: true,
+    });
+    return;
+  }
+
   splashWindow.webContents.send('startup:progress', {
     task: 'appUpdate',
     status: 'Checking for application updates...',
     complete: null,
   });
 
-  // TODO: Implement actual app update check using electron-updater
-  // For now, we'll just mark it as complete
-  // In a real implementation, you would check autoUpdater.checkForUpdates()
+  try {
+    const { autoUpdater } = require('electron-updater');
+    const log = require('electron-log');
+    const { app } = require('electron');
 
-  await new Promise(resolve => setTimeout(resolve, 500)); // Simulate check
+    // Check if app is packed - if not, skip update check immediately
+    if (!app.isPackaged) {
+      console.log('[Startup] Skipping update check - application not packaged');
+      splashWindow.webContents.send('startup:progress', {
+        task: 'appUpdate',
+        status: 'Development mode',
+        complete: true,
+      });
+      return;
+    }
 
-  splashWindow.webContents.send('startup:progress', {
-    task: 'appUpdate',
-    status: 'No updates available',
-    complete: true,
+    // Configure auto-updater for startup check
+    autoUpdater.autoDownload = false;
+    autoUpdater.logger = log;
+
+    const updateCheckResult = await new Promise((resolve) => {
+      let resolved = false;
+
+      // Set up one-time event listeners
+      const cleanup = () => {
+        autoUpdater.removeAllListeners('update-available');
+        autoUpdater.removeAllListeners('update-not-available');
+        autoUpdater.removeAllListeners('error');
+      };
+
+      autoUpdater.once('update-available', (info) => {
+        if (!resolved) {
+          resolved = true;
+          cleanup();
+          resolve({ available: true, info });
+        }
+      });
+
+      autoUpdater.once('update-not-available', (info) => {
+        if (!resolved) {
+          resolved = true;
+          cleanup();
+          resolve({ available: false, info });
+        }
+      });
+
+      autoUpdater.once('error', (err) => {
+        if (!resolved) {
+          resolved = true;
+          cleanup();
+          log.error('[Startup] Update check error:', err);
+          resolve({ error: true, message: err.message });
+        }
+      });
+
+      // Start the check with a timeout
+      autoUpdater.checkForUpdates().catch(err => {
+        if (!resolved) {
+          resolved = true;
+          cleanup();
+          log.error('[Startup] Update check failed:', err);
+          resolve({ error: true, message: err.message });
+        }
+      });
+
+      // Timeout after 10 seconds
+      setTimeout(() => {
+        if (!resolved) {
+          resolved = true;
+          cleanup();
+          resolve({ timeout: true });
+        }
+      }, 10000);
+    });
+
+    if (updateCheckResult.error) {
+      splashWindow.webContents.send('startup:progress', {
+        task: 'appUpdate',
+        status: 'Check failed (continuing)',
+        complete: true,
+      });
+      console.log('[Startup] Update check failed, continuing anyway');
+    } else if (updateCheckResult.timeout) {
+      splashWindow.webContents.send('startup:progress', {
+        task: 'appUpdate',
+        status: 'Check timed out (continuing)',
+        complete: true,
+      });
+      console.log('[Startup] Update check timed out, continuing anyway');
+    } else if (updateCheckResult.available) {
+      console.log('[Startup] Update available:', updateCheckResult.info.version);
+
+      splashWindow.webContents.send('startup:progress', {
+        task: 'appUpdate',
+        status: `Update available: v${updateCheckResult.info.version}`,
+        complete: true,
+      });
+
+      // Show update dialog immediately
+      const { dialog } = require('electron');
+      const userWantsUpdate = await new Promise((resolve) => {
+        dialog.showMessageBox({
+          type: 'info',
+          title: 'Update Available',
+          message: `A new version (${updateCheckResult.info.version}) is available!`,
+          detail: 'Would you like to download it now? The update will be installed when you close the application.',
+          buttons: ['Download Now', 'Later'],
+          defaultId: 0,
+          cancelId: 1,
+        }).then(result => {
+          resolve(result.response === 0);
+        });
+      });
+
+      if (userWantsUpdate) {
+        console.log('[Startup] User chose to download update');
+        splashWindow.webContents.send('startup:progress', {
+          task: 'appUpdate',
+          status: 'Downloading update...',
+          complete: null,
+        });
+
+        try {
+          // Download the update
+          await downloadUpdate(splashWindow, autoUpdater);
+
+          splashWindow.webContents.send('startup:progress', {
+            task: 'appUpdate',
+            status: 'Update downloaded (will install on quit)',
+            complete: true,
+          });
+        } catch (downloadError) {
+          console.error('[Startup] Update download failed:', downloadError);
+          splashWindow.webContents.send('startup:progress', {
+            task: 'appUpdate',
+            status: 'Download failed (continuing)',
+            complete: true,
+          });
+        }
+      } else {
+        console.log('[Startup] User chose to skip update');
+      }
+    } else {
+      splashWindow.webContents.send('startup:progress', {
+        task: 'appUpdate',
+        status: 'Up to date',
+        complete: true,
+      });
+      console.log('[Startup] Application is up to date');
+    }
+  } catch (error) {
+    console.error('[Startup] Unexpected error during update check:', error);
+    splashWindow.webContents.send('startup:progress', {
+      task: 'appUpdate',
+      status: 'Check failed (continuing)',
+      complete: true,
+    });
+  }
+}
+
+/**
+ * Download application update with progress
+ */
+async function downloadUpdate(splashWindow, autoUpdater) {
+  return new Promise((resolve, reject) => {
+    let resolved = false;
+
+    // Listen for download progress
+    const progressHandler = (progressObj) => {
+      splashWindow.webContents.send('startup:progress', {
+        task: 'appUpdate',
+        status: `Downloading update... ${Math.round(progressObj.percent)}%`,
+        percentage: progressObj.percent,
+        complete: null,
+      });
+    };
+
+    autoUpdater.on('download-progress', progressHandler);
+
+    // Listen for download complete
+    autoUpdater.once('update-downloaded', (info) => {
+      if (!resolved) {
+        resolved = true;
+        autoUpdater.removeListener('download-progress', progressHandler);
+        console.log('[Startup] Update downloaded:', info.version);
+
+        // Store that update is ready to install
+        global.updateReadyToInstall = true;
+
+        resolve();
+      }
+    });
+
+    // Listen for download error
+    autoUpdater.once('error', (err) => {
+      if (!resolved) {
+        resolved = true;
+        autoUpdater.removeListener('download-progress', progressHandler);
+        console.error('[Startup] Update download error:', err);
+        reject(err);
+      }
+    });
+
+    // Start download
+    autoUpdater.downloadUpdate().catch(err => {
+      if (!resolved) {
+        resolved = true;
+        autoUpdater.removeListener('download-progress', progressHandler);
+        reject(err);
+      }
+    });
+
+    // Timeout after 5 minutes
+    setTimeout(() => {
+      if (!resolved) {
+        resolved = true;
+        autoUpdater.removeListener('download-progress', progressHandler);
+        reject(new Error('Download timeout'));
+      }
+    }, 300000);
   });
-
-  console.log('[Startup] Application update check complete');
 }
 
 /**

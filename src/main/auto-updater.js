@@ -19,13 +19,34 @@ let mainWindow = null;
 function initAutoUpdater(window) {
   mainWindow = window;
 
-  // Check for updates on app start (after a delay to let the app initialize)
-  setTimeout(() => {
-    checkForUpdates();
-  }, 5000);
-
   // Set up auto-updater event listeners
   setupAutoUpdaterEvents();
+
+  // Check if update was downloaded during startup
+  if (global.updateReadyToInstall) {
+    log.info('Update was downloaded during startup and is ready to install');
+
+    // Show notification after a short delay
+    setTimeout(() => {
+      dialog.showMessageBox(mainWindow, {
+        type: 'info',
+        title: 'Update Ready',
+        message: 'An update has been downloaded and will be installed when you close the application.',
+        detail: 'You can continue working - the update will be applied automatically on next restart.',
+        buttons: ['OK', 'Restart Now'],
+        defaultId: 0,
+        cancelId: 0
+      }).then(result => {
+        if (result.response === 1) {
+          // User wants to restart now
+          const { autoUpdater } = require('electron-updater');
+          autoUpdater.quitAndInstall(false, true);
+        }
+      });
+
+      delete global.updateReadyToInstall; // Clear the flag
+    }, 2000);
+  }
 }
 
 /**
@@ -43,35 +64,42 @@ function checkForUpdates() {
 }
 
 /**
+ * Show update dialog to user
+ * @param {Object} info - Update info
+ */
+function showUpdateDialog(info) {
+  if (mainWindow) {
+    mainWindow.webContents.send('update-available', {
+      version: info.version,
+      releaseNotes: info.releaseNotes,
+      releaseDate: info.releaseDate
+    });
+  }
+
+  // Show dialog asking user if they want to download
+  dialog.showMessageBox(mainWindow, {
+    type: 'info',
+    title: 'Update Available',
+    message: `A new version (${info.version}) is available!`,
+    detail: 'Would you like to download it now? The update will be installed when you close the application.',
+    buttons: ['Download', 'Later'],
+    defaultId: 0,
+    cancelId: 1
+  }).then(result => {
+    if (result.response === 0) {
+      autoUpdater.downloadUpdate();
+    }
+  });
+}
+
+/**
  * Set up auto-updater event listeners
  */
 function setupAutoUpdaterEvents() {
   // When update is available
   autoUpdater.on('update-available', (info) => {
     log.info('Update available:', info);
-
-    if (mainWindow) {
-      mainWindow.webContents.send('update-available', {
-        version: info.version,
-        releaseNotes: info.releaseNotes,
-        releaseDate: info.releaseDate
-      });
-    }
-
-    // Show dialog asking user if they want to download
-    dialog.showMessageBox(mainWindow, {
-      type: 'info',
-      title: 'Update Available',
-      message: `A new version (${info.version}) is available!`,
-      detail: 'Would you like to download it now? The update will be installed when you close the application.',
-      buttons: ['Download', 'Later'],
-      defaultId: 0,
-      cancelId: 1
-    }).then(result => {
-      if (result.response === 0) {
-        autoUpdater.downloadUpdate();
-      }
-    });
+    showUpdateDialog(info);
   });
 
   // When no update is available

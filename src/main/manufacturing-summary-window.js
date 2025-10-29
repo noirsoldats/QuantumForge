@@ -1,4 +1,4 @@
-const { BrowserWindow } = require('electron');
+const { BrowserWindow, app } = require('electron');
 const path = require('path');
 const { getWindowBounds, trackWindowState } = require('./window-state-manager');
 
@@ -16,6 +16,7 @@ function createManufacturingSummaryWindow() {
 
   const windowName = 'manufacturing-summary';
   const windowBounds = getWindowBounds(windowName, { width: 1400, height: 900 });
+  const version = app.getVersion();
 
   manufacturingSummaryWindow = new BrowserWindow({
     ...windowBounds,
@@ -27,7 +28,7 @@ function createManufacturingSummaryWindow() {
       contextIsolation: true,
       enableWebSQL: false,
     },
-    title: 'Manufacturing Summary - Quantum Forge',
+    title: `Manufacturing Summary - Quantum Forge v${version}`,
   });
 
   // Track window state changes

@@ -1,4 +1,4 @@
-const { BrowserWindow } = require('electron');
+const { BrowserWindow, app } = require('electron');
 const path = require('path');
 const { getWindowBounds, trackWindowState } = require('./window-state-manager');
 
@@ -17,6 +17,7 @@ function createSkillsWindow(characterId) {
   // Use character-specific window state
   const windowName = `skills-${characterId}`;
   const windowBounds = getWindowBounds(windowName, { width: 1000, height: 700 });
+  const version = app.getVersion();
 
   const skillsWindow = new BrowserWindow({
     ...windowBounds,
@@ -30,7 +31,7 @@ function createSkillsWindow(characterId) {
       enableWebSQL: false,
       additionalArguments: [`--character-id=${characterId}`],
     },
-    title: 'Skills Manager - Quantum Forge',
+    title: `Skills Manager - Quantum Forge v${version}`,
     modal: false,
   });
 

@@ -67,6 +67,24 @@ async function saveSetting(category, key, value) {
 document.addEventListener('DOMContentLoaded', async () => {
   // Load settings first
   await loadSettings();
+
+  // Load and display app version
+  try {
+    const version = await window.electronAPI.app.getVersion();
+    const appVersionEl = document.getElementById('app-version');
+    if (appVersionEl) {
+      appVersionEl.textContent = `v${version}`;
+    }
+
+    // Also display Electron version
+    const electronVersionEl = document.getElementById('electron-version');
+    if (electronVersionEl) {
+      electronVersionEl.textContent = process.versions.electron;
+    }
+  } catch (error) {
+    console.error('Error loading version:', error);
+  }
+
   // Tab switching functionality
   const tabItems = document.querySelectorAll('.tab-item');
   const tabContents = document.querySelectorAll('.tab-content');

@@ -92,7 +92,7 @@ let mainWindow;
 function createSplashWindow() {
   const splashWindow = new BrowserWindow({
     width: 700,
-    height: 550,
+    height: 650,
     frame: false,
     resizable: false,
     center: true,
@@ -114,6 +114,7 @@ function createSplashWindow() {
 
 function createWindow() {
   const windowBounds = getWindowBounds('main', { width: 1200, height: 800 });
+  const version = app.getVersion();
 
   mainWindow = new BrowserWindow({
     ...windowBounds,
@@ -125,7 +126,7 @@ function createWindow() {
       contextIsolation: true,
       enableWebSQL: false,
     },
-    title: 'Quantum Forge',
+    title: `Quantum Forge v${version}`,
   });
 
   // Track window state changes
@@ -1061,6 +1062,10 @@ app.whenReady().then(async () => {
   // Auto-updater IPC handler
   ipcMain.handle('app:checkForUpdates', async () => {
     checkForUpdates();
+  });
+
+  ipcMain.handle('app:getVersion', () => {
+    return app.getVersion();
   });
 
   app.on('activate', () => {

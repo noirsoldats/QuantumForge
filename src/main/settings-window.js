@@ -1,4 +1,4 @@
-const { BrowserWindow } = require('electron');
+const { BrowserWindow, app } = require('electron');
 const path = require('path');
 const { getWindowBounds, trackWindowState } = require('./window-state-manager');
 
@@ -12,6 +12,7 @@ function createSettingsWindow() {
   }
 
   const windowBounds = getWindowBounds('settings', { width: 800, height: 600 });
+  const version = app.getVersion();
 
   settingsWindow = new BrowserWindow({
     ...windowBounds,
@@ -24,7 +25,7 @@ function createSettingsWindow() {
       contextIsolation: true,
       enableWebSQL: false,
     },
-    title: 'Settings - Quantum Forge',
+    title: `Settings - Quantum Forge v${version}`,
     parent: null, // Can be set to main window if you want modal behavior
     modal: false,
   });
