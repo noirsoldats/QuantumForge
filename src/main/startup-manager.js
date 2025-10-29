@@ -24,6 +24,9 @@ async function runStartupChecks(splashWindow) {
     // Step 4: Validate SDE (if needed)
     await runSDEValidation(splashWindow);
 
+    // Step 5: Refresh Character Data (if cache expired)
+    await runCharacterDataRefresh(splashWindow);
+
     // All checks complete
     console.log('[Startup] All checks completed successfully');
     splashWindow.webContents.send('startup:complete');
@@ -488,23 +491,41 @@ async function performSDEDownload(splashWindow) {
   });
 
   try {
-    // Listen for progress events
-    const progressHandler = (event, progress) => {
+    // Download and validate with progress callback
+    await downloadAndValidateSDE((progress) => {
+      // Map the progress from downloadAndValidateSDE to splash screen format
+      let status = 'Downloading...';
+      let percentage = progress.percent || 0;
+
+      switch (progress.stage) {
+        case 'downloading':
+          status = progress.message || 'Downloading SDE...';
+          break;
+        case 'decompressing':
+          status = 'Decompressing database...';
+          break;
+        case 'validating':
+          status = 'Validating database...';
+          break;
+        case 'backing up':
+          status = 'Backing up current SDE...';
+          break;
+        case 'installing':
+          status = 'Installing new SDE...';
+          break;
+        case 'complete':
+          status = 'SDE update complete';
+          percentage = 100;
+          break;
+      }
+
       splashWindow.webContents.send('startup:progress', {
         task: 'sdeDownload',
-        status: progress.status || 'Downloading...',
-        percentage: progress.percentage || 0,
+        status: status,
+        percentage: percentage,
         complete: null,
       });
-    };
-
-    ipcMain.on('sde:progress', progressHandler);
-
-    // Download and validate
-    await downloadAndValidateSDE();
-
-    // Remove progress listener
-    ipcMain.removeListener('sde:progress', progressHandler);
+    });
 
     // Mark as complete
     splashWindow.webContents.send('startup:progress', {
@@ -594,6 +615,133 @@ async function runSDEValidation(splashWindow) {
     splashWindow.webContents.send('startup:progress', {
       task: 'sdeValidate',
       status: 'Validation skipped',
+      complete: true,
+    });
+  }
+}
+
+/**
+ * Step 5: Refresh Character Data (Skills and Blueprints)
+ */
+async function runCharacterDataRefresh(splashWindow) {
+  console.log('[Startup] Checking character data cache status...');
+
+  splashWindow.webContents.send('startup:progress', {
+    task: 'characterData',
+    status: 'Checking character data...',
+    complete: null,
+  });
+
+  try {
+    const { getCharacters, getSkillsCacheStatus, getBlueprintsCacheStatus } = require('./settings-manager');
+    const { fetchCharacterSkills } = require('./esi-skills');
+    const { fetchCharacterBlueprints } = require('./esi-blueprints');
+
+    const characters = getCharacters();
+
+    if (!characters || characters.length === 0) {
+      console.log('[Startup] No characters found, skipping data refresh');
+      splashWindow.webContents.send('startup:progress', {
+        task: 'characterData',
+        status: 'No characters',
+        complete: true,
+      });
+      return;
+    }
+
+    // Check which characters need refresh
+    const charactersNeedingRefresh = [];
+
+    for (const character of characters) {
+      const skillsCache = getSkillsCacheStatus(character.characterId);
+      const blueprintsCache = getBlueprintsCacheStatus(character.characterId);
+
+      const needsSkillsRefresh = !skillsCache.isCached;
+      const needsBlueprintsRefresh = !blueprintsCache.isCached;
+
+      if (needsSkillsRefresh || needsBlueprintsRefresh) {
+        charactersNeedingRefresh.push({
+          character,
+          needsSkillsRefresh,
+          needsBlueprintsRefresh,
+        });
+      }
+    }
+
+    if (charactersNeedingRefresh.length === 0) {
+      console.log('[Startup] All character data is up to date');
+      splashWindow.webContents.send('startup:progress', {
+        task: 'characterData',
+        status: 'Data up to date',
+        complete: true,
+      });
+      return;
+    }
+
+    console.log(`[Startup] Refreshing data for ${charactersNeedingRefresh.length} character(s)`);
+
+    let completed = 0;
+    const total = charactersNeedingRefresh.length;
+
+    for (const { character, needsSkillsRefresh, needsBlueprintsRefresh } of charactersNeedingRefresh) {
+      const charName = character.characterName || character.name || `Character ${character.characterId}`;
+
+      try {
+        // Refresh skills if needed
+        if (needsSkillsRefresh) {
+          console.log(`[Startup] Refreshing skills for ${charName}`);
+          splashWindow.webContents.send('startup:progress', {
+            task: 'characterData',
+            status: `Fetching skills for ${charName}...`,
+            percentage: Math.round((completed / total) * 100),
+            complete: null,
+          });
+
+          await fetchCharacterSkills(character.characterId);
+        }
+
+        // Refresh blueprints if needed
+        if (needsBlueprintsRefresh) {
+          console.log(`[Startup] Refreshing blueprints for ${charName}`);
+          splashWindow.webContents.send('startup:progress', {
+            task: 'characterData',
+            status: `Fetching blueprints for ${charName}...`,
+            percentage: Math.round(((completed + 0.5) / total) * 100),
+            complete: null,
+          });
+
+          await fetchCharacterBlueprints(character.characterId);
+        }
+
+        completed++;
+
+        splashWindow.webContents.send('startup:progress', {
+          task: 'characterData',
+          status: `Updated ${charName}`,
+          percentage: Math.round((completed / total) * 100),
+          complete: null,
+        });
+
+      } catch (error) {
+        console.error(`[Startup] Failed to refresh data for ${charName}:`, error);
+        // Continue with other characters even if one fails
+      }
+    }
+
+    splashWindow.webContents.send('startup:progress', {
+      task: 'characterData',
+      status: `Refreshed ${completed} character(s)`,
+      complete: true,
+    });
+
+    console.log('[Startup] Character data refresh completed');
+
+  } catch (error) {
+    console.error('[Startup] Error during character data refresh:', error);
+    // Don't block startup on data refresh errors
+    splashWindow.webContents.send('startup:progress', {
+      task: 'characterData',
+      status: 'Refresh skipped',
       complete: true,
     });
   }

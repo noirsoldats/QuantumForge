@@ -72,8 +72,15 @@ function updateTaskStatus(task, status, percentage, complete) {
 
   // Update progress bar if percentage provided
   if (percentage !== undefined) {
+    const progressContainer = taskElement.querySelector('.task-progress');
     const progressFill = taskElement.querySelector('.progress-fill');
     const progressText = taskElement.querySelector('.progress-text');
+
+    // Show progress container if it exists
+    if (progressContainer) {
+      progressContainer.style.display = 'block';
+    }
+
     if (progressFill) {
       progressFill.style.width = `${percentage}%`;
     }

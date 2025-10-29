@@ -242,11 +242,88 @@
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
-  margin-bottom: 30px;
+  margin-bottom: 20px;
   padding-bottom: 20px;
   border-bottom: 2px solid rgba(100, 180, 255, 0.2);
   flex-wrap: wrap;
   gap: 20px;
+}
+
+/* Blueprint Tabs */
+.blueprint-tabs {
+  display: flex;
+  gap: 5px;
+  margin-bottom: 20px;
+  border-bottom: 2px solid rgba(100, 180, 255, 0.15);
+  padding-bottom: 0;
+}
+
+.blueprint-tab {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 20px;
+  background: transparent;
+  border: none;
+  border-bottom: 3px solid transparent;
+  color: #a0a0b0;
+  font-size: 0.95em;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  position: relative;
+  bottom: -2px;
+}
+
+.blueprint-tab svg {
+  opacity: 0.7;
+  transition: opacity 0.2s ease;
+}
+
+.blueprint-tab:hover {
+  color: #e0e0e0;
+  background: rgba(100, 180, 255, 0.05);
+}
+
+.blueprint-tab:hover svg {
+  opacity: 1;
+}
+
+.blueprint-tab.active {
+  color: #64b4ff;
+  border-bottom-color: #64b4ff;
+  background: rgba(100, 180, 255, 0.1);
+}
+
+.blueprint-tab.active svg {
+  opacity: 1;
+}
+
+.blueprint-tab[data-tab="invention"].active {
+  color: #ffa500;
+  border-bottom-color: #ffa500;
+  background: rgba(255, 165, 0, 0.1);
+}
+
+/* Tab Content */
+.blueprint-tab-content {
+  display: none;
+  animation: fadeIn 0.3s ease;
+}
+
+.blueprint-tab-content.active {
+  display: block;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .blueprint-title-section h2 {
@@ -492,6 +569,42 @@
 
 .loading-indicator p {
   color: #a0a0b0;
+  font-size: 1.1em;
+}
+
+/* Loading State (for inline loading) */
+.loading-state {
+  text-align: center;
+  padding: 60px 20px;
+  animation: fadeIn 0.3s ease;
+}
+
+.loading-state .spinner {
+  width: 50px;
+  height: 50px;
+  margin: 0 auto 20px;
+  border: 4px solid rgba(100, 180, 255, 0.2);
+  border-top-color: #64b4ff;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+.loading-state p {
+  color: #a0a0b0;
+  font-size: 1.1em;
+  margin: 0;
+}
+
+/* Error State */
+.error-state {
+  text-align: center;
+  padding: 60px 20px;
+  color: #ff6b6b;
+  animation: fadeIn 0.3s ease;
+}
+
+.error-state p {
+  margin: 0;
   font-size: 1.1em;
 }
 

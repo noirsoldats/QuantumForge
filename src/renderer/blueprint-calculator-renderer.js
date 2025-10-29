@@ -7,6 +7,11 @@ let currentDefaultCharacter = null;
 let currentDefaultCharacterId = null;
 let searchTimeout = null;
 
+// Tab and invention state
+let currentTab = 'manufacturing';
+let inventionDataLoaded = false;
+let inventionDataCache = null;
+
 // Store event listeners so they can be removed
 let blueprintSearchClickOutsideListener = null;
 let characterMenuClickOutsideListener = null;
@@ -145,6 +150,78 @@ function setupEventListeners() {
       }
     });
   }
+
+  // Tab switching
+  const tabButtons = document.querySelectorAll('.blueprint-tab');
+  tabButtons.forEach(button => {
+    button.addEventListener('click', () => {
+      const tabName = button.dataset.tab;
+      switchTab(tabName);
+    });
+  });
+}
+
+// Switch between tabs
+function switchTab(tabName) {
+  console.log('Switching to tab:', tabName);
+
+  // Update current tab
+  currentTab = tabName;
+
+  // Update tab button states
+  const tabButtons = document.querySelectorAll('.blueprint-tab');
+  tabButtons.forEach(button => {
+    if (button.dataset.tab === tabName) {
+      button.classList.add('active');
+    } else {
+      button.classList.remove('active');
+    }
+  });
+
+  // Update tab content visibility
+  const tabContents = document.querySelectorAll('.blueprint-tab-content');
+  tabContents.forEach(content => {
+    if (content.id === `${tabName}-tab-content`) {
+      content.classList.add('active');
+    } else {
+      content.classList.remove('active');
+    }
+  });
+
+  // Lazy load invention analysis if switching to invention tab
+  if (tabName === 'invention' && !inventionDataLoaded && currentBlueprint) {
+    loadInventionAnalysis();
+  }
+}
+
+// Load invention analysis (lazy loading)
+async function loadInventionAnalysis() {
+  if (inventionDataLoaded || !currentBlueprint) {
+    return;
+  }
+
+  console.log('Loading invention analysis...');
+
+  // Show loading state
+  const inventionContent = document.getElementById('invention-content');
+  if (inventionContent) {
+    inventionContent.innerHTML = '<div class="loading-state"><div class="spinner"></div><p>Loading invention data...</p></div>';
+  }
+
+  try {
+    // Get the current runs value
+    const runsInput = document.getElementById('runs');
+    const runs = runsInput ? parseInt(runsInput.value) || 1 : 1;
+
+    // Call displayInventionAnalysis with required parameters
+    await displayInventionAnalysis(currentBlueprint.typeID, runs);
+    inventionDataLoaded = true;
+  } catch (error) {
+    console.error('Error loading invention analysis:', error);
+    if (inventionContent) {
+      inventionContent.innerHTML = '<div class="error-state"><p>Failed to load invention data</p></div>';
+    }
+  }
 }
 
 // Handle blueprint search input
@@ -245,6 +322,9 @@ async function selectBlueprint(blueprintTypeId) {
     // Set ME level to owned blueprint value, or 0 if not owned
     document.getElementById('me-level').value = ownedME;
     document.getElementById('runs').value = 1;
+
+    // Reset to Blueprint Results tab when loading new blueprint
+    switchTab('manufacturing');
 
     // Show blueprint display, hide empty state
     document.getElementById('blueprint-display').classList.remove('hidden');
@@ -412,11 +492,55 @@ async function displayMaterialsCalculation(result, runs, facilityId = null) {
     }
   }
 
-  // Display invention analysis
-  // Pass the blueprint typeId to check if it can be used for invention
-  console.log('About to call displayInventionAnalysis with blueprintTypeId:', currentBlueprint.typeID);
-  await displayInventionAnalysis(currentBlueprint.typeID, runs);
-  console.log('displayInventionAnalysis completed');
+  // Show tabs
+  const tabsElement = document.getElementById('blueprint-tabs');
+  if (tabsElement) {
+    tabsElement.classList.remove('hidden');
+  }
+
+  // Check if invention is possible for this blueprint
+  await checkAndConfigureInventionTab(currentBlueprint.typeID);
+
+  // Reset invention state (will be loaded when tab is clicked)
+  inventionDataLoaded = false;
+  inventionDataCache = null;
+
+  // If user is on invention tab, load it now
+  if (currentTab === 'invention') {
+    await loadInventionAnalysis();
+  }
+}
+
+// Check if invention is possible and configure the invention tab accordingly
+async function checkAndConfigureInventionTab(blueprintTypeId) {
+  const inventionTabBtn = document.getElementById('invention-tab-btn');
+
+  if (!inventionTabBtn) {
+    return;
+  }
+
+  try {
+    // Try to get invention data
+    const inventionData = await window.electronAPI.calculator.getInventionData(blueprintTypeId);
+
+    if (inventionData && inventionData.products && inventionData.products.length > 0) {
+      // Invention is possible - show the tab
+      inventionTabBtn.style.display = 'flex';
+    } else {
+      // No invention possible - hide the tab and switch to manufacturing if needed
+      inventionTabBtn.style.display = 'none';
+      if (currentTab === 'invention') {
+        switchTab('manufacturing');
+      }
+    }
+  } catch (error) {
+    console.error('Error checking invention data:', error);
+    // On error, hide invention tab
+    inventionTabBtn.style.display = 'none';
+    if (currentTab === 'invention') {
+      switchTab('manufacturing');
+    }
+  }
 }
 
 // Display total materials summary

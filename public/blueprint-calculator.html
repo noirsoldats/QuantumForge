@@ -110,38 +110,65 @@
           </div>
         </div>
 
+        <!-- Tab Navigation -->
+        <div id="blueprint-tabs" class="blueprint-tabs hidden">
+          <button class="blueprint-tab active" data-tab="manufacturing" id="manufacturing-tab-btn">
+            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+              <line x1="9" y1="9" x2="15" y2="9"></line>
+              <line x1="9" y1="15" x2="15" y2="15"></line>
+            </svg>
+            Blueprint Results
+          </button>
+          <button class="blueprint-tab" data-tab="invention" id="invention-tab-btn" style="display: none;">
+            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="10"></circle>
+              <line x1="12" y1="8" x2="12" y2="16"></line>
+              <line x1="8" y1="12" x2="16" y2="12"></line>
+            </svg>
+            Invention Analysis
+          </button>
+        </div>
+
         <!-- Materials Display -->
         <div id="materials-display" class="materials-display hidden">
-          <h3>Required Materials</h3>
+          <!-- Blueprint Results Tab Content -->
+          <div id="manufacturing-tab-content" class="blueprint-tab-content active">
+            <h3>Required Materials</h3>
 
-          <!-- Facility Bonuses Info -->
-          <div id="facility-bonuses" class="facility-bonuses" style="display: none;">
-            <h4>Manufacturing Facility Bonuses</h4>
-            <div id="facility-bonuses-content"></div>
+            <!-- Facility Bonuses Info -->
+            <div id="facility-bonuses" class="facility-bonuses" style="display: none;">
+              <h4>Manufacturing Facility Bonuses</h4>
+              <div id="facility-bonuses-content"></div>
+            </div>
+
+            <!-- Total Materials Summary -->
+            <div class="materials-summary">
+              <h4>Total Materials Needed</h4>
+              <div id="total-materials" class="material-list"></div>
+            </div>
+
+            <!-- Breakdown by Blueprint -->
+            <div class="materials-breakdown">
+              <h4>Material Breakdown</h4>
+              <div id="blueprint-breakdown" class="breakdown-list"></div>
+            </div>
+
+            <!-- Pricing Information -->
+            <div id="pricing-display" class="pricing-display" style="display: none;">
+              <h4>Manufacturing Costs & Profit</h4>
+              <div id="pricing-content" class="pricing-content"></div>
+            </div>
           </div>
 
-          <!-- Total Materials Summary -->
-          <div class="materials-summary">
-            <h4>Total Materials Needed</h4>
-            <div id="total-materials" class="material-list"></div>
-          </div>
+          <!-- Invention Analysis Tab Content -->
+          <div id="invention-tab-content" class="blueprint-tab-content">
+            <h3>Invention Analysis</h3>
 
-          <!-- Breakdown by Blueprint -->
-          <div class="materials-breakdown">
-            <h4>Material Breakdown</h4>
-            <div id="blueprint-breakdown" class="breakdown-list"></div>
-          </div>
-
-          <!-- Pricing Information -->
-          <div id="pricing-display" class="pricing-display" style="display: none;">
-            <h4>Manufacturing Costs & Profit</h4>
-            <div id="pricing-content" class="pricing-content"></div>
-          </div>
-
-          <!-- Invention Information -->
-          <div id="invention-display" class="invention-display" style="display: none;">
-            <h4>Invention Analysis</h4>
-            <div id="invention-content" class="invention-content"></div>
+            <!-- Invention Information -->
+            <div id="invention-display" class="invention-display">
+              <div id="invention-content" class="invention-content"></div>
+            </div>
           </div>
         </div>
 
