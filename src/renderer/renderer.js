@@ -6,6 +6,19 @@ console.log('[SDE] Registering update listener...');
 
 let currentDefaultCharacterId = null;
 
+// Store event listeners so they can be removed
+let characterMenuClickOutsideListener = null;
+
+// Global error handlers
+window.onerror = (message, source, lineno, colno, error) => {
+  console.error('Renderer error:', { message, source, lineno, colno, error });
+  return false;
+};
+
+window.addEventListener('unhandledrejection', (event) => {
+  console.error('Unhandled promise rejection:', event.reason);
+});
+
 // Listen for SDE update available
 window.electronAPI.sde.onUpdateAvailable((updateInfo) => {
   console.log('[SDE] Renderer received update notification:', updateInfo);
@@ -44,8 +57,16 @@ function showUpdateModal(updateInfo) {
   modal.style.display = 'flex';
 }
 
+// Clean up event listeners on page unload
+window.addEventListener('beforeunload', () => {
+  if (characterMenuClickOutsideListener) {
+    document.removeEventListener('click', characterMenuClickOutsideListener);
+  }
+});
+
 document.addEventListener('DOMContentLoaded', async () => {
-  console.log('DOM loaded');
+  try {
+    console.log('DOM loaded');
 
   // SDE Update modal handlers
   const updateModal = document.getElementById('sde-update-modal');
@@ -125,6 +146,17 @@ document.addEventListener('DOMContentLoaded', async () => {
     console.log('Default character changed, refreshing avatar...');
     loadDefaultCharacterAvatar();
   });
+
+  } catch (error) {
+    console.error('Fatal initialization error:', error);
+    document.body.innerHTML = `
+      <div style="color: #ff4444; padding: 40px; font-family: system-ui; text-align: center;">
+        <h2>Failed to Initialize</h2>
+        <p>${error.message}</p>
+        <p style="font-size: 0.9em; color: #999; margin-top: 20px;">Check the console for more details</p>
+      </div>
+    `;
+  }
 });
 
 // Load and display default character avatar
@@ -209,9 +241,16 @@ function setupCharacterMenu(defaultCharacter) {
   };
 
   // Close menu when clicking outside
-  document.addEventListener('click', (e) => {
+  // Remove old listener first to prevent accumulation
+  if (characterMenuClickOutsideListener) {
+    document.removeEventListener('click', characterMenuClickOutsideListener);
+  }
+
+  characterMenuClickOutsideListener = (e) => {
     if (!avatarBtn.contains(e.target) && !menu.contains(e.target)) {
       menu.style.display = 'none';
     }
-  });
+  };
+
+  document.addEventListener('click', characterMenuClickOutsideListener);
 }

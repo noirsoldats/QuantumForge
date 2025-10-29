@@ -9,17 +9,39 @@ let structureTypes = [];
 let structureRigs = [];
 let editingFacilityId = null; // Track which facility is being edited
 
+// Global error handlers
+window.onerror = (message, source, lineno, colno, error) => {
+  console.error('Renderer error:', { message, source, lineno, colno, error });
+  return false;
+};
+
+window.addEventListener('unhandledrejection', (event) => {
+  console.error('Unhandled promise rejection:', event.reason);
+});
+
 document.addEventListener('DOMContentLoaded', async () => {
-  console.log('DOM loaded, initializing facilities manager');
+  try {
+    console.log('DOM loaded, initializing facilities manager');
 
-  // Load initial data
-  await loadInitialData();
+    // Load initial data
+    await loadInitialData();
 
-  // Setup event listeners
-  setupEventListeners();
+    // Setup event listeners
+    setupEventListeners();
 
-  // Load existing facilities
-  await loadFacilities();
+    // Load existing facilities
+    await loadFacilities();
+
+  } catch (error) {
+    console.error('Fatal initialization error:', error);
+    document.body.innerHTML = `
+      <div style="color: #ff4444; padding: 40px; font-family: system-ui; text-align: center;">
+        <h2>Failed to Initialize Facilities Manager</h2>
+        <p>${error.message}</p>
+        <p style="font-size: 0.9em; color: #999; margin-top: 20px;">Check the console for more details</p>
+      </div>
+    `;
+  }
 });
 
 // Load initial data (regions, structure types, rigs)

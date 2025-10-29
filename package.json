@@ -78,9 +78,6 @@
     ],
     "npmRebuild": true,
     "compression": "maximum",
-    "electronLanguages": [
-      "en"
-    ],
     "directories": {
       "output": "dist",
       "buildResources": "build"

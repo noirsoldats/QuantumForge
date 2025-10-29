@@ -9,6 +9,34 @@ let allRegions = [];
 let hasUnsavedChanges = false;
 let currentDefaultCharacterId = null;
 
+// Store event listeners so they can be removed
+let itemSearchClickOutsideListener = null;
+let overrideSearchClickOutsideListener = null;
+let characterMenuClickOutsideListener = null;
+
+// Global error handlers
+window.onerror = (message, source, lineno, colno, error) => {
+  console.error('Renderer error:', { message, source, lineno, colno, error });
+  return false;
+};
+
+window.addEventListener('unhandledrejection', (event) => {
+  console.error('Unhandled promise rejection:', event.reason);
+});
+
+// Clean up event listeners on page unload
+window.addEventListener('beforeunload', () => {
+  if (itemSearchClickOutsideListener) {
+    document.removeEventListener('click', itemSearchClickOutsideListener);
+  }
+  if (overrideSearchClickOutsideListener) {
+    document.removeEventListener('click', overrideSearchClickOutsideListener);
+  }
+  if (characterMenuClickOutsideListener) {
+    document.removeEventListener('click', characterMenuClickOutsideListener);
+  }
+});
+
 // Initialize on load
 document.addEventListener('DOMContentLoaded', () => {
   console.log('DOM loaded, initializing Market Manager');
@@ -1174,11 +1202,18 @@ function initializeMarketViewer() {
     itemSearch.addEventListener('input', handleItemSearch);
 
     // Close search results when clicking outside
-    document.addEventListener('click', (e) => {
+    // Remove old listener first to prevent accumulation
+    if (itemSearchClickOutsideListener) {
+      document.removeEventListener('click', itemSearchClickOutsideListener);
+    }
+
+    itemSearchClickOutsideListener = (e) => {
       if (!e.target.closest('.search-container')) {
         hideSearchResults();
       }
-    });
+    };
+
+    document.addEventListener('click', itemSearchClickOutsideListener);
   }
 }
 
@@ -1777,11 +1812,18 @@ function initializePriceOverrides() {
     overrideSearch.addEventListener('input', handleOverrideItemSearch);
 
     // Close search results when clicking outside
-    document.addEventListener('click', (e) => {
+    // Remove old listener first to prevent accumulation
+    if (overrideSearchClickOutsideListener) {
+      document.removeEventListener('click', overrideSearchClickOutsideListener);
+    }
+
+    overrideSearchClickOutsideListener = (e) => {
       if (!e.target.closest('.override-search-group')) {
         hideOverrideSearchResults();
       }
-    });
+    };
+
+    document.addEventListener('click', overrideSearchClickOutsideListener);
   }
 
   const addOverrideBtn = document.getElementById('add-override-btn');
@@ -2275,9 +2317,16 @@ function setupCharacterMenu(defaultCharacter) {
   };
 
   // Close menu when clicking outside
-  document.addEventListener('click', (e) => {
+  // Remove old listener first to prevent accumulation
+  if (characterMenuClickOutsideListener) {
+    document.removeEventListener('click', characterMenuClickOutsideListener);
+  }
+
+  characterMenuClickOutsideListener = (e) => {
     if (!avatarBtn.contains(e.target) && !menu.contains(e.target)) {
       menu.style.display = 'none';
     }
-  });
+  };
+
+  document.addEventListener('click', characterMenuClickOutsideListener);
 }

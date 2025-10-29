@@ -7,6 +7,30 @@ let currentDefaultCharacter = null;
 let currentDefaultCharacterId = null;
 let searchTimeout = null;
 
+// Store event listeners so they can be removed
+let blueprintSearchClickOutsideListener = null;
+let characterMenuClickOutsideListener = null;
+
+// Global error handlers
+window.onerror = (message, source, lineno, colno, error) => {
+  console.error('Renderer error:', { message, source, lineno, colno, error });
+  return false;
+};
+
+window.addEventListener('unhandledrejection', (event) => {
+  console.error('Unhandled promise rejection:', event.reason);
+});
+
+// Clean up event listeners on page unload
+window.addEventListener('beforeunload', () => {
+  if (blueprintSearchClickOutsideListener) {
+    document.removeEventListener('click', blueprintSearchClickOutsideListener);
+  }
+  if (characterMenuClickOutsideListener) {
+    document.removeEventListener('click', characterMenuClickOutsideListener);
+  }
+});
+
 // Initialize on load
 document.addEventListener('DOMContentLoaded', async () => {
   console.log('DOM loaded, initializing Blueprint Calculator');
@@ -76,11 +100,18 @@ function setupEventListeners() {
     searchInput.addEventListener('input', handleBlueprintSearch);
 
     // Close search results when clicking outside
-    document.addEventListener('click', (e) => {
+    // Remove old listener first to prevent accumulation
+    if (blueprintSearchClickOutsideListener) {
+      document.removeEventListener('click', blueprintSearchClickOutsideListener);
+    }
+
+    blueprintSearchClickOutsideListener = (e) => {
       if (!e.target.closest('.search-container')) {
         hideSearchResults();
       }
-    });
+    };
+
+    document.addEventListener('click', blueprintSearchClickOutsideListener);
   }
 
   // Calculate button
@@ -594,11 +625,18 @@ function setupCharacterMenu(defaultCharacter) {
   };
 
   // Close menu when clicking outside
-  document.addEventListener('click', (e) => {
+  // Remove old listener first to prevent accumulation
+  if (characterMenuClickOutsideListener) {
+    document.removeEventListener('click', characterMenuClickOutsideListener);
+  }
+
+  characterMenuClickOutsideListener = (e) => {
     if (!avatarBtn.contains(e.target) && !menu.contains(e.target)) {
       menu.style.display = 'none';
     }
-  });
+  };
+
+  document.addEventListener('click', characterMenuClickOutsideListener);
 }
 
 // Load facilities into dropdown

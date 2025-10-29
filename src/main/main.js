@@ -4,6 +4,17 @@ const { createSettingsWindow } = require('./settings-window');
 const { initAutoUpdater, checkForUpdates } = require('./auto-updater');
 const { getWindowBounds, trackWindowState } = require('./window-state-manager');
 const { runStartupChecks } = require('./startup-manager');
+
+// Global error handlers for main process
+process.on('uncaughtException', (error) => {
+  console.error('Uncaught Exception in main process:', error);
+  // In production, you might want to log to a file
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('Unhandled Promise Rejection in main process:', reason);
+  // In production, you might want to log to a file
+});
 const {
   loadSettings,
   saveSettings,
@@ -144,6 +155,43 @@ function createWindow() {
   if (process.env.NODE_ENV === 'development') {
     mainWindow.webContents.openDevTools();
   }
+
+  // Add keyboard shortcut to open DevTools in production (for debugging)
+  mainWindow.webContents.on('before-input-event', (event, input) => {
+    if (input.control && input.shift && input.key.toLowerCase() === 'i') {
+      mainWindow.webContents.toggleDevTools();
+    }
+  });
+
+  // Monitor renderer process crashes
+  mainWindow.webContents.on('render-process-gone', (event, details) => {
+    console.error('Renderer process gone:', details);
+    dialog.showErrorBox(
+      'Application Error',
+      `The renderer process has crashed.\nReason: ${details.reason}\n\nThe application will attempt to reload.`
+    );
+    mainWindow.reload();
+  });
+
+  mainWindow.webContents.on('unresponsive', () => {
+    console.error('Renderer process is unresponsive');
+    dialog.showMessageBox(mainWindow, {
+      type: 'warning',
+      title: 'Application Not Responding',
+      message: 'The application is not responding. Would you like to wait or reload?',
+      buttons: ['Wait', 'Reload'],
+      defaultId: 0,
+      cancelId: 0
+    }).then(result => {
+      if (result.response === 1) {
+        mainWindow.reload();
+      }
+    });
+  });
+
+  mainWindow.webContents.on('responsive', () => {
+    console.log('Renderer process is responsive again');
+  });
 
   // Prevent close if there are unsaved changes
   mainWindow.on('close', async (e) => {
