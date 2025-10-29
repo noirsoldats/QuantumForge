@@ -1,7 +1,7 @@
 {
   "name": "quantum-forge",
   "productName": "Quantum Forge",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "Eve Online Industry Management Tool",
   "main": "src/main/main.js",
   "scripts": {
@@ -33,8 +33,12 @@
   },
   "jest": {
     "testEnvironment": "node",
-    "testMatch": ["**/tests/**/*.test.js"],
-    "setupFilesAfterEnv": ["<rootDir>/tests/setup.js"],
+    "testMatch": [
+      "**/tests/**/*.test.js"
+    ],
+    "setupFilesAfterEnv": [
+      "<rootDir>/tests/setup.js"
+    ],
     "collectCoverageFrom": [
       "src/main/**/*.js",
       "!src/main/main.js"
