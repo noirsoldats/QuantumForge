@@ -14,7 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - Enhanced build process with custom icons and branding support
 
-## [1.0.0] - 2024-01-01
+## [0.5.0] - 2025-10-27
 
 ### Added
 - Initial release of Quantum Forge

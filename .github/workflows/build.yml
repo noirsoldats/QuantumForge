@@ -34,18 +34,18 @@ jobs:
 
       - name: Build application (macOS)
         if: matrix.os == 'macos-latest'
-        run: npm run build:mac
+        run: npx electron-builder --mac --publish never
         env:
           # Disable code signing for CI builds
           CSC_IDENTITY_AUTO_DISCOVERY: false
 
       - name: Build application (Linux)
         if: matrix.os == 'ubuntu-latest'
-        run: npm run build:linux
+        run: npx electron-builder --linux --publish never
 
       - name: Build application (Windows)
         if: matrix.os == 'windows-latest'
-        run: npm run build:win
+        run: npx electron-builder --win --publish never
 
       - name: Upload artifacts (macOS)
         if: matrix.os == 'macos-latest'

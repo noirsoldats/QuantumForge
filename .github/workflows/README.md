@@ -99,6 +99,11 @@ For production releases, you should set up code signing:
 
 The `GITHUB_TOKEN` is automatically provided by GitHub Actions - no setup needed!
 
+**Important Notes**:
+- The **build workflow** uses `--publish never` to prevent publishing (only builds)
+- The **release workflow** uses `--publish always` with `GH_TOKEN` to publish to GitHub Releases
+- electron-builder automatically handles uploading to GitHub Releases when `GH_TOKEN` is set
+
 ## Monitoring Builds
 
 1. Go to your repository on GitHub
