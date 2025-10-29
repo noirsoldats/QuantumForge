@@ -95,14 +95,21 @@ For production releases, you should set up code signing:
    - `WIN_CERTS_PASSWORD`: The certificate password
 4. Uncomment the CSC lines in `release.yml` for Windows
 
-### GitHub Token
+### GitHub Token and Permissions
 
 The `GITHUB_TOKEN` is automatically provided by GitHub Actions - no setup needed!
+
+**Permissions**:
+The release workflow has `permissions: contents: write` which allows it to:
+- Create GitHub Releases
+- Upload release assets (installers, update files)
+- Push tags and commits
 
 **Important Notes**:
 - The **build workflow** uses `--publish never` to prevent publishing (only builds)
 - The **release workflow** uses `--publish always` with `GH_TOKEN` to publish to GitHub Releases
 - electron-builder automatically handles uploading to GitHub Releases when `GH_TOKEN` is set
+- No additional secrets or configuration needed - it just works!
 
 ## Monitoring Builds
 
@@ -122,7 +129,12 @@ This is already handled! The workflows use `npm ci` which installs dependencies 
 Make sure:
 1. Your tag matches the pattern `v*.*.*` (e.g., `v1.0.0`)
 2. The tag is pushed to GitHub: `git push origin --tags`
-3. The repository settings allow GitHub Actions to create releases
+3. The workflow has `permissions: contents: write` (already configured)
+4. Check the Actions tab for error messages
+
+**Common Error**: `403 Forbidden - Resource not accessible by integration`
+- This means the workflow lacks permissions
+- Already fixed with `permissions: contents: write` in the workflow file
 
 ### Artifacts Not Appearing
 
