@@ -20,16 +20,24 @@ function createBlueprintsWindow(characterId) {
 
   const blueprintsWindow = new BrowserWindow({
     ...windowBounds,
+    show: false, // Don't show until ready
+    backgroundColor: '#1e1e2e', // Prevents white flash on Windows
     webPreferences: {
       preload: path.join(__dirname, '../preload/preload.js'),
       nodeIntegration: false,
       contextIsolation: true,
+      enableWebSQL: false,
     },
     title: 'Blueprint Manager',
   });
 
   // Track window state changes
   trackWindowState(blueprintsWindow, windowName);
+
+  // Show window when ready to prevent white screen
+  blueprintsWindow.once('ready-to-show', () => {
+    blueprintsWindow.show();
+  });
 
   // Load the blueprints.html
   blueprintsWindow.loadFile(path.join(__dirname, '../../public/blueprints.html'));

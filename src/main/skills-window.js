@@ -20,11 +20,14 @@ function createSkillsWindow(characterId) {
 
   const skillsWindow = new BrowserWindow({
     ...windowBounds,
+    show: false, // Don't show until ready
+    backgroundColor: '#1e1e2e', // Prevents white flash on Windows
     resizable: true,
     webPreferences: {
       preload: path.join(__dirname, '../preload/preload.js'),
       nodeIntegration: false,
       contextIsolation: true,
+      enableWebSQL: false,
       additionalArguments: [`--character-id=${characterId}`],
     },
     title: 'Skills Manager - Quantum Forge',
@@ -33,6 +36,11 @@ function createSkillsWindow(characterId) {
 
   // Track window state changes with character-specific name
   trackWindowState(skillsWindow, windowName);
+
+  // Show window when ready to prevent white screen
+  skillsWindow.once('ready-to-show', () => {
+    skillsWindow.show();
+  });
 
   skillsWindow.loadFile(path.join(__dirname, '../../public/skills.html'));
 

@@ -19,16 +19,24 @@ function createManufacturingSummaryWindow() {
 
   manufacturingSummaryWindow = new BrowserWindow({
     ...windowBounds,
+    show: false, // Don't show until ready
+    backgroundColor: '#1e1e2e', // Prevents white flash on Windows
     webPreferences: {
       preload: path.join(__dirname, '../preload/preload.js'),
       nodeIntegration: false,
       contextIsolation: true,
+      enableWebSQL: false,
     },
     title: 'Manufacturing Summary - Quantum Forge',
   });
 
   // Track window state changes
   trackWindowState(manufacturingSummaryWindow, windowName);
+
+  // Show window when ready to prevent white screen
+  manufacturingSummaryWindow.once('ready-to-show', () => {
+    manufacturingSummaryWindow.show();
+  });
 
   // Load the manufacturing-summary.html
   manufacturingSummaryWindow.loadFile(path.join(__dirname, '../../public/manufacturing-summary.html'));

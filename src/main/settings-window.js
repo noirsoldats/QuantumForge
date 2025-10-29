@@ -15,11 +15,14 @@ function createSettingsWindow() {
 
   settingsWindow = new BrowserWindow({
     ...windowBounds,
+    show: false, // Don't show until ready
+    backgroundColor: '#1e1e2e', // Prevents white flash on Windows
     resizable: true,
     webPreferences: {
       preload: path.join(__dirname, '../preload/preload.js'),
       nodeIntegration: false,
       contextIsolation: true,
+      enableWebSQL: false,
     },
     title: 'Settings - Quantum Forge',
     parent: null, // Can be set to main window if you want modal behavior
@@ -28,6 +31,11 @@ function createSettingsWindow() {
 
   // Track window state changes
   trackWindowState(settingsWindow, 'settings');
+
+  // Show window when ready to prevent white screen
+  settingsWindow.once('ready-to-show', () => {
+    settingsWindow.show();
+  });
 
   settingsWindow.loadFile(path.join(__dirname, '../../public/settings.html'));
 
