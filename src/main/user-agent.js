@@ -15,7 +15,7 @@ function getUserAgent() {
   const appName = 'Quantum Forge';
   const contact = 'roshcar@gmail.com';
   const character = 'eve:Roshcar';
-  const repository = 'https://github.com/UserName/QuantumForge';
+  const repository = 'https://github.com/NoirSoldats/QuantumForge';
 
   return `${appName}/${version} (${contact}; ${character}; +${repository})`;
 }
