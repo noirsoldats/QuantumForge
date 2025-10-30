@@ -148,6 +148,10 @@ body {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  padding: 12px;
+  border: 1px solid rgba(100, 180, 255, 0.3);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.02);
 }
 
 .filter-group > label {
@@ -178,6 +182,48 @@ body {
 
 .radio-label:hover {
   color: #d0d0e0;
+}
+
+.character-filter-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(100, 180, 255, 0.2);
+}
+
+.character-filter-section > label {
+  font-weight: 600;
+  color: #c0c0d0;
+  font-size: 13px;
+}
+
+.character-select {
+  background: rgba(30, 30, 40, 0.95);
+  border: 1px solid rgba(100, 180, 255, 0.3);
+  border-radius: 6px;
+  padding: 8px 12px;
+  color: #e0e0f0;
+  font-size: 14px;
+  cursor: pointer;
+  margin-top: 4px;
+}
+
+.character-select option {
+  background: #1e1e2e;
+  color: #e0e0f0;
+  padding: 8px;
+}
+
+.character-select:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.character-select:focus {
+  outline: none;
+  border-color: rgba(100, 180, 255, 0.6);
 }
 
 .settings-controls {

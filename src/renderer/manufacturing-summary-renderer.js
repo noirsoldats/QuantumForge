@@ -3,6 +3,8 @@
 let allBlueprints = [];
 let calculatedData = [];
 let currentFilter = 'owned';
+let currentCharacterFilter = 'default';
+let selectedCharacterId = null;
 let currentSort = { column: 'profit', direction: 'desc' };
 
 // Filter configuration
@@ -103,10 +105,33 @@ function saveColumnConfig() {
 // Initialize the page
 document.addEventListener('DOMContentLoaded', async () => {
   await loadFacilities();
+  await loadCharacters();
   setupEventListeners();
   renderTableHeaders(); // Initialize table headers with saved/default columns
   syncFiltersWithUI(); // Sync saved filters with main UI checkboxes
 });
+
+// Load characters into dropdown
+async function loadCharacters() {
+  try {
+    const characters = await window.electronAPI.esi.getCharacters();
+    const characterSelect = document.getElementById('character-select');
+
+    if (characters && characters.length > 0) {
+      // Clear existing options except the first placeholder
+      characterSelect.innerHTML = '<option value="">Select Character...</option>';
+
+      characters.forEach(character => {
+        const option = document.createElement('option');
+        option.value = character.characterId;
+        option.textContent = character.characterName;
+        characterSelect.appendChild(option);
+      });
+    }
+  } catch (error) {
+    console.error('Error loading characters:', error);
+  }
+}
 
 // Sync saved filter config with main UI checkboxes
 function syncFiltersWithUI() {
@@ -180,6 +205,27 @@ function setupEventListeners() {
     radio.addEventListener('change', (e) => {
       currentFilter = e.target.value;
     });
+  });
+
+  // Character filter radios
+  document.querySelectorAll('input[name="character-filter"]').forEach(radio => {
+    radio.addEventListener('change', (e) => {
+      currentCharacterFilter = e.target.value;
+      const characterSelect = document.getElementById('character-select');
+
+      // Enable/disable character dropdown based on selection
+      if (e.target.value === 'specific') {
+        characterSelect.disabled = false;
+      } else {
+        characterSelect.disabled = true;
+        characterSelect.value = '';
+      }
+    });
+  });
+
+  // Character select dropdown
+  document.getElementById('character-select')?.addEventListener('change', (e) => {
+    selectedCharacterId = e.target.value ? parseInt(e.target.value) : null;
   });
 
   // Calculate button
@@ -268,10 +314,35 @@ async function calculateSummary() {
     const svrPeriod = parseInt(document.getElementById('svr-period').value);
     const defaultCharacter = await window.electronAPI.esi.getDefaultCharacter();
 
-    // Get owned blueprints list based on current filter
+    // Get owned blueprints list based on current filter and character selection
     let ownedBlueprintsList = null;
-    if (defaultCharacter && (currentFilter === 'owned' || currentFilter === 'corp')) {
-      const allOwnedBlueprints = await window.electronAPI.blueprints.getAll(defaultCharacter.characterId);
+    if (currentFilter === 'owned' || currentFilter === 'corp') {
+      // Determine which character(s) to use for blueprint ME/TE data
+      let characterIds = [];
+
+      if (currentCharacterFilter === 'all') {
+        const allCharacters = await window.electronAPI.esi.getCharacters();
+        characterIds = allCharacters.map(c => c.characterId);
+      } else if (currentCharacterFilter === 'default') {
+        if (defaultCharacter) {
+          characterIds = [defaultCharacter.characterId];
+        }
+      } else if (currentCharacterFilter === 'specific') {
+        if (selectedCharacterId) {
+          characterIds = [selectedCharacterId];
+        }
+      }
+
+      // Collect blueprints from selected characters
+      const allOwnedBlueprints = [];
+      for (const charId of characterIds) {
+        try {
+          const charBlueprints = await window.electronAPI.blueprints.getAll(charId);
+          allOwnedBlueprints.push(...charBlueprints);
+        } catch (error) {
+          console.error(`Error fetching blueprints for character ${charId}:`, error);
+        }
+      }
 
       // Filter based on current filter setting
       if (currentFilter === 'owned') {
@@ -363,56 +434,75 @@ async function getBlueprintsByFilter() {
       return await window.electronAPI.calculator.getAllBlueprints(null);
 
     case 'owned':
-      const defaultChar = await window.electronAPI.esi.getDefaultCharacter();
-      if (!defaultChar) {
-        alert('No default character set. Please set a default character in settings.');
-        return [];
-      }
-      const allOwnedBlueprints = await window.electronAPI.blueprints.getAll(defaultChar.characterId);
+    case 'corp':
+      // Determine which character(s) to use
+      let characterIds = [];
 
-      // Filter for character blueprints only (not corporation)
-      const characterBlueprints = allOwnedBlueprints.filter(bp => {
-        // Check if it's a corporation blueprint
-        const isCorp = bp.isCorporation || (
-          bp.locationFlag && (
-            bp.locationFlag.startsWith('CorpSAG') ||
-            bp.locationFlag.startsWith('CorpDeliveries')
-          )
-        );
-        return !isCorp; // Return only character blueprints
-      });
+      if (currentCharacterFilter === 'all') {
+        // Get all characters
+        const allCharacters = await window.electronAPI.esi.getCharacters();
+        characterIds = allCharacters.map(c => c.characterId);
+      } else if (currentCharacterFilter === 'default') {
+        // Get default character only
+        const defaultChar = await window.electronAPI.esi.getDefaultCharacter();
+        if (!defaultChar) {
+          alert('No default character set. Please set a default character in settings.');
+          return [];
+        }
+        characterIds = [defaultChar.characterId];
+      } else if (currentCharacterFilter === 'specific') {
+        // Get specific selected character
+        if (!selectedCharacterId) {
+          alert('Please select a character from the dropdown.');
+          return [];
+        }
+        characterIds = [selectedCharacterId];
+      }
+
+      // Collect blueprints from all selected characters
+      const allOwnedBlueprints = [];
+      for (const charId of characterIds) {
+        try {
+          const charBlueprints = await window.electronAPI.blueprints.getAll(charId);
+          allOwnedBlueprints.push(...charBlueprints);
+        } catch (error) {
+          console.error(`Error fetching blueprints for character ${charId}:`, error);
+        }
+      }
+
+      // Filter based on owned vs corp
+      let filteredBlueprints;
+      if (currentFilter === 'owned') {
+        // Character blueprints only (not corporation)
+        filteredBlueprints = allOwnedBlueprints.filter(bp => {
+          const isCorp = bp.isCorporation || (
+            bp.locationFlag && (
+              bp.locationFlag.startsWith('CorpSAG') ||
+              bp.locationFlag.startsWith('CorpDeliveries')
+            )
+          );
+          return !isCorp;
+        });
+      } else {
+        // Corporation blueprints only
+        filteredBlueprints = allOwnedBlueprints.filter(bp => {
+          return bp.isCorporation || (
+            bp.locationFlag && (
+              bp.locationFlag.startsWith('CorpSAG') ||
+              bp.locationFlag.startsWith('CorpDeliveries')
+            )
+          );
+        });
+
+        if (filteredBlueprints.length === 0) {
+          alert('No corporation blueprints found for the selected character(s).');
+          return [];
+        }
+      }
 
       // Get full blueprint data from SDE
       const allBPs = await window.electronAPI.calculator.getAllBlueprints(null);
-      return allBPs.filter(bp => characterBlueprints.some(owned => owned.typeId === bp.typeID));
-
-    case 'corp':
-      const defaultCharCorp = await window.electronAPI.esi.getDefaultCharacter();
-      if (!defaultCharCorp) {
-        alert('No default character set. Please set a default character in settings.');
-        return [];
-      }
-      const allOwnedBlueprintsCorp = await window.electronAPI.blueprints.getAll(defaultCharCorp.characterId);
-
-      // Filter for corporation blueprints only
-      const corporationBlueprints = allOwnedBlueprintsCorp.filter(bp => {
-        // Check if it's a corporation blueprint
-        return bp.isCorporation || (
-          bp.locationFlag && (
-            bp.locationFlag.startsWith('CorpSAG') ||
-            bp.locationFlag.startsWith('CorpDeliveries')
-          )
-        );
-      });
-
-      if (corporationBlueprints.length === 0) {
-        alert('No corporation blueprints found for this character.');
-        return [];
-      }
-
-      // Get full blueprint data from SDE
-      const allBPsCorp = await window.electronAPI.calculator.getAllBlueprints(null);
-      return allBPsCorp.filter(bp => corporationBlueprints.some(owned => owned.typeId === bp.typeID));
+      return allBPs.filter(bp => filteredBlueprints.some(owned => owned.typeId === bp.typeID));
 
     default:
       return [];

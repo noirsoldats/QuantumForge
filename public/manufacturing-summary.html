@@ -46,6 +46,26 @@
                   <span>Corp BPs</span>
                 </label>
               </div>
+              <div class="character-filter-section">
+                <label>Character:</label>
+                <div class="radio-group">
+                  <label class="radio-label">
+                    <input type="radio" name="character-filter" value="all">
+                    <span>All Characters</span>
+                  </label>
+                  <label class="radio-label">
+                    <input type="radio" name="character-filter" value="default" checked>
+                    <span>Default Character</span>
+                  </label>
+                  <label class="radio-label">
+                    <input type="radio" name="character-filter" value="specific">
+                    <span>Specific Character</span>
+                  </label>
+                </div>
+                <select id="character-select" class="character-select" disabled>
+                  <option value="">Select Character...</option>
+                </select>
+              </div>
             </div>
 
             <div class="filter-group">
