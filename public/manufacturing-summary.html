@@ -68,6 +68,45 @@
               </div>
             </div>
 
+          <div class="filter-group market-filters-group">
+              <label>Market Filters:</label>
+              <div class="market-filters-grid">
+                  <div class="market-filters-row">
+                      <div class="control-group compact">
+                          <label for="svr-period">SVR Period:</label>
+                          <select id="svr-period" class="compact-select">
+                              <option value="7" selected>7 Days</option>
+                              <option value="14">14 Days</option>
+                              <option value="30">30 Days</option>
+                          </select>
+                      </div>
+
+                      <div class="control-group compact">
+                          <label for="svr-threshold">SVR Threshold:</label>
+                          <input type="number" id="svr-threshold" class="threshold-input compact" placeholder="Min" step="0.01" min="0">
+                      </div>
+                  </div>
+
+                  <div class="market-filters-row">
+                      <div class="control-group compact threshold-group">
+                          <label class="checkbox-label compact">
+                              <input type="checkbox" id="iph-threshold-enabled">
+                              <span>IPH Threshold:</span>
+                          </label>
+                          <input type="number" id="iph-threshold" class="threshold-input compact" placeholder="Min ISK/Hour" step="1000" min="0" disabled>
+                      </div>
+
+                      <div class="control-group compact threshold-group">
+                          <label class="checkbox-label compact">
+                              <input type="checkbox" id="profit-threshold-enabled">
+                              <span>Profit Threshold:</span>
+                          </label>
+                          <input type="number" id="profit-threshold" class="threshold-input compact" placeholder="Min Profit" step="1000" min="0" disabled>
+                      </div>
+                  </div>
+              </div>
+          </div>
+
             <div class="filter-group">
               <label for="tech-filter">Tech Levels:</label>
               <div class="filter-chips-grid" id="tech-filter">
@@ -169,19 +208,11 @@
                 </div>
               </div>
             </div>
+
           </div>
         </div>
 
         <div class="settings-controls">
-          <div class="control-group">
-            <label for="svr-period">SVR Period:</label>
-            <select id="svr-period">
-              <option value="7" selected>7 Days</option>
-              <option value="14">14 Days</option>
-              <option value="30">30 Days</option>
-            </select>
-          </div>
-
           <div class="control-group">
             <label for="facility-select">Facility:</label>
             <select id="facility-select">

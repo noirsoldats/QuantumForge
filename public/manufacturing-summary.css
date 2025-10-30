@@ -252,13 +252,116 @@ body {
   padding: 8px 12px;
   color: #e0e0f0;
   font-size: 14px;
-  min-width: 200px;
+  min-width: 160px;
   cursor: pointer;
 }
 
 .control-group select:focus {
   outline: none;
   border-color: rgba(100, 180, 255, 0.6);
+}
+
+.market-filters-group {
+  flex: 1;
+  max-width: 370px;
+}
+
+.market-filters-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.market-filters-row {
+  display: flex;
+  gap: 12px;
+  align-items: flex-end;
+}
+
+.control-group.compact {
+  min-width: auto;
+}
+
+.control-group.compact label {
+  font-size: 12px;
+  margin-bottom: 2px;
+}
+
+.compact-select {
+  background: rgba(30, 30, 40, 0.8);
+  border: 1px solid rgba(100, 180, 255, 0.3);
+  border-radius: 6px;
+  padding: 6px 10px;
+  color: #e0e0f0;
+  font-size: 13px;
+  cursor: pointer;
+  min-width: 100px;
+}
+
+.compact-select:focus {
+  outline: none;
+  border-color: rgba(100, 180, 255, 0.6);
+}
+
+.threshold-input {
+  background: rgba(30, 30, 40, 0.8);
+  border: 1px solid rgba(100, 180, 255, 0.3);
+  border-radius: 6px;
+  padding: 6px 10px;
+  color: #e0e0f0;
+  font-size: 13px;
+  min-width: 120px;
+}
+
+.threshold-input.compact {
+  min-width: 100px;
+  padding: 5px 8px;
+}
+
+.threshold-input:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.threshold-input:focus {
+  outline: none;
+  border-color: rgba(100, 180, 255, 0.6);
+}
+
+.threshold-input::placeholder {
+  color: #6b7280;
+  font-size: 12px;
+}
+
+.threshold-group {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  cursor: pointer;
+  color: #a0a0b0;
+  font-size: 12px;
+  font-weight: 500;
+  margin-bottom: 0;
+}
+
+.checkbox-label.compact {
+  font-size: 11px;
+}
+
+.checkbox-label input[type="checkbox"] {
+  cursor: pointer;
+  width: 14px;
+  height: 14px;
+}
+
+.checkbox-label:hover {
+  color: #c0c0d0;
 }
 
 .loading-indicator {

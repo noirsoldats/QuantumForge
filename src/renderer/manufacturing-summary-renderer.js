@@ -7,6 +7,15 @@ let currentCharacterFilter = 'default';
 let selectedCharacterId = null;
 let currentSort = { column: 'profit', direction: 'desc' };
 
+// Market filter state
+let marketFilters = {
+  svrThreshold: null,
+  iphThresholdEnabled: false,
+  iphThreshold: null,
+  profitThresholdEnabled: false,
+  profitThreshold: null
+};
+
 // Filter configuration
 let blueprintFilters = loadFilterConfig();
 
@@ -41,6 +50,7 @@ const ALL_COLUMNS = [
   { id: 'name', label: 'Item Name', default: true, sortable: true, align: 'left' },
   { id: 'owned', label: 'Owned?', default: true, sortable: true, align: 'center' },
   { id: 'tech', label: 'Tech', default: true, sortable: true, align: 'center' },
+  { id: 'bp-type', label: 'BP Type', default: true, sortable: true, align: 'center' },
   { id: 'me', label: 'ME', default: true, sortable: true, align: 'center' },
   { id: 'te', label: 'TE', default: true, sortable: true, align: 'center' },
   { id: 'profit', label: 'Profit', default: true, sortable: true, align: 'right' },
@@ -54,7 +64,6 @@ const ALL_COLUMNS = [
   { id: 'material-purchase-fees', label: 'Material Purchase Fees', default: false, sortable: true, align: 'right' },
   { id: 'product-selling-fees', label: 'Product Selling Fees', default: false, sortable: true, align: 'right' },
   { id: 'trading-fees-total', label: 'Trading Fees Total', default: false, sortable: true, align: 'right' },
-  { id: 'blueprint-type', label: 'Blueprint Type', default: false, sortable: true, align: 'center' },
   { id: 'product-market-price', label: 'Product Market Price', default: false, sortable: true, align: 'right' },
   { id: 'profit-percentage', label: 'Profit %', default: false, sortable: true, align: 'right' },
   { id: 'manufacturing-steps', label: 'Manufacturing Steps', default: false, sortable: true, align: 'center' },
@@ -226,6 +235,38 @@ function setupEventListeners() {
   // Character select dropdown
   document.getElementById('character-select')?.addEventListener('change', (e) => {
     selectedCharacterId = e.target.value ? parseInt(e.target.value) : null;
+  });
+
+  // Market filter event listeners
+  document.getElementById('svr-threshold')?.addEventListener('input', (e) => {
+    const value = parseFloat(e.target.value);
+    marketFilters.svrThreshold = value > 0 ? value : null;
+  });
+
+  document.getElementById('iph-threshold-enabled')?.addEventListener('change', (e) => {
+    marketFilters.iphThresholdEnabled = e.target.checked;
+    const iphInput = document.getElementById('iph-threshold');
+    if (iphInput) {
+      iphInput.disabled = !e.target.checked;
+    }
+  });
+
+  document.getElementById('iph-threshold')?.addEventListener('input', (e) => {
+    const value = parseFloat(e.target.value);
+    marketFilters.iphThreshold = value > 0 ? value : null;
+  });
+
+  document.getElementById('profit-threshold-enabled')?.addEventListener('change', (e) => {
+    marketFilters.profitThresholdEnabled = e.target.checked;
+    const profitInput = document.getElementById('profit-threshold');
+    if (profitInput) {
+      profitInput.disabled = !e.target.checked;
+    }
+  });
+
+  document.getElementById('profit-threshold')?.addEventListener('input', (e) => {
+    const value = parseFloat(e.target.value);
+    marketFilters.profitThreshold = value > 0 ? value : null;
   });
 
   // Calculate button
@@ -415,6 +456,9 @@ async function calculateSummary() {
     console.log(`[Manufacturing Summary] Calculated ${processedCount} blueprints in ${totalElapsedTime.toFixed(2)}ms (${(totalElapsedTime / 1000).toFixed(2)}s)`);
     console.log(`[Manufacturing Summary] Average time per blueprint: ${avgTimePerBlueprint.toFixed(2)}ms`);
 
+    // Apply market filters
+    applyMarketFilters();
+
     hideLoading();
     sortTable(currentSort.column, currentSort.direction);
     displayResults();
@@ -424,6 +468,39 @@ async function calculateSummary() {
     alert('Error calculating summary: ' + error.message);
     hideLoading();
     showEmptyState();
+  }
+}
+
+// Apply market filters to calculated data
+function applyMarketFilters() {
+  const originalCount = calculatedData.length;
+
+  calculatedData = calculatedData.filter(item => {
+    // SVR Threshold filter
+    if (marketFilters.svrThreshold !== null && item.svr < marketFilters.svrThreshold) {
+      return false;
+    }
+
+    // IPH Threshold filter
+    if (marketFilters.iphThresholdEnabled && marketFilters.iphThreshold !== null) {
+      if (item.iskPerHour < marketFilters.iphThreshold) {
+        return false;
+      }
+    }
+
+    // Profit Threshold filter
+    if (marketFilters.profitThresholdEnabled && marketFilters.profitThreshold !== null) {
+      if (item.profit < marketFilters.profitThreshold) {
+        return false;
+      }
+    }
+
+    return true;
+  });
+
+  const filteredCount = originalCount - calculatedData.length;
+  if (filteredCount > 0) {
+    console.log(`[Market Filters] Filtered out ${filteredCount} blueprints based on market thresholds`);
   }
 }
 
@@ -608,6 +685,7 @@ async function calculateBlueprintData(blueprint, facility, svrPeriod, defaultCha
       productName: blueprint.productName,
       isOwned,
       techLevel,
+      bpType: isOwned ? blueprintType : 'N/A',
       meLevel,
       teLevel,
       profit: pricing.profit,
@@ -1047,8 +1125,8 @@ function determineCategory(blueprint) {
   // Rigs - check for rig groups BEFORE checking Module category
   // This handles rigs that are in Module category but have Rig in their group name
   if (sdeGroup && sdeGroup.includes('Rig')) {
-    // Structure rigs
-    if (sdeCategory === 'Structure') {
+    // Structure rigs - check both category and group name
+    if (sdeCategory === 'Structure' || (sdeGroup && sdeGroup.includes('Structure'))) {
       return 'Structure Rigs';
     }
     // Regular rigs (may be in Module category)
@@ -1151,6 +1229,10 @@ function sortTable(column, direction = null) {
       case 'tech':
         aVal = a.techLevel;
         bVal = b.techLevel;
+        break;
+      case 'bp-type':
+        aVal = a.bpType || 'N/A';
+        bVal = b.bpType || 'N/A';
         break;
       case 'me':
         aVal = a.meLevel;
@@ -1489,6 +1571,8 @@ function getCellContent(columnId, item) {
       return `<td class="text-center ${item.isOwned ? 'owned-yes' : 'owned-no'}">${item.isOwned ? 'Yes' : 'No'}</td>`;
     case 'tech':
       return `<td class="text-center">${item.techLevel}</td>`;
+    case 'bp-type':
+      return `<td class="text-center">${item.bpType || 'N/A'}</td>`;
     case 'me':
       return `<td class="text-center">${item.meLevel}</td>`;
     case 'te':
