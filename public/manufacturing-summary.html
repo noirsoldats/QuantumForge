@@ -28,20 +28,126 @@
       <!-- Controls Section -->
       <div class="controls-section">
         <div class="filter-controls">
-          <label>Blueprint Filter:</label>
-          <div class="radio-group">
-            <label class="radio-label">
-              <input type="radio" name="blueprint-filter" value="all">
-              <span>All Blueprints</span>
-            </label>
-            <label class="radio-label">
-              <input type="radio" name="blueprint-filter" value="owned" checked>
-              <span>Owned BPs</span>
-            </label>
-            <label class="radio-label">
-              <input type="radio" name="blueprint-filter" value="corp">
-              <span>Corp BPs</span>
-            </label>
+          <div class="filter-row">
+            <div class="filter-group">
+              <label>Blueprint Filter:</label>
+              <div class="radio-group">
+                <label class="radio-label">
+                  <input type="radio" name="blueprint-filter" value="all">
+                  <span>All Blueprints</span>
+                </label>
+                <label class="radio-label">
+                  <input type="radio" name="blueprint-filter" value="owned" checked>
+                  <span>Owned BPs</span>
+                </label>
+                <label class="radio-label">
+                  <input type="radio" name="blueprint-filter" value="corp">
+                  <span>Corp BPs</span>
+                </label>
+              </div>
+            </div>
+
+            <div class="filter-group">
+              <label for="tech-filter">Tech Levels:</label>
+              <div class="filter-chips-grid" id="tech-filter">
+                <div class="filter-chips-row">
+                  <label class="filter-chip">
+                    <input type="checkbox" value="T1" checked>
+                    <span>T1</span>
+                  </label>
+                  <label class="filter-chip">
+                    <input type="checkbox" value="T2" checked>
+                    <span>T2</span>
+                  </label>
+                  <label class="filter-chip">
+                    <input type="checkbox" value="T3" checked>
+                    <span>T3</span>
+                  </label>
+                </div>
+                <div class="filter-chips-row">
+                  <label class="filter-chip">
+                    <input type="checkbox" value="Storyline" checked>
+                    <span>Storyline</span>
+                  </label>
+                  <label class="filter-chip">
+                    <input type="checkbox" value="Navy" checked>
+                    <span>Navy</span>
+                  </label>
+                  <label class="filter-chip">
+                    <input type="checkbox" value="Pirate" checked>
+                    <span>Pirate</span>
+                  </label>
+                </div>
+              </div>
+            </div>
+
+            <div class="filter-group">
+              <label for="category-filter">Categories:</label>
+              <div class="filter-chips-grid" id="category-filter">
+                <div class="filter-chips-row">
+                  <label class="filter-chip">
+                    <input type="checkbox" value="Ships" checked>
+                    <span>Ships</span>
+                  </label>
+                  <label class="filter-chip">
+                    <input type="checkbox" value="Drones" checked>
+                    <span>Drones</span>
+                  </label>
+                  <label class="filter-chip">
+                    <input type="checkbox" value="Modules" checked>
+                    <span>Modules</span>
+                  </label>
+                  <label class="filter-chip">
+                    <input type="checkbox" value="Ammo/Charges" checked>
+                    <span>Ammo</span>
+                  </label>
+                  <label class="filter-chip">
+                    <input type="checkbox" value="Components" checked>
+                    <span>Components</span>
+                  </label>
+                </div>
+                <div class="filter-chips-row">
+                  <label class="filter-chip">
+                    <input type="checkbox" value="Rigs" checked>
+                    <span>Rigs</span>
+                  </label>
+                  <label class="filter-chip">
+                    <input type="checkbox" value="Deployables" checked>
+                    <span>Deployables</span>
+                  </label>
+                  <label class="filter-chip">
+                    <input type="checkbox" value="Subsystems" checked>
+                    <span>Subsystems</span>
+                  </label>
+                  <label class="filter-chip">
+                    <input type="checkbox" value="Structures" checked>
+                    <span>Structures</span>
+                  </label>
+                  <label class="filter-chip">
+                    <input type="checkbox" value="Structure Rigs" checked>
+                    <span>Structure Rigs</span>
+                  </label>
+                </div>
+                <div class="filter-chips-row">
+                  <label class="filter-chip">
+                    <input type="checkbox" value="Structure Modules" checked>
+                    <span>Structure Modules</span>
+                  </label>
+                  <label class="filter-chip">
+                    <input type="checkbox" value="Boosters" checked>
+                    <span>Boosters</span>
+                  </label>
+                  <label class="filter-chip">
+                    <input type="checkbox" value="Celestials" checked>
+                    <span>Celestials</span>
+                  </label>
+                  <label class="filter-chip">
+                    <input type="checkbox" value="Reactions" checked>
+                    <span>Reactions</span>
+                  </label>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -83,12 +189,6 @@
           <h2>Results</h2>
           <div class="results-stats">
             <span id="results-count">0 blueprints</span>
-            <button class="secondary-button" id="configure-filters-btn" title="Configure Filters">
-              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"></polygon>
-              </svg>
-              Filters
-            </button>
             <button class="secondary-button" id="configure-columns-btn" title="Configure Columns">
               <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <line x1="4" y1="21" x2="4" y2="14"></line>
@@ -151,116 +251,6 @@
       <div class="modal-footer">
         <button class="secondary-button" id="reset-columns-btn">Reset to Default</button>
         <button class="primary-button" id="apply-columns-btn">Apply</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- Filter Configuration Modal -->
-  <div id="filter-config-modal" class="modal" style="display: none;">
-    <div class="modal-content filter-config-modal">
-      <div class="modal-header">
-        <h2>Configure Filters</h2>
-        <button class="close-btn" id="close-filter-modal-btn">&times;</button>
-      </div>
-      <div class="modal-body">
-        <p class="modal-instructions">Select which blueprint types to include in calculations.</p>
-
-        <div class="filter-section">
-          <h3 class="filter-section-title">Tech Level</h3>
-          <div class="filter-checkboxes">
-            <label class="filter-checkbox-label">
-              <input type="checkbox" class="filter-checkbox" data-filter-type="tech" value="T1" checked>
-              <span>Tech 1</span>
-            </label>
-            <label class="filter-checkbox-label">
-              <input type="checkbox" class="filter-checkbox" data-filter-type="tech" value="T2" checked>
-              <span>Tech 2</span>
-            </label>
-            <label class="filter-checkbox-label">
-              <input type="checkbox" class="filter-checkbox" data-filter-type="tech" value="T3" checked>
-              <span>Tech 3</span>
-            </label>
-            <label class="filter-checkbox-label">
-              <input type="checkbox" class="filter-checkbox" data-filter-type="tech" value="Storyline" checked>
-              <span>Storyline</span>
-            </label>
-            <label class="filter-checkbox-label">
-              <input type="checkbox" class="filter-checkbox" data-filter-type="tech" value="Navy" checked>
-              <span>Navy</span>
-            </label>
-            <label class="filter-checkbox-label">
-              <input type="checkbox" class="filter-checkbox" data-filter-type="tech" value="Pirate" checked>
-              <span>Pirate</span>
-            </label>
-          </div>
-        </div>
-
-        <div class="filter-section">
-          <h3 class="filter-section-title">Blueprint Category</h3>
-          <div class="filter-checkboxes">
-            <label class="filter-checkbox-label">
-              <input type="checkbox" class="filter-checkbox" data-filter-type="category" value="Ships" checked>
-              <span>Ships</span>
-            </label>
-            <label class="filter-checkbox-label">
-              <input type="checkbox" class="filter-checkbox" data-filter-type="category" value="Drones" checked>
-              <span>Drones</span>
-            </label>
-            <label class="filter-checkbox-label">
-              <input type="checkbox" class="filter-checkbox" data-filter-type="category" value="Modules" checked>
-              <span>Modules</span>
-            </label>
-            <label class="filter-checkbox-label">
-              <input type="checkbox" class="filter-checkbox" data-filter-type="category" value="Ammo/Charges" checked>
-              <span>Ammo/Charges</span>
-            </label>
-            <label class="filter-checkbox-label">
-              <input type="checkbox" class="filter-checkbox" data-filter-type="category" value="Components" checked>
-              <span>Components</span>
-            </label>
-            <label class="filter-checkbox-label">
-              <input type="checkbox" class="filter-checkbox" data-filter-type="category" value="Rigs" checked>
-              <span>Rigs</span>
-            </label>
-            <label class="filter-checkbox-label">
-              <input type="checkbox" class="filter-checkbox" data-filter-type="category" value="Deployables" checked>
-              <span>Deployables</span>
-            </label>
-            <label class="filter-checkbox-label">
-              <input type="checkbox" class="filter-checkbox" data-filter-type="category" value="Subsystems" checked>
-              <span>Subsystems</span>
-            </label>
-            <label class="filter-checkbox-label">
-              <input type="checkbox" class="filter-checkbox" data-filter-type="category" value="Structures" checked>
-              <span>Structures</span>
-            </label>
-            <label class="filter-checkbox-label">
-              <input type="checkbox" class="filter-checkbox" data-filter-type="category" value="Structure Rigs" checked>
-              <span>Structure Rigs</span>
-            </label>
-            <label class="filter-checkbox-label">
-              <input type="checkbox" class="filter-checkbox" data-filter-type="category" value="Structure Modules" checked>
-              <span>Structure Modules</span>
-            </label>
-            <label class="filter-checkbox-label">
-              <input type="checkbox" class="filter-checkbox" data-filter-type="category" value="Boosters" checked>
-              <span>Boosters</span>
-            </label>
-            <label class="filter-checkbox-label">
-              <input type="checkbox" class="filter-checkbox" data-filter-type="category" value="Celestials" checked>
-              <span>Celestials</span>
-            </label>
-            <label class="filter-checkbox-label">
-              <input type="checkbox" class="filter-checkbox" data-filter-type="category" value="Reactions" checked>
-              <span>Reactions</span>
-            </label>
-          </div>
-        </div>
-      </div>
-      <div class="modal-footer">
-        <button class="secondary-button" id="select-all-filters-btn">Select All</button>
-        <button class="secondary-button" id="clear-all-filters-btn">Clear All</button>
-        <button class="primary-button" id="apply-filters-btn">Apply</button>
       </div>
     </div>
   </div>

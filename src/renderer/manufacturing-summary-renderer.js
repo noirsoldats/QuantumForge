@@ -105,7 +105,21 @@ document.addEventListener('DOMContentLoaded', async () => {
   await loadFacilities();
   setupEventListeners();
   renderTableHeaders(); // Initialize table headers with saved/default columns
+  syncFiltersWithUI(); // Sync saved filters with main UI checkboxes
 });
+
+// Sync saved filter config with main UI checkboxes
+function syncFiltersWithUI() {
+  // Tech level filters
+  document.querySelectorAll('#tech-filter input[type="checkbox"]').forEach(checkbox => {
+    checkbox.checked = blueprintFilters.tech.includes(checkbox.value);
+  });
+
+  // Category filters
+  document.querySelectorAll('#category-filter input[type="checkbox"]').forEach(checkbox => {
+    checkbox.checked = blueprintFilters.category.includes(checkbox.value);
+  });
+}
 
 // Load facilities into dropdown
 async function loadFacilities() {
@@ -132,6 +146,26 @@ async function loadFacilities() {
   } catch (error) {
     console.error('Error loading facilities:', error);
   }
+}
+
+// Get current filter selections from main UI
+function getCurrentFilters() {
+  const filters = {
+    tech: [],
+    category: []
+  };
+
+  // Tech level filters
+  document.querySelectorAll('#tech-filter input[type="checkbox"]:checked').forEach(checkbox => {
+    filters.tech.push(checkbox.value);
+  });
+
+  // Category filters
+  document.querySelectorAll('#category-filter input[type="checkbox"]:checked').forEach(checkbox => {
+    filters.category.push(checkbox.value);
+  });
+
+  return filters;
 }
 
 // Setup event listeners
@@ -168,23 +202,19 @@ function setupEventListeners() {
   // Apply columns button
   document.getElementById('apply-columns-btn')?.addEventListener('click', applyColumns);
 
-  // Filter modal handlers
-  document.getElementById('configure-filters-btn')?.addEventListener('click', openFilterConfigModal);
-  document.getElementById('close-filter-modal-btn')?.addEventListener('click', closeFilterConfigModal);
-  document.getElementById('select-all-filters-btn')?.addEventListener('click', selectAllFilters);
-  document.getElementById('clear-all-filters-btn')?.addEventListener('click', clearAllFilters);
-  document.getElementById('apply-filters-btn')?.addEventListener('click', applyFilters);
+  // Filter chip event listeners (main UI)
+  document.querySelectorAll('#tech-filter input[type="checkbox"], #category-filter input[type="checkbox"]').forEach(checkbox => {
+    checkbox.addEventListener('change', () => {
+      // Update blueprintFilters when checkboxes change
+      blueprintFilters = getCurrentFilters();
+      saveFilterConfig();
+    });
+  });
 
   // Modal backdrop click
   document.getElementById('column-config-modal')?.addEventListener('click', (e) => {
     if (e.target.id === 'column-config-modal') {
       closeColumnConfigModal();
-    }
-  });
-
-  document.getElementById('filter-config-modal')?.addEventListener('click', (e) => {
-    if (e.target.id === 'filter-config-modal') {
-      closeFilterConfigModal();
     }
   });
 }
@@ -212,11 +242,27 @@ async function calculateSummary() {
       return;
     }
 
-    allBlueprints = blueprints;
+    // Get current filters from main UI
+    const currentFilters = getCurrentFilters();
+
+    // Filter blueprints BEFORE starting calculations
+    const filteredBlueprints = blueprints.filter(blueprint => {
+      const techLevel = determineTechLevel(blueprint);
+      const category = determineCategory(blueprint);
+      return currentFilters.tech.includes(techLevel) && currentFilters.category.includes(category);
+    });
+
+    if (filteredBlueprints.length === 0) {
+      showEmptyState();
+      hideLoading();
+      return;
+    }
+
+    allBlueprints = filteredBlueprints;
     calculatedData = [];
 
     // Calculate data for each blueprint
-    showLoading(`Calculating profitability for ${blueprints.length} blueprints...`);
+    showLoading(`Calculating profitability for ${filteredBlueprints.length} blueprints...`);
 
     const facility = await window.electronAPI.facilities.getFacility(facilityId);
     const svrPeriod = parseInt(document.getElementById('svr-period').value);
@@ -254,34 +300,42 @@ async function calculateSummary() {
 
     // Start timing for all calculations
     const calculationStartTime = performance.now();
-    let completed = 0;
+
+    // Parallel batch processing configuration
+    const BATCH_SIZE = 6; // Process 6 blueprints concurrently
+    const totalBlueprints = filteredBlueprints.length;
     let processedCount = 0;
 
-    for (const blueprint of blueprints) {
-      completed++;
-      if (completed % 10 === 0) {
-        showLoading(`Calculating... ${completed}/${blueprints.length}`);
-        // Allow UI to update
-        await new Promise(resolve => setTimeout(resolve, 0));
-      }
+    // Process blueprints in batches
+    for (let i = 0; i < totalBlueprints; i += BATCH_SIZE) {
+      const batch = filteredBlueprints.slice(i, Math.min(i + BATCH_SIZE, totalBlueprints));
 
-      // Check if blueprint matches filters
-      const techLevel = determineTechLevel(blueprint);
-      const category = determineCategory(blueprint);
+      // Update loading message
+      showLoading(`Calculating... ${processedCount}/${totalBlueprints}`);
 
-      if (!blueprintFilters.tech.includes(techLevel) || !blueprintFilters.category.includes(category)) {
-        continue; // Skip this blueprint
-      }
+      // Calculate batch in parallel using Promise.allSettled
+      const batchPromises = batch.map(blueprint =>
+        calculateBlueprintData(blueprint, facility, svrPeriod, defaultCharacter, ownedBlueprintsList)
+          .catch(error => {
+            console.error(`Error calculating blueprint ${blueprint.typeName}:`, error);
+            return null; // Return null on error
+          })
+      );
 
-      try {
-        const data = await calculateBlueprintData(blueprint, facility, svrPeriod, defaultCharacter, ownedBlueprintsList);
-        if (data) {
-          calculatedData.push(data);
+      const batchResults = await Promise.allSettled(batchPromises);
+
+      // Process results
+      batchResults.forEach(result => {
+        if (result.status === 'fulfilled' && result.value) {
+          calculatedData.push(result.value);
           processedCount++;
+        } else if (result.status === 'rejected') {
+          console.error('Blueprint calculation rejected:', result.reason);
         }
-      } catch (error) {
-        console.error(`Error calculating blueprint ${blueprint.typeName}:`, error);
-      }
+      });
+
+      // Small delay to allow UI to update
+      await new Promise(resolve => setTimeout(resolve, 0));
     }
 
     // Calculate and log total elapsed time
@@ -900,7 +954,18 @@ function determineCategory(blueprint) {
     return 'Drones';
   }
 
-  // Modules - all products in Module category
+  // Rigs - check for rig groups BEFORE checking Module category
+  // This handles rigs that are in Module category but have Rig in their group name
+  if (sdeGroup && sdeGroup.includes('Rig')) {
+    // Structure rigs
+    if (sdeCategory === 'Structure') {
+      return 'Structure Rigs';
+    }
+    // Regular rigs (may be in Module category)
+    return 'Rigs';
+  }
+
+  // Modules - all products in Module category (after rig check)
   if (sdeCategory === 'Module') {
     return 'Modules';
   }
@@ -927,10 +992,6 @@ function determineCategory(blueprint) {
 
   // Structures - all products in Structure category
   if (sdeCategory === 'Structure') {
-    // Check if it's a structure rig
-    if (sdeGroup && sdeGroup.includes('Rig')) {
-      return 'Structure Rigs';
-    }
     return 'Structures';
   }
 
@@ -952,11 +1013,6 @@ function determineCategory(blueprint) {
   // Components - check Material category or component-related groups
   if (sdeCategory === 'Material' || sdeCategory === 'Commodity') {
     return 'Components';
-  }
-
-  // Rigs - check for module category with rig groups (not structure rigs)
-  if (sdeGroup && sdeGroup.includes('Rig') && sdeCategory !== 'Structure') {
-    return 'Rigs';
   }
 
   // Default to Components for anything else (covers materials, intermediate products, etc.)
@@ -1263,72 +1319,6 @@ function applyColumns() {
   displayResults();
 
   closeColumnConfigModal();
-}
-
-// Filter Configuration Functions
-function openFilterConfigModal() {
-  const modal = document.getElementById('filter-config-modal');
-
-  // Set checkbox states based on current filters
-  document.querySelectorAll('.filter-checkbox').forEach(checkbox => {
-    const filterType = checkbox.getAttribute('data-filter-type');
-    const value = checkbox.value;
-    checkbox.checked = blueprintFilters[filterType]?.includes(value) || false;
-  });
-
-  modal.style.display = 'flex';
-}
-
-function closeFilterConfigModal() {
-  const modal = document.getElementById('filter-config-modal');
-  modal.style.display = 'none';
-}
-
-function selectAllFilters() {
-  document.querySelectorAll('.filter-checkbox').forEach(checkbox => {
-    checkbox.checked = true;
-  });
-}
-
-function clearAllFilters() {
-  document.querySelectorAll('.filter-checkbox').forEach(checkbox => {
-    checkbox.checked = false;
-  });
-}
-
-function applyFilters() {
-  // Collect selected filters
-  const newFilters = {
-    tech: [],
-    category: []
-  };
-
-  document.querySelectorAll('.filter-checkbox').forEach(checkbox => {
-    if (checkbox.checked) {
-      const filterType = checkbox.getAttribute('data-filter-type');
-      const value = checkbox.value;
-      newFilters[filterType].push(value);
-    }
-  });
-
-  // Validate at least one filter is selected
-  if (newFilters.tech.length === 0 && newFilters.category.length === 0) {
-    alert('You must have at least one filter selected');
-    return;
-  }
-
-  blueprintFilters = newFilters;
-
-  // Save configuration
-  saveFilterConfig();
-
-  // Re-calculate with new filters
-  closeFilterConfigModal();
-
-  // If we already have calculated data, recalculate
-  if (calculatedData.length > 0) {
-    calculateSummary();
-  }
 }
 
 function setupColumnDragAndDrop() {
