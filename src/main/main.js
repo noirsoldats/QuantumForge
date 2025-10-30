@@ -709,6 +709,12 @@ app.whenReady().then(async () => {
     return calculateInventionProbability(baseProbability, skills, decryptorMultiplier);
   });
 
+  ipcMain.handle('calculator:clearCaches', () => {
+    const { clearMaterialCache } = require('./blueprint-calculator');
+    clearMaterialCache();
+    return { success: true };
+  });
+
   ipcMain.handle('calculator:findBestDecryptor', async (event, inventionData, materialPrices, productPrice, skills, facility, optimizationStrategy, customVolume) => {
     console.log('[IPC Handler] Received optimizationStrategy:', optimizationStrategy, 'customVolume:', customVolume);
 

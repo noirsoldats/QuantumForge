@@ -326,6 +326,9 @@ async function selectBlueprint(blueprintTypeId) {
     // Reset to Blueprint Results tab when loading new blueprint
     switchTab('manufacturing');
 
+    // Clear backend calculation caches for new blueprint
+    await window.electronAPI.calculator.clearCaches();
+
     // Show blueprint display, hide empty state
     document.getElementById('blueprint-display').classList.remove('hidden');
     document.getElementById('empty-state').style.display = 'none';
@@ -363,6 +366,9 @@ async function handleCalculate() {
     const characterId = currentDefaultCharacter?.characterId || null;
     const facilityId = document.getElementById('facility-select').value || null;
 
+    // Start timing
+    const startTime = performance.now();
+
     const result = await window.electronAPI.calculator.calculateMaterials(
       currentBlueprint.typeID,
       runs,
@@ -370,6 +376,10 @@ async function handleCalculate() {
       characterId,
       facilityId
     );
+
+    // Calculate and log elapsed time
+    const elapsedTime = performance.now() - startTime;
+    console.log(`[Blueprint Calculation] Completed in ${elapsedTime.toFixed(2)}ms (${(elapsedTime / 1000).toFixed(2)}s)`);
 
     if (result.error) {
       throw new Error(result.error);

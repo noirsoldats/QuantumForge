@@ -145,6 +145,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.invoke('calculator:calculateInventionProbability', baseProbability, skills, decryptorMultiplier),
     findBestDecryptor: (inventionData, materialPrices, productPrice, skills, facility, optimizationStrategy, customVolume) =>
       ipcRenderer.invoke('calculator:findBestDecryptor', inventionData, materialPrices, productPrice, skills, facility, optimizationStrategy, customVolume),
+    clearCaches: () => ipcRenderer.invoke('calculator:clearCaches'),
   },
 
   // Cost Indices API

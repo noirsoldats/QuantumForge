@@ -4,6 +4,11 @@ const Database = require('better-sqlite3');
 const { app } = require('electron');
 const { getCostIndices } = require('./esi-cost-indices');
 
+// In-memory caches for performance optimization
+const typeNameCache = new Map();
+const materialTreeCache = new Map();
+const MAX_CACHE_SIZE = 100;
+
 /**
  * Get the path to the SDE database
  * @returns {string} Path to SDE database
@@ -14,24 +19,46 @@ function getSDEPath() {
 }
 
 /**
+ * Generate cache key for material tree calculations
+ * @param {number} blueprintTypeId - Blueprint type ID
+ * @param {number} runs - Number of runs
+ * @param {number} meLevel - ME level
+ * @param {Object} facility - Facility configuration
+ * @param {number} characterId - Character ID (affects owned blueprint ME lookups)
+ * @returns {string} Cache key
+ */
+function getMaterialCacheKey(blueprintTypeId, runs, meLevel, facility, characterId) {
+  const facilityKey = facility ?
+    `${facility.systemId}_${facility.structureTypeId}_${(facility.rigs || []).map(r => r.typeId).sort().join(',')}` :
+    'none';
+  const charKey = characterId || 'none';
+  return `${blueprintTypeId}_${runs}_${meLevel}_${facilityKey}_${charKey}`;
+}
+
+/**
  * Get blueprint manufacturing materials from SDE
  * @param {number} blueprintTypeId - Blueprint type ID
+ * @param {number} activityId - Activity ID (default: 1 for manufacturing)
+ * @param {Database} db - Optional database connection to reuse
  * @returns {Array} Array of materials with {typeID, quantity}
  */
-function getBlueprintMaterials(blueprintTypeId) {
+function getBlueprintMaterials(blueprintTypeId, activityId = 1, db = null) {
   try {
-    const dbPath = getSDEPath();
-    const db = new Database(dbPath, { readonly: true });
+    const ownConnection = !db;
+    if (!db) {
+      const dbPath = getSDEPath();
+      db = new Database(dbPath, { readonly: true });
+    }
 
     // Activity ID 1 is manufacturing
     const materials = db.prepare(`
       SELECT materialTypeID as typeID, quantity
       FROM industryActivityMaterials
-      WHERE typeID = ? AND activityID = 1
+      WHERE typeID = ? AND activityID = ?
       ORDER BY quantity DESC
-    `).all(blueprintTypeId);
+    `).all(blueprintTypeId, activityId);
 
-    db.close();
+    if (ownConnection) db.close();
     return materials;
   } catch (error) {
     console.error('Error getting blueprint materials:', error);
@@ -42,12 +69,16 @@ function getBlueprintMaterials(blueprintTypeId) {
 /**
  * Get blueprint product information
  * @param {number} blueprintTypeId - Blueprint type ID
+ * @param {Database} db - Optional database connection to reuse
  * @returns {Object} Product info with {typeID, quantity}
  */
-function getBlueprintProduct(blueprintTypeId) {
+function getBlueprintProduct(blueprintTypeId, db = null) {
   try {
-    const dbPath = getSDEPath();
-    const db = new Database(dbPath, { readonly: true });
+    const ownConnection = !db;
+    if (!db) {
+      const dbPath = getSDEPath();
+      db = new Database(dbPath, { readonly: true });
+    }
 
     // Activity ID 1 is manufacturing
     const product = db.prepare(`
@@ -57,7 +88,7 @@ function getBlueprintProduct(blueprintTypeId) {
       LIMIT 1
     `).get(blueprintTypeId);
 
-    db.close();
+    if (ownConnection) db.close();
     return product || null;
   } catch (error) {
     console.error('Error getting blueprint product:', error);
@@ -66,14 +97,23 @@ function getBlueprintProduct(blueprintTypeId) {
 }
 
 /**
- * Get type name from invTypes
+ * Get type name from invTypes (with in-memory caching)
  * @param {number} typeId - Type ID
+ * @param {Database} db - Optional database connection to reuse
  * @returns {string} Type name
  */
-function getTypeName(typeId) {
+function getTypeName(typeId, db = null) {
+  // Check in-memory cache first
+  if (typeNameCache.has(typeId)) {
+    return typeNameCache.get(typeId);
+  }
+
   try {
-    const dbPath = getSDEPath();
-    const db = new Database(dbPath, { readonly: true });
+    const ownConnection = !db;
+    if (!db) {
+      const dbPath = getSDEPath();
+      db = new Database(dbPath, { readonly: true });
+    }
 
     const result = db.prepare(`
       SELECT typeName
@@ -81,11 +121,19 @@ function getTypeName(typeId) {
       WHERE typeID = ?
     `).get(typeId);
 
-    db.close();
-    return result ? result.typeName : `Type ${typeId}`;
+    if (ownConnection) db.close();
+
+    const typeName = result ? result.typeName : `Type ${typeId}`;
+
+    // Cache the result
+    typeNameCache.set(typeId, typeName);
+
+    return typeName;
   } catch (error) {
     console.error('Error getting type name:', error);
-    return `Type ${typeId}`;
+    const fallback = `Type ${typeId}`;
+    typeNameCache.set(typeId, fallback);
+    return fallback;
   }
 }
 
@@ -163,12 +211,16 @@ function calculateMaterialQuantity(baseQuantity, meLevel, runs, facility = null,
 /**
  * Check if a material type ID is itself a manufactured item (has a blueprint)
  * @param {number} typeId - Type ID to check
+ * @param {Database} db - Optional database connection to reuse
  * @returns {number|null} Blueprint type ID if exists, null otherwise
  */
-function getBlueprintForProduct(typeId) {
+function getBlueprintForProduct(typeId, db = null) {
   try {
-    const dbPath = getSDEPath();
-    const db = new Database(dbPath, { readonly: true });
+    const ownConnection = !db;
+    if (!db) {
+      const dbPath = getSDEPath();
+      db = new Database(dbPath, { readonly: true });
+    }
 
     // Find blueprint that produces this product
     const blueprint = db.prepare(`
@@ -178,7 +230,7 @@ function getBlueprintForProduct(typeId) {
       LIMIT 1
     `).get(typeId);
 
-    db.close();
+    if (ownConnection) db.close();
     return blueprint ? blueprint.blueprintTypeID : null;
   } catch (error) {
     console.error('Error checking for blueprint:', error);
@@ -236,12 +288,16 @@ function getOwnedBlueprintME(characterId, blueprintTypeId) {
 /**
  * Get product group ID from SDE
  * @param {number} productTypeId - Product type ID
+ * @param {Database} db - Optional database connection to reuse
  * @returns {number|null} Group ID
  */
-function getProductGroupId(productTypeId) {
+function getProductGroupId(productTypeId, db = null) {
   try {
-    const dbPath = getSDEPath();
-    const db = new Database(dbPath, { readonly: true });
+    const ownConnection = !db;
+    if (!db) {
+      const dbPath = getSDEPath();
+      db = new Database(dbPath, { readonly: true });
+    }
 
     const result = db.prepare(`
       SELECT groupID
@@ -249,7 +305,7 @@ function getProductGroupId(productTypeId) {
       WHERE typeID = ?
     `).get(productTypeId);
 
-    db.close();
+    if (ownConnection) db.close();
     return result ? result.groupID : null;
   } catch (error) {
     console.error('Error getting product group ID:', error);
@@ -267,7 +323,7 @@ function getProductGroupId(productTypeId) {
  * @param {number} depth - Current recursion depth (for internal use)
  * @returns {Object} Calculation result with materials and breakdown
  */
-async function calculateBlueprintMaterials(blueprintTypeId, runs = 1, meLevel = 0, characterId = null, facility = null, depth = 0) {
+async function calculateBlueprintMaterials(blueprintTypeId, runs = 1, meLevel = 0, characterId = null, facility = null, depth = 0, db = null) {
   const MAX_DEPTH = 10; // Prevent infinite recursion
 
   if (depth > MAX_DEPTH) {
@@ -279,8 +335,21 @@ async function calculateBlueprintMaterials(blueprintTypeId, runs = 1, meLevel = 
     };
   }
 
+  // Check cache (only for top-level calls, depth 0)
+  if (depth === 0) {
+    const cacheKey = getMaterialCacheKey(blueprintTypeId, runs, meLevel, facility, characterId);
+    const cachedResult = materialTreeCache.get(cacheKey);
+
+    if (cachedResult) {
+      console.log(`[Material Cache HIT] Blueprint ${blueprintTypeId}, ME ${meLevel}, runs ${runs}, char ${characterId || 'none'}`);
+      return structuredClone(cachedResult);
+    }
+
+    console.log(`[Material Cache MISS] Blueprint ${blueprintTypeId}, ME ${meLevel}, runs ${runs}, char ${characterId || 'none'}`);
+  }
+
   // Get blueprint product info
-  const product = getBlueprintProduct(blueprintTypeId);
+  const product = getBlueprintProduct(blueprintTypeId, db);
   if (!product) {
     return {
       materials: {},
@@ -291,10 +360,10 @@ async function calculateBlueprintMaterials(blueprintTypeId, runs = 1, meLevel = 
   }
 
   // Get base materials
-  const baseMaterials = getBlueprintMaterials(blueprintTypeId);
+  const baseMaterials = getBlueprintMaterials(blueprintTypeId, 1, db);
 
   // Get product group ID for rig bonus matching
-  const productGroupId = getProductGroupId(product.typeID);
+  const productGroupId = getProductGroupId(product.typeID, db);
 
   // Calculate adjusted quantities with ME bonus and facility bonuses
   const adjustedMaterials = {};
@@ -305,7 +374,7 @@ async function calculateBlueprintMaterials(blueprintTypeId, runs = 1, meLevel = 
     const adjustedQty = calculateMaterialQuantity(material.quantity, meLevel, runs, facility, productGroupId);
 
     // Check if this material can be manufactured
-    const subBlueprintId = getBlueprintForProduct(material.typeID);
+    const subBlueprintId = getBlueprintForProduct(material.typeID, db);
 
     if (subBlueprintId) {
       // This is an intermediate component - get its ME if owned
@@ -318,7 +387,8 @@ async function calculateBlueprintMaterials(blueprintTypeId, runs = 1, meLevel = 
         subME,
         characterId,
         facility,  // Pass facility through recursion
-        depth + 1
+        depth + 1,
+        db  // Pass db connection through recursion
       );
 
       // Add sub-materials to our total
@@ -329,10 +399,10 @@ async function calculateBlueprintMaterials(blueprintTypeId, runs = 1, meLevel = 
       // Track this as an intermediate component
       intermediateComponents.push({
         typeID: material.typeID,
-        typeName: getTypeName(material.typeID),
+        typeName: getTypeName(material.typeID, db),
         quantity: adjustedQty,
         blueprintTypeID: subBlueprintId,
-        blueprintName: getTypeName(subBlueprintId),
+        blueprintName: getTypeName(subBlueprintId, db),
         meLevel: subME,
         subMaterials: subCalculation.materials
       });
@@ -342,7 +412,7 @@ async function calculateBlueprintMaterials(blueprintTypeId, runs = 1, meLevel = 
 
       rawMaterials.push({
         typeID: material.typeID,
-        typeName: getTypeName(material.typeID),
+        typeName: getTypeName(material.typeID, db),
         quantity: adjustedQty
       });
     }
@@ -352,9 +422,9 @@ async function calculateBlueprintMaterials(blueprintTypeId, runs = 1, meLevel = 
   const breakdown = [
     {
       blueprintTypeID: blueprintTypeId,
-      blueprintName: getTypeName(blueprintTypeId),
+      blueprintName: getTypeName(blueprintTypeId, db),
       productTypeID: product.typeID,
-      productName: getTypeName(product.typeID),
+      productName: getTypeName(product.typeID, db),
       productQuantity: product.quantity * runs,
       runs: runs,
       meLevel: meLevel,
@@ -410,16 +480,31 @@ async function calculateBlueprintMaterials(blueprintTypeId, runs = 1, meLevel = 
     }
   }
 
-  return {
+  const result = {
     materials: adjustedMaterials,
     breakdown: breakdown,
     product: {
       typeID: product.typeID,
-      typeName: getTypeName(product.typeID),
+      typeName: getTypeName(product.typeID, db),
       quantity: product.quantity * runs
     },
     pricing: pricing
   };
+
+  // Cache result (only for top-level calls, depth 0)
+  if (depth === 0) {
+    const cacheKey = getMaterialCacheKey(blueprintTypeId, runs, meLevel, facility, characterId);
+    materialTreeCache.set(cacheKey, structuredClone(result));
+
+    // Limit cache size to prevent memory issues
+    if (materialTreeCache.size > MAX_CACHE_SIZE) {
+      const firstKey = materialTreeCache.keys().next().value;
+      materialTreeCache.delete(firstKey);
+      console.log(`[Material Cache] Cache size limit reached, removed oldest entry`);
+    }
+  }
+
+  return result;
 }
 
 /**
@@ -608,12 +693,16 @@ function getInventionData(blueprintTypeId) {
 
 /**
  * Get all decryptors with their modifiers
+ * @param {Database} db - Optional database connection to reuse
  * @returns {Array} Array of decryptors with their modifiers
  */
-function getAllDecryptors() {
+function getAllDecryptors(db = null) {
   try {
-    const dbPath = getSDEPath();
-    const db = new Database(dbPath, { readonly: true });
+    const ownConnection = !db;
+    if (!db) {
+      const dbPath = getSDEPath();
+      db = new Database(dbPath, { readonly: true });
+    }
 
     // Decryptors are in groupID 1304
     const decryptors = db.prepare(`
@@ -631,7 +720,7 @@ function getAllDecryptors() {
       ORDER BY t.typeName
     `).all();
 
-    db.close();
+    if (ownConnection) db.close();
     return decryptors;
   } catch (error) {
     console.error('Error getting decryptors:', error);
@@ -821,9 +910,10 @@ function calculateInventionCost(inventionData, materialPrices, probability, decr
  * @param {number} runs - Number of runs to manufacture
  * @param {Object} facility - Facility configuration
  * @param {Object} materialPrices - Map of typeID -> price
+ * @param {Database} db - Optional database connection to reuse
  * @returns {Object} Manufacturing cost breakdown
  */
-async function calculateManufacturingCost(inventedBlueprintTypeId, meLevel, runs, facility, materialPrices) {
+async function calculateManufacturingCost(inventedBlueprintTypeId, meLevel, runs, facility, materialPrices, db = null) {
   try {
     console.log('[Manufacturing Cost] Starting calculation:');
     console.log(`  - Invented Blueprint TypeID: ${inventedBlueprintTypeId}`);
@@ -838,7 +928,8 @@ async function calculateManufacturingCost(inventedBlueprintTypeId, meLevel, runs
       meLevel,
       null,  // characterId - not needed for this calculation
       facility,
-      0      // depth
+      0,     // depth
+      db     // Pass db connection
     );
 
     console.log('[Manufacturing Cost] Material calculation result:', materialCalc);
@@ -933,11 +1024,15 @@ async function calculateManufacturingCost(inventedBlueprintTypeId, meLevel, runs
  * @param {number} teLevel - Time Efficiency level (base TE + decryptor modifier)
  * @param {number} runs - Number of runs to manufacture
  * @param {Object} facility - Facility configuration
+ * @param {Database} db - Optional database connection to reuse
  * @returns {Object} Manufacturing time breakdown
  */
-function calculateManufacturingTime(inventedBlueprintTypeId, teLevel, runs, facility) {
+function calculateManufacturingTime(inventedBlueprintTypeId, teLevel, runs, facility, db = null) {
   try {
-    const db = new Database(getSDEPath(), { readonly: true });
+    const ownConnection = !db;
+    if (!db) {
+      db = new Database(getSDEPath(), { readonly: true });
+    }
 
     // Get base manufacturing time from SDE (activityID = 1 is manufacturing)
     const timeData = db.prepare(`
@@ -946,7 +1041,7 @@ function calculateManufacturingTime(inventedBlueprintTypeId, teLevel, runs, faci
       WHERE typeID = ? AND activityID = 1
     `).get(inventedBlueprintTypeId);
 
-    db.close();
+    if (ownConnection) db.close();
 
     if (!timeData || !timeData.time) {
       return {
@@ -994,12 +1089,16 @@ function calculateManufacturingTime(inventedBlueprintTypeId, teLevel, runs, faci
 async function findBestDecryptor(inventionData, materialPrices, productPrice, skills = {}, facility = null, optimizationStrategy = 'total-per-item', customVolume = 1) {
   console.log(`[findBestDecryptor] Called with optimizationStrategy: ${optimizationStrategy}, customVolume: ${customVolume}`);
 
-  const decryptors = getAllDecryptors();
-  const baseProbability = inventionData.baseProbability;
-  const inventedBlueprintTypeId = inventionData.product?.typeID || inventionData.products?.[0]?.typeID;
+  // Create single database connection for all calculations
+  const sdeDb = new Database(getSDEPath(), { readonly: true });
 
-  // Helper function to calculate option metrics with manufacturing costs
-  const calculateOptionMetrics = async (decryptor, decryptorPrice) => {
+  try {
+    const decryptors = getAllDecryptors(sdeDb);
+    const baseProbability = inventionData.baseProbability;
+    const inventedBlueprintTypeId = inventionData.product?.typeID || inventionData.products?.[0]?.typeID;
+
+    // Helper function to calculate option metrics with manufacturing costs
+    const calculateOptionMetrics = async (decryptor, decryptorPrice) => {
     const meModifier = decryptor ? (decryptor.meModifier || 0) : 0;
     const teModifier = decryptor ? (decryptor.teModifier || 0) : 0;
     const runsModifier = decryptor ? (decryptor.runsModifier || 0) : 0;
@@ -1024,17 +1123,17 @@ async function findBestDecryptor(inventionData, materialPrices, productPrice, sk
       console.log(`  - Final ME: ${finalME}, Final TE: ${finalTE}, Runs per BPC: ${invCost.runsPerBPC}`);
 
       // Manufacturing cost for 1 item
-      const mfgCost1 = await calculateManufacturingCost(inventedBlueprintTypeId, finalME, 1, facility, materialPrices);
+      const mfgCost1 = await calculateManufacturingCost(inventedBlueprintTypeId, finalME, 1, facility, materialPrices, sdeDb);
       mfgCostPerItem = mfgCost1.costPerRun;
       console.log(`  - Manufacturing cost per item: ${mfgCostPerItem} ISK`);
 
       // Manufacturing cost for all runs on BPC
-      const mfgCostAll = await calculateManufacturingCost(inventedBlueprintTypeId, finalME, invCost.runsPerBPC, facility, materialPrices);
+      const mfgCostAll = await calculateManufacturingCost(inventedBlueprintTypeId, finalME, invCost.runsPerBPC, facility, materialPrices, sdeDb);
       mfgCostFullBPC = mfgCostAll.totalCost;
       console.log(`  - Manufacturing cost full BPC: ${mfgCostFullBPC} ISK`);
 
       // Manufacturing time
-      const mfgTime = calculateManufacturingTime(inventedBlueprintTypeId, finalTE, 1, facility);
+      const mfgTime = calculateManufacturingTime(inventedBlueprintTypeId, finalTE, 1, facility, sdeDb);
       mfgTimePerItem = mfgTime.timePerRun;
     } else {
       console.log('[Decryptor Option] No inventedBlueprintTypeId found!');
@@ -1090,15 +1189,28 @@ async function findBestDecryptor(inventionData, materialPrices, productPrice, sk
     };
   };
 
-  // Calculate for no decryptor
-  let bestOption = await calculateOptionMetrics(null, 0);
+  // Calculate all decryptor options in parallel
+  console.log(`[findBestDecryptor] Calculating ${decryptors.length + 1} decryptor options in parallel...`);
+  const startTime = Date.now();
 
-  // Compare with each decryptor
+  const optionPromises = [
+    calculateOptionMetrics(null, 0) // No decryptor option
+  ];
+
   for (const dec of decryptors) {
     const decPrice = materialPrices[dec.typeID] || 0;
-    const option = await calculateOptionMetrics(dec, decPrice);
+    optionPromises.push(calculateOptionMetrics(dec, decPrice));
+  }
 
-    // Compare using optimization metric
+  // Wait for all calculations to complete in parallel
+  const allOptions = await Promise.all(optionPromises);
+
+  const elapsedTime = Date.now() - startTime;
+  console.log(`[findBestDecryptor] Completed ${allOptions.length} calculations in ${elapsedTime}ms (${Math.round(elapsedTime / allOptions.length)}ms per option)`);
+
+  // Find best option from results
+  let bestOption = allOptions[0];
+  for (const option of allOptions) {
     if (option.optimizationMetric < bestOption.optimizationMetric) {
       console.log(`[findBestDecryptor] New best: ${option.name} with metric ${option.optimizationMetric} (was: ${bestOption.name} with ${bestOption.optimizationMetric})`);
       bestOption = option;
@@ -1107,28 +1219,35 @@ async function findBestDecryptor(inventionData, materialPrices, productPrice, sk
 
   console.log(`[findBestDecryptor] Final best decryptor: ${bestOption.name} with metric ${bestOption.optimizationMetric}`);
 
-  // Build allOptions array with full metrics for all decryptors
-  const allOptions = [await calculateOptionMetrics(null, 0)];
-  for (const dec of decryptors) {
-    const decPrice = materialPrices[dec.typeID] || 0;
-    allOptions.push(await calculateOptionMetrics(dec, decPrice));
+    // Get no decryptor option for comparison
+    const noDecryptorOption = allOptions[0];
+
+    return {
+      best: bestOption,
+      noDecryptor: {
+        probability: noDecryptorOption.probability,
+        costPerSuccess: noDecryptorOption.costPerSuccess,
+        totalCost: noDecryptorOption.totalCostPerAttempt,
+        totalCostPerItem: noDecryptorOption.totalCostPerItem,
+        manufacturingCostPerItem: noDecryptorOption.manufacturingCostPerItem
+      },
+      allOptions: allOptions,
+      optimizationStrategy: optimizationStrategy
+    };
+  } finally {
+    // Always close the database connection
+    sdeDb.close();
   }
+}
 
-  // Get no decryptor option for comparison
-  const noDecryptorOption = allOptions[0];
-
-  return {
-    best: bestOption,
-    noDecryptor: {
-      probability: noDecryptorOption.probability,
-      costPerSuccess: noDecryptorOption.costPerSuccess,
-      totalCost: noDecryptorOption.totalCostPerAttempt,
-      totalCostPerItem: noDecryptorOption.totalCostPerItem,
-      manufacturingCostPerItem: noDecryptorOption.manufacturingCostPerItem
-    },
-    allOptions: allOptions,
-    optimizationStrategy: optimizationStrategy
-  };
+/**
+ * Clear all calculation caches (material tree and type names)
+ * Call this when switching to a different blueprint
+ */
+function clearMaterialCache() {
+  materialTreeCache.clear();
+  typeNameCache.clear();
+  console.log('[Cache] Cleared material tree and type name caches');
 }
 
 module.exports = {
@@ -1148,5 +1267,7 @@ module.exports = {
   getAllDecryptors,
   calculateInventionProbability,
   calculateInventionCost,
-  findBestDecryptor
+  findBestDecryptor,
+  // Cache management
+  clearMaterialCache
 };

@@ -252,7 +252,11 @@ async function calculateSummary() {
       }
     }
 
+    // Start timing for all calculations
+    const calculationStartTime = performance.now();
     let completed = 0;
+    let processedCount = 0;
+
     for (const blueprint of blueprints) {
       completed++;
       if (completed % 10 === 0) {
@@ -273,11 +277,18 @@ async function calculateSummary() {
         const data = await calculateBlueprintData(blueprint, facility, svrPeriod, defaultCharacter, ownedBlueprintsList);
         if (data) {
           calculatedData.push(data);
+          processedCount++;
         }
       } catch (error) {
         console.error(`Error calculating blueprint ${blueprint.typeName}:`, error);
       }
     }
+
+    // Calculate and log total elapsed time
+    const totalElapsedTime = performance.now() - calculationStartTime;
+    const avgTimePerBlueprint = processedCount > 0 ? totalElapsedTime / processedCount : 0;
+    console.log(`[Manufacturing Summary] Calculated ${processedCount} blueprints in ${totalElapsedTime.toFixed(2)}ms (${(totalElapsedTime / 1000).toFixed(2)}s)`);
+    console.log(`[Manufacturing Summary] Average time per blueprint: ${avgTimePerBlueprint.toFixed(2)}ms`);
 
     hideLoading();
     sortTable(currentSort.column, currentSort.direction);
