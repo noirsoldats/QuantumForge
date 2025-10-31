@@ -28,6 +28,11 @@ function populateSettings() {
     minimizeTray.checked = currentSettings.general?.minimizeToTray || false;
   }
 
+  const autoUpdateCharacterData = document.getElementById('auto-update-character-data');
+  if (autoUpdateCharacterData) {
+    autoUpdateCharacterData.checked = currentSettings.general?.autoUpdateCharacterData !== false;
+  }
+
   const themeSelect = document.getElementById('theme-select');
   if (themeSelect) {
     themeSelect.value = currentSettings.general?.theme || 'dark';
@@ -125,6 +130,15 @@ document.addEventListener('DOMContentLoaded', async () => {
     minimizeTray.addEventListener('change', (e) => {
       console.log('Minimize to tray:', e.target.checked);
       saveSetting('general', 'minimizeToTray', e.target.checked);
+    });
+  }
+
+  // Auto-update character data
+  const autoUpdateCharacterData = document.getElementById('auto-update-character-data');
+  if (autoUpdateCharacterData) {
+    autoUpdateCharacterData.addEventListener('change', (e) => {
+      console.log('Auto-update character data:', e.target.checked);
+      saveSetting('general', 'autoUpdateCharacterData', e.target.checked);
     });
   }
 

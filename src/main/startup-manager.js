@@ -633,9 +633,22 @@ async function runCharacterDataRefresh(splashWindow) {
   });
 
   try {
-    const { getCharacters, getSkillsCacheStatus, getBlueprintsCacheStatus } = require('./settings-manager');
+    const { getCharacters, getSkillsCacheStatus, getBlueprintsCacheStatus, getSetting } = require('./settings-manager');
     const { fetchCharacterSkills } = require('./esi-skills');
     const { fetchCharacterBlueprints } = require('./esi-blueprints');
+
+    // Check if auto-update is enabled
+    const autoUpdateEnabled = getSetting('general', 'autoUpdateCharacterData');
+
+    if (autoUpdateEnabled === false) {
+      console.log('[Startup] Auto-update character data is disabled, skipping');
+      splashWindow.webContents.send('startup:progress', {
+        task: 'characterData',
+        status: 'Auto-update disabled',
+        complete: true,
+      });
+      return;
+    }
 
     const characters = getCharacters();
 

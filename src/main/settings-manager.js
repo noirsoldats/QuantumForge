@@ -15,6 +15,7 @@ const defaultSettings = {
     theme: 'dark',
     desktopNotifications: true,
     updatesNotification: true,
+    autoUpdateCharacterData: true,
   },
   accounts: {
     characters: [],
