@@ -1,0 +1,124 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`Blueprint Calculation Integration Tests Snapshot Testing material tree structure matches snapshot 1`] = `
+{
+  "breakdown": [
+    {
+      "blueprintName": "Scourge Light Missile Blueprint",
+      "blueprintTypeID": 810,
+      "intermediateComponents": [],
+      "meLevel": 10,
+      "productName": "Scourge Light Missile",
+      "productQuantity": 100,
+      "productTypeID": 209,
+      "rawMaterials": [
+        {
+          "quantity": 45,
+          "typeID": 34,
+          "typeName": "Tritanium",
+        },
+        {
+          "quantity": 23,
+          "typeID": 35,
+          "typeName": "Pyerite",
+        },
+        {
+          "quantity": 5,
+          "typeID": 36,
+          "typeName": "Mexallon",
+        },
+        {
+          "quantity": 1,
+          "typeID": 11399,
+          "typeName": "Morphite",
+        },
+      ],
+      "runs": 1,
+    },
+  ],
+  "materials": {
+    "11399": 1,
+    "34": 45,
+    "35": 23,
+    "36": 5,
+  },
+  "pricing": {
+    "inputCosts": {
+      "allPricesAvailable": true,
+      "itemsWithPrices": 4,
+      "itemsWithoutPrices": 0,
+      "materialPrices": {
+        "11399": {
+          "hasPrice": true,
+          "quantity": 1,
+          "totalPrice": 21980,
+          "unitPrice": 21980,
+        },
+        "34": {
+          "hasPrice": true,
+          "quantity": 45,
+          "totalPrice": 450,
+          "unitPrice": 10,
+        },
+        "35": {
+          "hasPrice": true,
+          "quantity": 23,
+          "totalPrice": 756.47,
+          "unitPrice": 32.89,
+        },
+        "36": {
+          "hasPrice": true,
+          "quantity": 5,
+          "totalPrice": 308.8,
+          "unitPrice": 61.76,
+        },
+      },
+      "totalCost": 23495.27,
+    },
+    "jobCost": 997.1618203283948,
+    "jobCostBreakdown": {
+      "estimatedItemValue": 4597.334349139672,
+      "facilityTax": 0,
+      "facilityTaxRate": 0,
+      "jobBaseCost": 813.2684463628079,
+      "jobGrossCost": 813.2684463628079,
+      "sccSurcharge": 183.89337396558687,
+      "structureCostBonus": 0,
+      "systemCostIndex": 0.1769,
+      "totalJobCost": 997.1618203283948,
+    },
+    "outputValue": {
+      "hasPrice": true,
+      "quantity": 100,
+      "totalValue": 5890,
+      "typeID": 209,
+      "unitPrice": 58.9,
+    },
+    "profit": -19241.998370328394,
+    "profitMargin": -326.6892762364753,
+    "salesTax": 639.56655,
+    "taxesBreakdown": {
+      "accountingSkillLevel": 5,
+      "baseSalesTaxRate": 7.5,
+      "brokerRelationsSkillLevel": 5,
+      "effectiveSalesTaxRate": 3.3749999999999996,
+      "materialBrokerFee": 352.42905,
+      "materialBrokerFeeRate": 1.5,
+      "materialsCost": 23495.27,
+      "outputValue": 5890,
+      "productBrokerFee": 88.35,
+      "productBrokerFeeRate": 1.5,
+      "productSalesTax": 198.78749999999997,
+      "totalMaterialFees": 352.42905,
+      "totalProductFees": 287.13749999999993,
+      "totalTaxes": 639.56655,
+    },
+    "totalCosts": 25131.998370328394,
+  },
+  "product": {
+    "quantity": 100,
+    "typeID": 209,
+    "typeName": "Scourge Light Missile",
+  },
+}
+`;

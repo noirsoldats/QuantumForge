@@ -11,7 +11,7 @@ const { fetchFuzzworkHistory } = require('./fuzzwork-market');
  */
 function calculateVWAP(orders, quantity, isBuy = false) {
   if (!orders || orders.length === 0) {
-    return { price: 0, incomplete: true, ordersUsed: 0 };
+    return { price: 0, incomplete: true, ordersUsed: 0, quantityFilled: 0, quantityRequested: quantity };
   }
 
   // Filter for the correct order type
@@ -569,4 +569,5 @@ module.exports = {
   setPriceOverride,
   removePriceOverride,
   getAllPriceOverrides,
+  cachePriceCalculation,
 };

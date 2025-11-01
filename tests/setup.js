@@ -56,3 +56,120 @@ jest.mock('electron', () => {
 //   warn: jest.fn(),
 //   error: jest.fn(),
 // };
+
+// Custom Jest Matchers
+expect.extend({
+  /**
+   * Check if a number is approximately equal to another within a tolerance
+   * @param {number} received - The received value
+   * @param {number} expected - The expected value
+   * @param {number} tolerance - The allowed difference (default: 0.01)
+   */
+  toBeApproximately(received, expected, tolerance = 0.01) {
+    const pass = Math.abs(received - expected) <= tolerance;
+    if (pass) {
+      return {
+        message: () =>
+          `expected ${received} not to be approximately ${expected} (tolerance: ${tolerance})`,
+        pass: true,
+      };
+    } else {
+      return {
+        message: () =>
+          `expected ${received} to be approximately ${expected} (tolerance: ${tolerance}), difference: ${Math.abs(received - expected)}`,
+        pass: false,
+      };
+    }
+  },
+
+  /**
+   * Check if an array of numbers is approximately equal to another array within a tolerance
+   * @param {Array<number>} received - The received array
+   * @param {Array<number>} expected - The expected array
+   * @param {number} tolerance - The allowed difference per element (default: 0.01)
+   */
+  toBeApproximatelyArray(received, expected, tolerance = 0.01) {
+    if (!Array.isArray(received) || !Array.isArray(expected)) {
+      return {
+        message: () => `expected both values to be arrays`,
+        pass: false,
+      };
+    }
+
+    if (received.length !== expected.length) {
+      return {
+        message: () =>
+          `expected arrays to have same length, but got ${received.length} and ${expected.length}`,
+        pass: false,
+      };
+    }
+
+    for (let i = 0; i < received.length; i++) {
+      if (Math.abs(received[i] - expected[i]) > tolerance) {
+        return {
+          message: () =>
+            `expected arrays to be approximately equal, but element ${i} differs: ${received[i]} vs ${expected[i]} (tolerance: ${tolerance})`,
+          pass: false,
+        };
+      }
+    }
+
+    return {
+      message: () => `expected arrays not to be approximately equal`,
+      pass: true,
+    };
+  },
+
+  /**
+   * Check if a material list matches expected materials within a tolerance
+   * @param {Array<Object>} received - The received materials array
+   * @param {Array<Object>} expected - The expected materials array
+   * @param {number} tolerance - The allowed difference for quantities (default: 0.01)
+   */
+  toMatchMaterials(received, expected, tolerance = 0.01) {
+    if (!Array.isArray(received) || !Array.isArray(expected)) {
+      return {
+        message: () => `expected both values to be arrays`,
+        pass: false,
+      };
+    }
+
+    if (received.length !== expected.length) {
+      return {
+        message: () =>
+          `expected material lists to have same length, but got ${received.length} and ${expected.length}`,
+        pass: false,
+      };
+    }
+
+    // Sort both arrays by typeID for comparison
+    const sortedReceived = [...received].sort((a, b) => a.typeID - b.typeID);
+    const sortedExpected = [...expected].sort((a, b) => a.typeID - b.typeID);
+
+    for (let i = 0; i < sortedReceived.length; i++) {
+      const recMat = sortedReceived[i];
+      const expMat = sortedExpected[i];
+
+      if (recMat.typeID !== expMat.typeID) {
+        return {
+          message: () =>
+            `expected material at index ${i} to have typeID ${expMat.typeID}, but got ${recMat.typeID}`,
+          pass: false,
+        };
+      }
+
+      if (Math.abs(recMat.quantity - expMat.quantity) > tolerance) {
+        return {
+          message: () =>
+            `expected material ${recMat.typeID} to have quantity approximately ${expMat.quantity}, but got ${recMat.quantity} (tolerance: ${tolerance})`,
+          pass: false,
+        };
+      }
+    }
+
+    return {
+      message: () => `expected material lists not to match`,
+      pass: true,
+    };
+  },
+});

@@ -1,0 +1,24 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`Realistic Price Calculation Snapshot Testing result structure matches snapshot 1`] = `
+{
+  "cleaned": 6.52,
+  "confidence": "high",
+  "historical30d": 6.521000000000001,
+  "historical7d": 6.549999999999999,
+  "immediate": 6.52,
+  "metadata": {
+    "historicalDays": 30,
+    "ordersAvailable": 5,
+    "ordersUsed": 1,
+    "quantityFilled": 1000,
+    "quantityRequested": 1000,
+  },
+  "method": "hybrid",
+  "minVolume": 6.52,
+  "percentile": 6.52,
+  "price": 6.52,
+  "vwap": 6.52,
+  "warning": null,
+}
+`;

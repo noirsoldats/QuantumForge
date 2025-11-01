@@ -25,12 +25,38 @@ npm run build:linux    # Build for Linux
 npm run build:all      # Build for all platforms
 ```
 
-### Dependencies
+### Testing
 ```bash
-npm install            # Install all dependencies
+npm test               # Run all tests (auto-rebuilds better-sqlite3)
+npm run test:watch     # Run tests in watch mode
+npm run test:coverage  # Run tests with coverage report
+npm run test:sde       # Run only SDE-related tests
 ```
 
-**Note**: No test suite is currently configured.
+**Run a single test file:**
+```bash
+npm test -- path/to/test.test.js
+npm test -- tests/unit/blueprint-calculator-pure.test.js
+```
+
+**Run tests matching a pattern:**
+```bash
+npm test -- --testNamePattern="invention"
+```
+
+### Database Rebuilds
+```bash
+npm run rebuild:node      # Rebuild better-sqlite3 for Node.js (used in tests)
+npm run rebuild:electron  # Rebuild better-sqlite3 for Electron (used in app)
+npm run rebuild           # Rebuild for Electron
+```
+
+**Important**: Tests automatically run `rebuild:node` before and `rebuild:electron` after to ensure correct bindings.
+
+### Dependencies
+```bash
+npm install            # Install all dependencies (runs postinstall: electron-builder install-app-deps)
+```
 
 ## Architecture
 
@@ -75,12 +101,22 @@ All main-renderer communication uses IPC handlers registered in `src/main/main.j
 - Applies Material Efficiency (ME) reductions
 - Considers character's owned blueprints and skill bonuses
 - Supports facility bonuses (structure types and rigs)
+- **Important**: `calculateBlueprintMaterials` is async and returns materials as an **object** with typeIDs as keys: `{ 34: 50, 35: 25 }`, not an array
+
+**Invention System** (`src/main/blueprint-calculator.js`):
+- `getInventionData(blueprintTypeId, db)` - accepts optional database parameter for testing
+- Returns invention data with convenience properties: `t2BlueprintTypeID`, `t2ProductTypeID`, `baseProbability`, plus full `products` array
+- `calculateInventionProbability` - applies skill and decryptor modifiers
+- `calculateInventionCost` - includes datacores, decryptors, and job costs
+- `findBestDecryptor` - optimizes decryptor selection based on strategy (invention-only, profit-per-run, profit-per-attempt, time-efficiency, max-runs)
+- Activity ID 8 = invention in SDE database
 
 **Market Pricing** (`src/main/market-pricing.js`):
-- Multiple pricing methods: VWAP, percentile, historical average, hybrid
+- Multiple pricing methods: VWAP, percentile, historical average, hybrid, immediate
 - Price overrides system for manual price setting
 - Integrates ESI market data and Fuzzwork API as fallback
 - Confidence indicators based on volume and data freshness
+- **Important**: Uses `fetchMarketData(regionId, typeId)` which returns `{ orders: [...], history: [...] }`
 
 **Manufacturing Facilities** (`src/main/settings-manager.js` facilities section):
 - Define manufacturing locations with system, structure type, and rigs
@@ -125,6 +161,7 @@ All main-renderer communication uses IPC handlers registered in `src/main/main.j
 
 - **SDE Database (sde-database.js)**: Uses `sqlite3` with async callbacks, maintains singleton connection via `getDatabase()`
 - **SDE Database (blueprint-calculator.js)**: Uses `better-sqlite3` synchronous API, creates/closes connections per operation
+- **SDE Database (functions accepting db parameter)**: Many calculation functions accept optional `db` parameter for testing; only close connection if we opened it (`ownConnection` pattern)
 - **Market Database**: Uses `better-sqlite3`, initialized once at app start via `initializeMarketDatabase()`
 
 ### Character & Blueprint Management
@@ -181,11 +218,71 @@ Use appropriate database library based on module context.
 
 ### Price Calculation Flow
 
-1. Check for manual price override first
-2. Fetch market data from cache or ESI
-3. Apply pricing method (VWAP/percentile/historical/hybrid)
+1. Check for manual price override first (`getPriceOverride`)
+2. Fetch market data from cache or ESI (`fetchMarketData`)
+3. Apply pricing method (VWAP/percentile/historical/hybrid/immediate)
 4. Apply price modifiers from market settings
-5. Return price with confidence indicator
+5. Return price with confidence indicator and metadata
+
+## Testing Patterns
+
+### Test Structure
+- `tests/unit/` - Pure unit tests with mocks
+- `tests/integration/` - Integration tests using in-memory databases
+- `tests/sde/` - Tests requiring actual SDE database
+
+### Common Test Utilities
+
+**Database Mocks** (`tests/unit/helpers/database-mocks.js`):
+- `createMockDatabase(fixtures)` - Creates jest mock database
+- `createInMemoryDatabase()` - Creates real SQLite in-memory database for integration tests
+- `populateDatabase(db, fixtures)` - Populates database with blueprint and invention data
+- Supports both blueprint data and invention data via `fixtures.blueprint` and `fixtures.inventionData`
+
+**Important Database Tables**:
+- Manufacturing: `industryActivityMaterials`, `industryActivityProducts`, `industryActivity`
+- Invention: `industryActivityProbabilities`, `industryActivitySkills` (activityID = 8)
+- Types: `invTypes`, `invGroups`
+
+**Settings Mocks** (`tests/unit/helpers/settings-mocks.js`):
+- `createMockSettingsManager(data)` - Mocks settings with character/blueprint data
+
+**Test Fixtures** (`tests/unit/fixtures/`):
+- `blueprints.js` - Blueprint data (scourgeBlueprint, ravenBlueprint, scourgeFuryBlueprint, scourgeT2InventionData)
+- `facilities.js` - Facility configurations (npcStation, raitaruNoRigs, azbel, sotiyo)
+- `skills.js` - Character skill sets (basicSkills, advancedSkills)
+- `market-data.js` - Market orders and history data
+
+### Test Data Structures
+
+**Materials Format**: Functions return materials as objects, not arrays:
+```javascript
+// Correct
+{ 34: 50, 35: 25, 36: 10 }  // typeID: quantity
+
+// Wrong
+[{ typeID: 34, quantity: 50 }, ...]
+```
+
+**Async Functions**: Many calculation functions are async:
+- `calculateBlueprintMaterials` - MUST use await
+- `calculateRealisticPrice` - MUST use await
+- `findBestDecryptor` - MUST use await
+
+### Mock Patterns
+
+**ESI Market Mocks**: Mock `fetchMarketData` to return:
+```javascript
+{
+  orders: [{ price, volume_remain, is_buy_order, location_id }],
+  history: [{ date, average, volume }]
+}
+```
+
+**Market Database Mocks**: The `run()` function is called for multiple purposes:
+- 1 arg: Delete operation
+- 4 args: Price override `(typeId, price, notes, timestamp)`
+- 14 args: Price cache `(typeId, locationId, regionId, ...)`
 
 ## Critical Files Reference
 
@@ -193,7 +290,7 @@ Use appropriate database library based on module context.
 - `src/preload/preload.js` - IPC API surface exposed to renderers
 - `src/main/settings-manager.js` - Settings persistence and character management
 - `src/main/sde-database.js` - SDE queries (async sqlite3)
-- `src/main/blueprint-calculator.js` - Manufacturing calculations (sync better-sqlite3)
+- `src/main/blueprint-calculator.js` - Manufacturing and invention calculations (sync better-sqlite3)
 - `src/main/market-pricing.js` - Price calculation logic
 - `src/main/esi-auth.js` - Eve SSO OAuth flow
 - `public/index.html` - Main application dashboard

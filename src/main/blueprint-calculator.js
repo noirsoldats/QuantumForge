@@ -588,13 +588,17 @@ function getAllBlueprints(limit = null) {
 /**
  * Get invention data for a blueprint
  * @param {number} blueprintTypeId - T1 Blueprint type ID
+ * @param {Database} db - Optional database connection to reuse
  * @returns {Object|null} Invention data including materials, product, probability, and skills
  */
-function getInventionData(blueprintTypeId) {
+function getInventionData(blueprintTypeId, db = null) {
   console.log('[Invention] getInventionData called for blueprintTypeId:', blueprintTypeId);
   try {
-    const dbPath = getSDEPath();
-    const db = new Database(dbPath, { readonly: true });
+    const ownConnection = !db;
+    if (!db) {
+      const dbPath = getSDEPath();
+      db = new Database(dbPath, { readonly: true });
+    }
 
     // Check if this blueprint can be used for invention (activityID = 8)
     const hasInvention = db.prepare(`
@@ -606,7 +610,9 @@ function getInventionData(blueprintTypeId) {
     console.log('[Invention] hasInvention check result:', hasInvention);
 
     if (!hasInvention) {
-      db.close();
+      if (ownConnection) {
+        db.close();
+      }
       console.log('[Invention] No invention activity found, returning null');
       return null;
     }
@@ -671,7 +677,9 @@ function getInventionData(blueprintTypeId) {
       WHERE typeID = ? AND activityID = 8
     `).get(blueprintTypeId);
 
-    db.close();
+    if (ownConnection) {
+      db.close();
+    }
 
     const result = {
       materials: materials || [],
@@ -679,6 +687,17 @@ function getInventionData(blueprintTypeId) {
       skills: skills || [],
       time: time ? time.time : 0
     };
+
+    // Add convenience properties for first product (backward compatibility)
+    if (productsWithManufactured && productsWithManufactured.length > 0) {
+      result.t2BlueprintTypeID = productsWithManufactured[0].typeID;
+      result.baseProbability = productsWithManufactured[0].baseProbability;
+      result.product = productsWithManufactured[0];
+      if (productsWithManufactured[0].manufacturedProduct) {
+        result.t2ProductTypeID = productsWithManufactured[0].manufacturedProduct.typeID;
+        result.t2ProductName = productsWithManufactured[0].manufacturedProduct.typeName;
+      }
+    }
 
     console.log('[Invention] Returning invention data - materials count:', result.materials.length, 'products count:', result.products.length);
     if (result.products.length > 0) {
@@ -1056,9 +1075,16 @@ function calculateManufacturingTime(inventedBlueprintTypeId, teLevel, runs, faci
     // Apply TE modifier
     // Each level of TE reduces time by 1% (formula: time * (1 - TE/100))
     const teModifier = 1 - (teLevel / 100);
-    const adjustedTime = baseTime * teModifier * runs;
+    let adjustedTime = baseTime * teModifier;
 
-    // TODO: Apply facility time bonuses if provided
+    // Apply facility time bonuses if provided
+    if (facility && facility.bonuses && facility.bonuses.timeEfficiency) {
+      const facilityTEModifier = 1 - (facility.bonuses.timeEfficiency / 100);
+      adjustedTime = adjustedTime * facilityTEModifier;
+    }
+
+    // Multiply by runs
+    adjustedTime = adjustedTime * runs;
 
     return {
       baseTime: baseTime * runs,
@@ -1268,6 +1294,9 @@ module.exports = {
   calculateInventionProbability,
   calculateInventionCost,
   findBestDecryptor,
+  // Manufacturing calculations
+  calculateManufacturingTime,
+  calculateManufacturingCost,
   // Cache management
   clearMaterialCache
 };

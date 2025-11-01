@@ -1,0 +1,5 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`Blueprint Tree - Recursive Calculations Snapshot Testing complex tree with intermediates matches snapshot 1`] = `Promise {}`;
+
+exports[`Blueprint Tree - Recursive Calculations Snapshot Testing material tree structure matches snapshot 1`] = `Promise {}`;
