@@ -205,6 +205,12 @@ function addCharacter(characterData) {
       // Add new character
       settings.accounts.characters.push(characterEntry);
       console.log('Added new character:', characterData.character.characterName);
+
+      // Automatically set as default if this is the first character
+      if (settings.accounts.characters.length === 1) {
+        settings.accounts.defaultCharacterId = characterData.character.characterId;
+        console.log('Automatically set first character as default:', characterData.character.characterName);
+      }
     }
 
     return saveSettings(settings);
@@ -222,6 +228,12 @@ function addCharacter(characterData) {
 function removeCharacter(characterId) {
   try {
     const settings = loadSettings();
+
+    // Clear default character if this was it
+    if (settings.accounts.defaultCharacterId === characterId) {
+      delete settings.accounts.defaultCharacterId;
+      console.log('Cleared default character as it was removed');
+    }
 
     settings.accounts.characters = settings.accounts.characters.filter(
       (char) => char.characterId !== characterId
