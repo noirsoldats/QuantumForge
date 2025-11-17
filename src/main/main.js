@@ -263,12 +263,11 @@ app.whenReady().then(async () => {
   const configFileExists = fs.existsSync(settingsFilePath);
 
   const settings = loadSettings();
-  const hasFirstLaunchFlag = settings.general && settings.general.hasOwnProperty('firstLaunchCompleted');
   const isFirstLaunch = !settings.general.firstLaunchCompleted;
 
   // If config file exists but doesn't have firstLaunchCompleted flag, this is an existing installation
   // Skip wizard and mark as completed
-  if (configFileExists && !hasFirstLaunchFlag) {
+  if (configFileExists && isFirstLaunch) {
     console.log('[App] Existing config detected without firstLaunchCompleted flag, migrating...');
     updateSettings('general.firstLaunchCompleted', true);
     updateSettings('general.wizardVersion', '1.0');
