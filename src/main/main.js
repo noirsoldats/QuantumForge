@@ -258,8 +258,25 @@ app.whenReady().then(async () => {
   setupIPCHandlers();
 
   // Check if this is the first launch
+  const fs = require('fs');
+  const settingsFilePath = getSettingsFilePath();
+  const configFileExists = fs.existsSync(settingsFilePath);
+
   const settings = loadSettings();
+  const hasFirstLaunchFlag = settings.general && settings.general.hasOwnProperty('firstLaunchCompleted');
   const isFirstLaunch = !settings.general.firstLaunchCompleted;
+
+  // If config file exists but doesn't have firstLaunchCompleted flag, this is an existing installation
+  // Skip wizard and mark as completed
+  if (configFileExists && !hasFirstLaunchFlag) {
+    console.log('[App] Existing config detected without firstLaunchCompleted flag, migrating...');
+    updateSettings('general.firstLaunchCompleted', true);
+    updateSettings('general.wizardVersion', '1.0');
+    updateSettings('general.wizardCompletedAt', new Date().toISOString());
+    console.log('[App] Migration complete, proceeding with normal startup');
+    await startNormalApplication();
+    return;
+  }
 
   if (isFirstLaunch) {
     console.log('[App] First launch detected, showing wizard...');
