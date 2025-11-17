@@ -4,6 +4,7 @@ const { createSettingsWindow } = require('./settings-window');
 const { initAutoUpdater, checkForUpdates } = require('./auto-updater');
 const { getWindowBounds, trackWindowState } = require('./window-state-manager');
 const { runStartupChecks } = require('./startup-manager');
+const { createWizardWindow } = require('./wizard-window');
 
 // Global error handlers for main process
 process.on('uncaughtException', (error) => {
@@ -107,7 +108,7 @@ function createSplashWindow() {
     frame: false,
     resizable: false,
     center: true,
-    alwaysOnTop: true,
+    alwaysOnTop: false,
     webPreferences: {
       preload: path.join(__dirname, '../preload/preload.js'),
       nodeIntegration: false,
@@ -251,8 +252,49 @@ function createWindow() {
 }
 
 app.whenReady().then(async () => {
-  console.log('[App] Application ready, creating splash screen...');
+  console.log('[App] Application ready');
 
+  // Setup IPC handlers first (needed by both wizard and normal app)
+  setupIPCHandlers();
+
+  // Check if this is the first launch
+  const settings = loadSettings();
+  const isFirstLaunch = !settings.general.firstLaunchCompleted;
+
+  if (isFirstLaunch) {
+    console.log('[App] First launch detected, showing wizard...');
+
+    // Create wizard window
+    const wizardWindow = createWizardWindow();
+
+    // Wait for wizard to complete
+    return new Promise((resolve) => {
+      // Listen for wizard completion or window close
+      wizardWindow.once('closed', async () => {
+        console.log('[App] Wizard closed, continuing with normal startup...');
+
+        // Check if wizard was completed
+        const updatedSettings = loadSettings();
+        if (updatedSettings.general.firstLaunchCompleted) {
+          // Wizard completed successfully, proceed with normal startup
+          await startNormalApplication();
+        } else {
+          // Wizard was closed without completing - exit app
+          console.log('[App] Wizard incomplete, exiting application');
+          app.quit();
+        }
+        resolve();
+      });
+    });
+  } else {
+    // Normal startup (not first launch)
+    console.log('[App] Normal startup, creating splash screen...');
+    await startNormalApplication();
+  }
+});
+
+// Normal application startup with splash screen
+async function startNormalApplication() {
   // Create splash window first
   const splashWindow = createSplashWindow();
 
@@ -283,7 +325,10 @@ app.whenReady().then(async () => {
       // Splash window will show error UI, user can retry or exit
     }
   });
+}
 
+// Setup all IPC handlers
+function setupIPCHandlers() {
   // Handle IPC for opening settings
   ipcMain.on('open-settings', () => {
     createSettingsWindow();
@@ -1113,6 +1158,59 @@ app.whenReady().then(async () => {
     }
   });
 
+  // Wizard IPC handlers
+  ipcMain.handle('wizard:skipSetup', async () => {
+    try {
+      // Apply default settings and mark wizard as complete
+      await updateSettings('general', {
+        firstLaunchCompleted: true,
+        wizardVersion: '1.0',
+        wizardCompletedAt: Date.now(),
+      });
+      return { success: true };
+    } catch (error) {
+      console.error('Error skipping wizard setup:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('wizard:saveProgress', async (event, step, data) => {
+    try {
+      await updateSettings('general', {
+        wizardProgress: { step, data, savedAt: Date.now() }
+      });
+      return { success: true };
+    } catch (error) {
+      console.error('Error saving wizard progress:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('wizard:getProgress', async () => {
+    try {
+      const settings = loadSettings();
+      return { success: true, progress: settings.general.wizardProgress || null };
+    } catch (error) {
+      console.error('Error getting wizard progress:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('wizard:complete', async () => {
+    try {
+      await updateSettings('general', {
+        firstLaunchCompleted: true,
+        wizardVersion: '1.0',
+        wizardCompletedAt: Date.now(),
+        wizardProgress: null, // Clear progress
+      });
+      return { success: true };
+    } catch (error) {
+      console.error('Error completing wizard:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
   // Auto-updater IPC handler
   ipcMain.handle('app:checkForUpdates', async () => {
     checkForUpdates();
@@ -1121,12 +1219,12 @@ app.whenReady().then(async () => {
   ipcMain.handle('app:getVersion', () => {
     return app.getVersion();
   });
+}
 
-  app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
-      createWindow();
-    }
-  });
+app.on('activate', () => {
+  if (BrowserWindow.getAllWindows().length === 0) {
+    createWindow();
+  }
 });
 
 app.on('window-all-closed', () => {

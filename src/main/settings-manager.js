@@ -16,6 +16,9 @@ const defaultSettings = {
     desktopNotifications: true,
     updatesNotification: true,
     autoUpdateCharacterData: true,
+    firstLaunchCompleted: false,
+    wizardVersion: null,
+    wizardCompletedAt: null,
   },
   accounts: {
     characters: [],

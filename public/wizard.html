@@ -1,0 +1,616 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' https://images.evetech.net">
+  <title>Quantum Forge Setup Wizard</title>
+  <link rel="stylesheet" href="wizard.css">
+</head>
+<body>
+  <div id="wizard-container">
+    <!-- Header with Logo/Title -->
+    <div class="wizard-header">
+      <h1>Quantum Forge</h1>
+      <p class="subtitle">Setup Wizard</p>
+    </div>
+
+    <!-- Progress Indicator -->
+    <div id="progress-indicator" class="progress-indicator">
+      <div class="progress-step active" data-step="1">
+        <div class="step-circle">1</div>
+        <div class="step-label">Welcome</div>
+      </div>
+      <div class="progress-line"></div>
+      <div class="progress-step" data-step="2">
+        <div class="step-circle">2</div>
+        <div class="step-label">SDE</div>
+      </div>
+      <div class="progress-line"></div>
+      <div class="progress-step" data-step="3">
+        <div class="step-circle">3</div>
+        <div class="step-label">Character</div>
+      </div>
+      <div class="progress-line"></div>
+      <div class="progress-step" data-step="4">
+        <div class="step-circle">4</div>
+        <div class="step-label">Data</div>
+      </div>
+      <div class="progress-line"></div>
+      <div class="progress-step" data-step="5">
+        <div class="step-circle">5</div>
+        <div class="step-label">Market</div>
+      </div>
+      <div class="progress-line"></div>
+      <div class="progress-step" data-step="6">
+        <div class="step-circle">6</div>
+        <div class="step-label">Market Data</div>
+      </div>
+      <div class="progress-line"></div>
+      <div class="progress-step" data-step="7">
+        <div class="step-circle">7</div>
+        <div class="step-label">Facility</div>
+      </div>
+      <div class="progress-line"></div>
+      <div class="progress-step" data-step="8">
+        <div class="step-circle">8</div>
+        <div class="step-label">Complete</div>
+      </div>
+    </div>
+
+    <!-- Main Content Area -->
+    <div class="wizard-content">
+      <!-- Step 1: Welcome -->
+      <div id="step-1" class="wizard-step active">
+        <div class="step-content centered">
+          <div class="welcome-icon">
+            <svg xmlns="http://www.w3.org/2000/svg" width="80" height="80" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M12 2L2 7l10 5 10-5-10-5z"></path>
+              <path d="M2 17l10 5 10-5"></path>
+              <path d="M2 12l10 5 10-5"></path>
+            </svg>
+          </div>
+          <h2>Welcome to Quantum Forge</h2>
+          <p class="description">
+            This wizard will help you set up Quantum Forge for the first time.
+            We'll guide you through downloading game data, connecting your character,
+            and configuring your preferences.
+          </p>
+          <p class="description secondary">
+            The setup process should take about 3-5 minutes.
+          </p>
+        </div>
+      </div>
+
+      <!-- Step 2: Download SDE -->
+      <div id="step-2" class="wizard-step">
+        <div class="step-content">
+          <h2>Download Static Data Export</h2>
+          <p class="description">
+            Eve Online's Static Data Export (SDE) contains essential game data including
+            items, blueprints, skills, and market information. This download is required
+            and is approximately 150MB.
+          </p>
+          <div class="sde-download-panel">
+            <div id="sde-status" class="download-status">Ready to download...</div>
+            <div id="sde-progress-container" class="progress-container" style="display: none;">
+              <div class="progress-bar-large">
+                <div id="sde-progress-fill" class="progress-fill"></div>
+              </div>
+              <div class="progress-details">
+                <span id="sde-progress-percent">0%</span>
+                <span id="sde-progress-size" class="progress-size"></span>
+              </div>
+            </div>
+            <div id="sde-error" class="error-message" style="display: none;"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Step 3: Add Character -->
+      <div id="step-3" class="wizard-step">
+        <div class="step-content">
+          <h2>Add Your Character</h2>
+          <p class="description">
+            Connect your Eve Online character to access skills, blueprints, and personalized data.
+            This step is optional and can be completed later.
+          </p>
+          <p class="helper-text" style="margin-top: 0; margin-bottom: 20px; text-align: center; opacity: 0.8;">
+            You can add more characters later in <strong>Settings &gt; Accounts</strong>
+          </p>
+          <div id="character-panel" class="character-panel">
+            <div id="no-character-state" class="character-state">
+              <div class="character-icon">
+                <svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
+                  <circle cx="12" cy="7" r="4"></circle>
+                </svg>
+              </div>
+              <p>No character connected</p>
+              <button id="add-character-btn" class="primary-button">Add Character</button>
+              <p class="helper-text">This will open your browser to authenticate with Eve Online SSO</p>
+            </div>
+            <div id="character-added-state" class="character-state" style="display: none;">
+              <div id="character-portrait" class="character-portrait"></div>
+              <div id="character-name" class="character-name"></div>
+              <div class="success-badge">
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3">
+                  <polyline points="20 6 9 17 4 12"></polyline>
+                </svg>
+                Character Connected
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Step 4: Fetch Character Data -->
+      <div id="step-4" class="wizard-step">
+        <div class="step-content">
+          <h2>Fetch Character Data</h2>
+          <p class="description">
+            Downloading your character's skills and blueprints from Eve Online ESI.
+          </p>
+          <div class="data-fetch-panel">
+            <div class="fetch-item" id="fetch-skills">
+              <div class="fetch-icon">
+                <div class="spinner"></div>
+                <svg class="checkmark" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3">
+                  <polyline points="20 6 9 17 4 12"></polyline>
+                </svg>
+              </div>
+              <div class="fetch-text">
+                <div class="fetch-name">Character Skills</div>
+                <div class="fetch-status">Waiting...</div>
+              </div>
+            </div>
+            <div class="fetch-item" id="fetch-blueprints">
+              <div class="fetch-icon">
+                <div class="spinner"></div>
+                <svg class="checkmark" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3">
+                  <polyline points="20 6 9 17 4 12"></polyline>
+                </svg>
+              </div>
+              <div class="fetch-text">
+                <div class="fetch-name">Character Blueprints</div>
+                <div class="fetch-status">Waiting...</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Step 5: Market Settings -->
+      <div id="step-5" class="wizard-step">
+        <div class="step-content">
+          <h2>Market Settings</h2>
+          <p class="description">
+            Configure where to fetch market prices and how to calculate them. These settings affect
+            manufacturing cost calculations and profit projections.
+          </p>
+          <div class="settings-panel">
+
+            <!-- Market Location -->
+            <div class="setting-group">
+              <h3>Market Location</h3>
+              <p class="setting-description">Where to fetch market prices from</p>
+
+              <div class="location-type-group">
+                <label class="location-type-option">
+                  <input type="radio" name="location-type" value="hub" checked>
+                  <div class="option-content">
+                    <span class="option-label">Trade Hub</span>
+                    <span class="option-desc">Jita, Amarr, Dodixie, Rens, Hek</span>
+                  </div>
+                </label>
+                <label class="location-type-option">
+                  <input type="radio" name="location-type" value="station">
+                  <div class="option-content">
+                    <span class="option-label">Specific Station</span>
+                    <span class="option-desc">Choose system and station</span>
+                  </div>
+                </label>
+                <label class="location-type-option">
+                  <input type="radio" name="location-type" value="system">
+                  <div class="option-content">
+                    <span class="option-label">Solar System</span>
+                    <span class="option-desc">All stations in a system</span>
+                  </div>
+                </label>
+                <label class="location-type-option">
+                  <input type="radio" name="location-type" value="region">
+                  <div class="option-content">
+                    <span class="option-label">Entire Region</span>
+                    <span class="option-desc">All systems in a region</span>
+                  </div>
+                </label>
+              </div>
+
+              <!-- Trade Hub Selection -->
+              <div id="hub-content" class="location-content active">
+                <label class="input-label">Select Trade Hub:</label>
+                <select id="hub-select" class="location-select">
+                  <option value="">Loading hubs...</option>
+                </select>
+              </div>
+
+              <!-- Specific Station Selection -->
+              <div id="station-content" class="location-content">
+                <div class="input-group">
+                  <label class="input-label">Search Solar System:</label>
+                  <div class="search-container">
+                    <input type="text" id="system-search-station" class="search-input" placeholder="Type system name (min 2 characters)..." autocomplete="off" />
+                    <div id="system-results-station" class="search-results hidden"></div>
+                  </div>
+                </div>
+                <div class="input-group">
+                  <label class="input-label">Select Station:</label>
+                  <select id="station-select" class="location-select" disabled>
+                    <option value="">Select system first</option>
+                  </select>
+                </div>
+              </div>
+
+              <!-- Solar System Selection -->
+              <div id="system-content" class="location-content">
+                <div class="input-group">
+                  <label class="input-label">Search Solar System:</label>
+                  <div class="search-container">
+                    <input type="text" id="system-search-system" class="search-input" placeholder="Type system name (min 2 characters)..." autocomplete="off" />
+                    <div id="system-results-system" class="search-results hidden"></div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Region Selection -->
+              <div id="region-content" class="location-content">
+                <label class="input-label">Select Region:</label>
+                <select id="region-select" class="location-select">
+                  <option value="">Loading regions...</option>
+                </select>
+              </div>
+            </div>
+
+            <!-- Input Materials Settings -->
+            <div class="setting-group">
+              <h3>Input Materials (Raw Materials & Components)</h3>
+              <p class="setting-description">How to price materials you'll be buying</p>
+
+              <div class="setting-row">
+                <label class="setting-label">Price Type:</label>
+                <div class="radio-group-inline">
+                  <label class="radio-label-inline">
+                    <input type="radio" name="input-price-type" value="buy">
+                    <span>Buy Orders</span>
+                  </label>
+                  <label class="radio-label-inline">
+                    <input type="radio" name="input-price-type" value="sell" checked>
+                    <span>Sell Orders</span>
+                  </label>
+                </div>
+              </div>
+
+              <div class="setting-row">
+                <label class="setting-label">Pricing Method:</label>
+                <select id="input-pricing-method" class="method-select">
+                  <option value="hybrid" selected>Hybrid (Recommended)</option>
+                  <option value="vwap">VWAP (Volume-Weighted Average)</option>
+                  <option value="percentile">Percentile</option>
+                  <option value="historical">Historical Average</option>
+                  <option value="immediate">Immediate (Best Order)</option>
+                </select>
+              </div>
+
+              <div class="setting-row">
+                <label class="setting-label">Price Modifier:</label>
+                <div class="number-input-group">
+                  <input type="number" id="input-price-modifier" class="number-input" min="0" max="200" step="1" value="100">
+                  <span class="input-suffix">%</span>
+                </div>
+              </div>
+
+              <button class="advanced-toggle" id="input-advanced-toggle">
+                <span class="toggle-icon">▼</span> Show Advanced Options
+              </button>
+              <div id="input-advanced-section" class="advanced-section">
+                <div class="setting-row">
+                  <label class="setting-label">Percentile Threshold:</label>
+                  <div class="number-input-group">
+                    <input type="number" id="input-percentile" class="number-input" min="0" max="100" step="5" value="20">
+                    <span class="input-suffix">%</span>
+                  </div>
+                  <span class="helper-text-inline">For percentile method</span>
+                </div>
+                <div class="setting-row">
+                  <label class="setting-label">Min Order Volume:</label>
+                  <input type="number" id="input-min-volume" class="number-input" min="1" step="100" value="1000">
+                  <span class="helper-text-inline">Ignore orders below this volume</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Output Products Settings -->
+            <div class="setting-group">
+              <h3>Output Products (Manufactured Items)</h3>
+              <p class="setting-description">How to price items you'll be selling</p>
+
+              <div class="setting-row">
+                <label class="setting-label">Price Type:</label>
+                <div class="radio-group-inline">
+                  <label class="radio-label-inline">
+                    <input type="radio" name="output-price-type" value="buy">
+                    <span>Buy Orders</span>
+                  </label>
+                  <label class="radio-label-inline">
+                    <input type="radio" name="output-price-type" value="sell" checked>
+                    <span>Sell Orders</span>
+                  </label>
+                </div>
+              </div>
+
+              <div class="setting-row">
+                <label class="setting-label">Pricing Method:</label>
+                <select id="output-pricing-method" class="method-select">
+                  <option value="hybrid" selected>Hybrid (Recommended)</option>
+                  <option value="vwap">VWAP (Volume-Weighted Average)</option>
+                  <option value="percentile">Percentile</option>
+                  <option value="historical">Historical Average</option>
+                  <option value="immediate">Immediate (Best Order)</option>
+                </select>
+              </div>
+
+              <div class="setting-row">
+                <label class="setting-label">Price Modifier:</label>
+                <div class="number-input-group">
+                  <input type="number" id="output-price-modifier" class="number-input" min="0" max="200" step="1" value="100">
+                  <span class="input-suffix">%</span>
+                </div>
+              </div>
+
+              <button class="advanced-toggle" id="output-advanced-toggle">
+                <span class="toggle-icon">▼</span> Show Advanced Options
+              </button>
+              <div id="output-advanced-section" class="advanced-section">
+                <div class="setting-row">
+                  <label class="setting-label">Percentile Threshold:</label>
+                  <div class="number-input-group">
+                    <input type="number" id="output-percentile" class="number-input" min="0" max="100" step="5" value="20">
+                    <span class="input-suffix">%</span>
+                  </div>
+                  <span class="helper-text-inline">For percentile method</span>
+                </div>
+                <div class="setting-row">
+                  <label class="setting-label">Min Order Volume:</label>
+                  <input type="number" id="output-min-volume" class="number-input" min="1" step="100" value="1000">
+                  <span class="helper-text-inline">Ignore orders below this volume</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Warning Threshold -->
+            <div class="setting-group">
+              <h3>Price Warning Threshold</h3>
+              <p class="setting-description">Alert when prices deviate significantly from historical average</p>
+              <div class="setting-row">
+                <label class="setting-label">Warning Threshold:</label>
+                <div class="number-input-group">
+                  <input type="number" id="warning-threshold" class="number-input" min="0" max="100" step="5" value="30">
+                  <span class="input-suffix">%</span>
+                </div>
+              </div>
+            </div>
+
+            <p class="helper-text">You can adjust these settings later in Market Manager</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Step 6: Market Data Update -->
+      <div id="step-6" class="wizard-step">
+        <div class="step-content">
+          <h2>Update Market Data</h2>
+          <p class="description">
+            Fetching initial Market Prices, CCP Adjusted Prices, and System Cost Indices from EVE Online.
+            This may take a few minutes depending on the amount of market activity.
+          </p>
+          <div class="data-fetch-panel">
+            <!-- Market Prices -->
+            <div class="fetch-item" id="fetch-market-prices">
+              <div class="fetch-icon">
+                <div class="spinner"></div>
+                <svg class="checkmark" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3">
+                  <polyline points="20 6 9 17 4 12"></polyline>
+                </svg>
+              </div>
+              <div class="fetch-text">
+                <div class="fetch-name">Market Prices</div>
+                <div class="fetch-status">Waiting...</div>
+              </div>
+            </div>
+
+            <!-- Market Adjusted Prices -->
+            <div class="fetch-item" id="fetch-market-history">
+              <div class="fetch-icon">
+                <div class="spinner"></div>
+                <svg class="checkmark" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3">
+                  <polyline points="20 6 9 17 4 12"></polyline>
+                </svg>
+              </div>
+              <div class="fetch-text">
+                <div class="fetch-name">Market Adjusted Prices</div>
+                <div class="fetch-status">Waiting...</div>
+              </div>
+            </div>
+
+            <!-- Cost Indices -->
+            <div class="fetch-item" id="fetch-cost-indices">
+              <div class="fetch-icon">
+                <div class="spinner"></div>
+                <svg class="checkmark" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3">
+                  <polyline points="20 6 9 17 4 12"></polyline>
+                </svg>
+              </div>
+              <div class="fetch-text">
+                <div class="fetch-name">System Cost Indices</div>
+                <div class="fetch-status">Waiting...</div>
+              </div>
+            </div>
+          </div>
+          <p class="helper-text">If any fetch fails, you can retry later in the Market Manager</p>
+        </div>
+      </div>
+
+      <!-- Step 7: Default Facility -->
+      <div id="step-7" class="wizard-step">
+        <div class="step-content">
+          <h2>Default Manufacturing Facility</h2>
+          <p class="description">
+            Set up your default manufacturing location. This will be used for calculating
+            production costs and material requirements.
+          </p>
+
+          <!-- Facility Choice Options -->
+          <div class="facility-choice-container">
+            <label class="facility-choice-option">
+              <input type="radio" name="facility-choice" value="jita" checked>
+              <div class="option-content">
+                <span class="option-label">Jita 4-4 (Quick Setup)</span>
+                <span class="option-desc">✓ Recommended • No bonuses • Baseline calculations</span>
+              </div>
+            </label>
+            <label class="facility-choice-option">
+              <input type="radio" name="facility-choice" value="custom">
+              <div class="option-content">
+                <span class="option-label">Custom Facility (Advanced)</span>
+                <span class="option-desc">⚙ Full control • Choose location • Add structure bonuses</span>
+              </div>
+            </label>
+          </div>
+
+          <!-- Custom Facility Form (collapsed by default) -->
+          <div id="custom-facility-form" class="custom-facility-form" style="display: none;">
+            <div class="form-section">
+              <label class="input-label">Facility Name:</label>
+              <input type="text" id="facility-name" class="form-input" placeholder="My Manufacturing Facility" />
+            </div>
+
+            <div class="form-section">
+              <label class="input-label">Facility Type:</label>
+              <div class="radio-group">
+                <label class="radio-option">
+                  <input type="radio" name="facility-type" value="station" checked>
+                  <span>NPC Station</span>
+                </label>
+                <label class="radio-option">
+                  <input type="radio" name="facility-type" value="structure">
+                  <span>Player Structure</span>
+                </label>
+              </div>
+            </div>
+
+            <div class="form-section">
+              <label class="input-label">Region:</label>
+              <select id="facility-region" class="form-select">
+                <option value="">Select a region...</option>
+              </select>
+            </div>
+
+            <div class="form-section">
+              <label class="input-label">Solar System:</label>
+              <select id="facility-system" class="form-select" disabled>
+                <option value="">Select region first...</option>
+              </select>
+            </div>
+
+            <!-- Structure-specific fields (hidden by default) -->
+            <div id="structure-fields" style="display: none;">
+              <div class="form-section">
+                <label class="input-label">Structure Type:</label>
+                <select id="facility-structure-type" class="form-select">
+                  <option value="">Select structure type...</option>
+                </select>
+              </div>
+
+              <div class="form-section">
+                <label class="input-label">Rig (Optional):</label>
+                <select id="facility-rig" class="form-select">
+                  <option value="">No rig</option>
+                </select>
+                <p class="helper-text">Additional rigs can be added later in Facilities Manager</p>
+              </div>
+            </div>
+          </div>
+
+          <p class="helper-text" style="margin-top: 20px;">
+            Additional facilities can be added later in <strong>Facilities Manager</strong>
+          </p>
+        </div>
+      </div>
+
+      <!-- Step 8: Complete -->
+      <div id="step-8" class="wizard-step">
+        <div class="step-content centered">
+          <div class="complete-icon">
+            <svg xmlns="http://www.w3.org/2000/svg" width="80" height="80" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
+              <polyline points="22 4 12 14.01 9 11.01"></polyline>
+            </svg>
+          </div>
+          <h2>Setup Complete!</h2>
+          <p class="description">
+            Your Quantum Forge is ready to use. Here's what we've configured:
+          </p>
+          <div class="summary-list">
+            <div class="summary-item">
+              <svg class="summary-icon" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="20 6 9 17 4 12"></polyline>
+              </svg>
+              <div class="summary-text">
+                <div class="summary-label">Static Data Export</div>
+                <div id="summary-sde" class="summary-value">Downloaded</div>
+              </div>
+            </div>
+            <div class="summary-item">
+              <svg class="summary-icon" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="20 6 9 17 4 12"></polyline>
+              </svg>
+              <div class="summary-text">
+                <div class="summary-label">Character</div>
+                <div id="summary-character" class="summary-value">Not added</div>
+              </div>
+            </div>
+            <div class="summary-item">
+              <svg class="summary-icon" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="20 6 9 17 4 12"></polyline>
+              </svg>
+              <div class="summary-text">
+                <div class="summary-label">Market Location</div>
+                <div id="summary-market" class="summary-value">Jita 4-4</div>
+              </div>
+            </div>
+            <div class="summary-item">
+              <svg class="summary-icon" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="20 6 9 17 4 12"></polyline>
+              </svg>
+              <div class="summary-text">
+                <div class="summary-label">Default Facility</div>
+                <div id="summary-facility" class="summary-value">Jita 4-4 NPC Station</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Footer with Navigation -->
+    <div class="wizard-footer">
+      <button id="back-btn" class="secondary-button" style="display: none;">Back</button>
+      <div class="footer-spacer"></div>
+      <button id="skip-btn" class="secondary-button">Skip Setup</button>
+      <button id="next-btn" class="primary-button">Get Started</button>
+    </div>
+  </div>
+
+  <script src="../src/renderer/wizard-renderer.js"></script>
+</body>
+</html>

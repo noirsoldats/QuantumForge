@@ -201,4 +201,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
     skipSDEUpdate: () => ipcRenderer.send('startup:skipSDEUpdate'),
     retry: () => ipcRenderer.send('startup:retry'),
   },
+
+  // Wizard API (for first launch wizard)
+  wizard: {
+    skipSetup: () => ipcRenderer.invoke('wizard:skipSetup'),
+    saveProgress: (step, data) => ipcRenderer.invoke('wizard:saveProgress', step, data),
+    getProgress: () => ipcRenderer.invoke('wizard:getProgress'),
+    complete: () => ipcRenderer.invoke('wizard:complete'),
+  },
 });
