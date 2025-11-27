@@ -334,27 +334,70 @@ function getCachedMarketOrders(regionId, typeId = null, locationFilter = null) {
 }
 
 /**
- * Fetch market history for a type in a region from ESI
+ * Check if market history data is stale (not fetched since today's 11:05 UTC)
  * @param {number} regionId - Region ID
  * @param {number} typeId - Type ID
- * @param {boolean} forceRefresh - Force fetch from ESI instead of cache
- * @returns {Promise<Array>} Market history
+ * @returns {boolean} True if data is stale and should be refreshed
  */
-async function fetchMarketHistory(regionId, typeId, forceRefresh = false) {
-  // Check if we have fresh cached data (less than 24 hours old)
-  const hasFreshCache = hasFreshHistoryCache(regionId, typeId);
-
-  // If we have fresh cache and not forcing refresh, return cached data
-  if (hasFreshCache && !forceRefresh) {
-    console.log(`Returning cached market history for region ${regionId} type ${typeId} (cached within 24 hours)`);
-    return getCachedMarketHistory(regionId, typeId);
+function isHistoryStale(regionId, typeId) {
+  // Validate typeId
+  if (!typeId || typeId === 0 || isNaN(typeId)) {
+    console.error(`[isHistoryStale] Invalid typeId: ${typeId}`);
+    return false; // Return false so we don't try to fetch
   }
 
-  // Cache is stale or we're forcing refresh - fetch from ESI
+  const db = getMarketDatabase();
+
+  // Get most recent fetch timestamp for this item
+  const result = db.prepare(`
+    SELECT MAX(fetched_at) as last_fetched
+    FROM market_history
+    WHERE region_id = ? AND type_id = ?
+  `).get(regionId, typeId);
+
+  if (!result || !result.last_fetched) {
+    // No history data exists - it's stale
+    console.log(`[isHistoryStale] No cached data for typeId ${typeId} - will fetch`);
+    return true;
+  }
+
+  const lastFetchedTime = new Date(result.last_fetched);
+
+  // Calculate today's 11:05 UTC cutoff
+  const now = new Date();
+  const todayUpdate = new Date(Date.UTC(
+    now.getUTCFullYear(),
+    now.getUTCMonth(),
+    now.getUTCDate(),
+    11, // 11:05 UTC
+    5,
+    0
+  ));
+
+  // If current time is before today's update, use yesterday's update time
+  const cutoffTime = now >= todayUpdate ? todayUpdate : new Date(todayUpdate.getTime() - 86400000);
+
+  // Data is stale if it was fetched before the cutoff
+  const isStale = lastFetchedTime < cutoffTime;
+
+  if (isStale) {
+    console.log(`[isHistoryStale] Data stale for typeId ${typeId} - last fetched: ${lastFetchedTime.toISOString()}, cutoff: ${cutoffTime.toISOString()}`);
+  }
+
+  return isStale;
+}
+
+/**
+ * Fetch market history from ESI (actual HTTP request)
+ * @param {number} regionId - Region ID
+ * @param {number} typeId - Type ID
+ * @returns {Promise<Array>} Market history
+ */
+async function fetchHistoryFromESI(regionId, typeId) {
   try {
     const url = `https://esi.evetech.net/latest/markets/${regionId}/history/?datasource=tranquility&type_id=${typeId}`;
 
-    console.log(`Fetching market history from ESI: ${url} (cache is ${hasFreshCache ? 'fresh but force refresh' : 'stale or missing'})`);
+    console.log(`Fetching market history from ESI: ${url}`);
 
     const response = await retryFetch(async () => {
       const res = await fetch(url, {
@@ -364,7 +407,6 @@ async function fetchMarketHistory(regionId, typeId, forceRefresh = false) {
       });
 
       if (!res.ok) {
-        // Don't retry on 400 errors - item doesn't exist in market
         if (res.status === 400 || res.status === 404) {
           const error = new Error(`Item not available in market: ${res.status} ${res.statusText}`);
           error.noRetry = true;
@@ -384,21 +426,53 @@ async function fetchMarketHistory(regionId, typeId, forceRefresh = false) {
     // Store in database
     storeMarketHistory(history, regionId, typeId);
 
-    // Update fetch metadata (for tracking purposes)
+    // Update fetch metadata
     const cacheKey = `market_history_${regionId}_${typeId}`;
     updateFetchMetadata(cacheKey, expiresAt);
 
     return history;
   } catch (error) {
-    // Special handling for items not available in market (T2 Blueprints, etc.)
     if (error.noRetry) {
-      console.log(`Item ${typeId} not available in market (expected for T2 Blueprints, etc.) - using fallback pricing`);
-      return []; // Return empty array for items without market data
+      console.log(`Item ${typeId} not available in market - returning empty array`);
+      return [];
     }
     console.error('Error fetching market history:', error);
     // Return cached data on error
     return getCachedMarketHistory(regionId, typeId);
   }
+}
+
+/**
+ * Fetch market history for a type in a region from ESI
+ * @param {number} regionId - Region ID
+ * @param {number} typeId - Type ID
+ * @param {boolean} forceRefresh - Force fetch from ESI instead of cache
+ * @returns {Promise<Array>} Market history
+ */
+async function fetchMarketHistory(regionId, typeId, forceRefresh = false) {
+  // Validate typeId
+  if (!typeId || typeId === 0 || isNaN(typeId)) {
+    console.error(`[fetchMarketHistory] Invalid typeId: ${typeId}. Stack trace:`, new Error().stack);
+    return [];
+  }
+
+  // Manual refresh - always fetch from ESI
+  if (forceRefresh) {
+    console.log(`Manual refresh: Fetching market history from ESI for type ${typeId}`);
+    return await fetchHistoryFromESI(regionId, typeId);
+  }
+
+  // Auto-refresh check: is data stale (before today's 11:05 UTC)?
+  const stale = isHistoryStale(regionId, typeId);
+
+  if (stale) {
+    console.log(`Market history stale for type ${typeId} (before 11:05 UTC cutoff), auto-fetching from ESI`);
+    return await fetchHistoryFromESI(regionId, typeId);
+  }
+
+  // Data is fresh, return cached
+  console.log(`Returning fresh cached market history for type ${typeId}`);
+  return getCachedMarketHistory(regionId, typeId);
 }
 
 /**
@@ -522,7 +596,7 @@ async function fetchMarketData(regionId, typeId) {
  */
 function getLastMarketFetchTime() {
   const db = getMarketDatabase();
-  const result = db.prepare('SELECT MAX(last_fetch) as last_fetch FROM fetch_metadata WHERE key LIKE ?').get('market_%');
+  const result = db.prepare('SELECT MAX(last_fetch) as last_fetch FROM fetch_metadata WHERE key LIKE ?').get('market_orders_%');
   return result?.last_fetch || null;
 }
 

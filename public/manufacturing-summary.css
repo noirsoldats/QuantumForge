@@ -848,3 +848,136 @@ body {
     min-width: 1000px;
   }
 }
+
+/* Speculative Invention Styles */
+.speculative-invention-group {
+  margin-top: 15px;
+  padding: 15px;
+  background: rgba(100, 180, 255, 0.05);
+  border: 1px solid rgba(100, 180, 255, 0.2);
+  border-radius: 8px;
+}
+
+.speculative-settings {
+  margin-top: 12px;
+  padding: 12px;
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 6px;
+}
+
+.speculative-settings .setting-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.speculative-settings .setting-row:last-of-type {
+  margin-bottom: 0;
+}
+
+.speculative-settings label {
+  min-width: 180px;
+  color: #d0d0e0;
+  font-size: 13px;
+}
+
+.speculative-settings .helper-text {
+  margin-top: 12px;
+  margin-bottom: 0;
+  padding-top: 12px;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  font-size: 12px;
+  color: #b0b0c0;
+  font-style: italic;
+}
+
+/* Speculative invention row styling in table */
+tr.speculative-row {
+  background: rgba(255, 165, 0, 0.08) !important;
+  border-left: 3px solid rgba(255, 165, 0, 0.6);
+}
+
+tr.speculative-row:hover {
+  background: rgba(255, 165, 0, 0.12) !important;
+}
+
+tr.speculative-row td {
+  position: relative;
+}
+
+/* Speculative badge */
+.speculative-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  background: rgba(255, 165, 0, 0.2);
+  border: 1px solid rgba(255, 165, 0, 0.4);
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #ffa500;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.speculative-badge svg {
+  width: 12px;
+  height: 12px;
+}
+
+/* Owned T2 BPC badge */
+.owned-t2-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  background: rgba(50, 200, 50, 0.2);
+  border: 1px solid rgba(50, 200, 50, 0.4);
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #50c850;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+/* Market Data Warning */
+.market-data-warning {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  background: rgba(251, 191, 36, 0.15);
+  border: 1px solid rgba(251, 191, 36, 0.4);
+  border-radius: 6px;
+  color: #fbbf24;
+  font-size: 13px;
+  font-weight: 500;
+  animation: warning-pulse 2s ease-in-out infinite;
+}
+
+.market-data-warning svg {
+  flex-shrink: 0;
+  stroke: #fbbf24;
+}
+
+.market-data-warning.critical {
+  background: rgba(248, 113, 113, 0.15);
+  border-color: rgba(248, 113, 113, 0.4);
+  color: #f87171;
+}
+
+.market-data-warning.critical svg {
+  stroke: #f87171;
+}
+
+@keyframes warning-pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.7;
+  }
+}

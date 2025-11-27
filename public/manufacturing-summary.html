@@ -209,6 +209,33 @@
               </div>
             </div>
 
+            <!-- Speculative Invention Settings -->
+            <div class="filter-group speculative-invention-group">
+              <label class="checkbox-label">
+                <input type="checkbox" id="speculative-invention-enabled">
+                <span>Speculative Invention (T2 Analysis)</span>
+              </label>
+              <div id="speculative-invention-settings" class="speculative-settings" style="display: none;">
+                <div class="setting-row">
+                  <label for="decryptor-strategy">Decryptor Strategy:</label>
+                  <select id="decryptor-strategy" class="compact-select">
+                    <option value="invention-only">Invention Cost Only</option>
+                    <option value="total-per-item" selected>Total Cost per Item (Recommended)</option>
+                    <option value="total-full-bpc">Total Cost for Full BPC</option>
+                    <option value="time-optimized">Fastest Manufacturing Time</option>
+                    <option value="custom-volume">Custom Volume...</option>
+                  </select>
+                </div>
+                <div id="custom-volume-row" class="setting-row" style="display: none;">
+                  <label for="custom-volume">Manufacturing Volume:</label>
+                  <input type="number" id="custom-volume" class="threshold-input compact" min="1" value="1">
+                </div>
+                <p class="helper-text">
+                  Analyzes T1 blueprints for potential T2 invention profitability. Automatically skips if you own the T2 BPC.
+                </p>
+              </div>
+            </div>
+
           </div>
         </div>
 
@@ -241,6 +268,14 @@
           <h2>Results</h2>
           <div class="results-stats">
             <span id="results-count">0 blueprints</span>
+            <div id="market-data-warning" class="market-data-warning hidden">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
+                <line x1="12" y1="9" x2="12" y2="13"></line>
+                <line x1="12" y1="17" x2="12.01" y2="17"></line>
+              </svg>
+              <span id="market-data-warning-text">Market data is older than 2 hours</span>
+            </div>
             <button class="secondary-button" id="configure-columns-btn" title="Configure Columns">
               <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <line x1="4" y1="21" x2="4" y2="14"></line>

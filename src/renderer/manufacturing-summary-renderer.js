@@ -16,6 +16,13 @@ let marketFilters = {
   profitThreshold: null
 };
 
+// Speculative Invention settings
+let speculativeInventionSettings = {
+  enabled: false,
+  decryptorStrategy: 'total-per-item',
+  customVolume: 1
+};
+
 // Filter configuration
 let blueprintFilters = loadFilterConfig();
 
@@ -40,6 +47,61 @@ function saveFilterConfig() {
     localStorage.setItem('manufacturing-summary-filters', JSON.stringify(blueprintFilters));
   } catch (error) {
     console.error('Error saving filter config:', error);
+  }
+}
+
+// Load/Save Speculative Invention Settings (from backend settings)
+async function loadSpeculativeInventionSettings() {
+  try {
+    const settings = await window.electronAPI.settings.get('market', 'speculativeInvention');
+    if (settings) {
+      speculativeInventionSettings = {
+        enabled: settings.enabled || false,
+        decryptorStrategy: settings.decryptorStrategy || 'total-per-item',
+        customVolume: settings.customVolume || 1
+      };
+    }
+  } catch (error) {
+    console.error('Error loading speculative invention settings:', error);
+  }
+}
+
+async function saveSpeculativeInventionSettings() {
+  try {
+    await window.electronAPI.settings.update('market', {
+      speculativeInvention: speculativeInventionSettings
+    });
+  } catch (error) {
+    console.error('Error saving speculative invention settings:', error);
+  }
+}
+
+// Sync Speculative Invention UI with loaded settings
+function syncSpeculativeInventionUI() {
+  const enabledCheckbox = document.getElementById('speculative-invention-enabled');
+  const settingsDiv = document.getElementById('speculative-invention-settings');
+  const strategySelect = document.getElementById('decryptor-strategy');
+  const customVolumeRow = document.getElementById('custom-volume-row');
+  const customVolumeInput = document.getElementById('custom-volume');
+
+  if (enabledCheckbox) {
+    enabledCheckbox.checked = speculativeInventionSettings.enabled;
+    if (settingsDiv) {
+      settingsDiv.style.display = speculativeInventionSettings.enabled ? 'block' : 'none';
+    }
+  }
+
+  if (strategySelect) {
+    strategySelect.value = speculativeInventionSettings.decryptorStrategy;
+    // Show/hide custom volume based on strategy
+    if (customVolumeRow) {
+      customVolumeRow.style.display =
+        speculativeInventionSettings.decryptorStrategy === 'custom-volume' ? 'flex' : 'none';
+    }
+  }
+
+  if (customVolumeInput) {
+    customVolumeInput.value = speculativeInventionSettings.customVolume;
   }
 }
 
@@ -79,6 +141,13 @@ const ALL_COLUMNS = [
   { id: 'demand-growth', label: 'Demand Growth Rate', default: false, sortable: true, align: 'right' },
   { id: 'material-cost-volatility', label: 'Material Cost Volatility', default: false, sortable: true, align: 'right' },
   { id: 'market-health-score', label: 'Market Health Score', default: false, sortable: true, align: 'right' },
+
+  // Speculative Invention Columns
+  { id: 'invention-status', label: 'Invention Status', default: false, sortable: true, align: 'center' },
+  { id: 'optimal-decryptor', label: 'Optimal Decryptor', default: false, sortable: true, align: 'left' },
+  { id: 'invention-probability', label: 'Invention Probability', default: false, sortable: true, align: 'right' },
+  { id: 'invention-cost-attempt', label: 'Invention Cost/Attempt', default: false, sortable: true, align: 'right' },
+  { id: 'total-cost-with-invention', label: 'Total Cost w/ Invention', default: false, sortable: true, align: 'right' },
 ];
 
 let visibleColumns = loadColumnConfig();
@@ -115,9 +184,12 @@ function saveColumnConfig() {
 document.addEventListener('DOMContentLoaded', async () => {
   await loadFacilities();
   await loadCharacters();
+  await loadSpeculativeInventionSettings();
   setupEventListeners();
   renderTableHeaders(); // Initialize table headers with saved/default columns
   syncFiltersWithUI(); // Sync saved filters with main UI checkboxes
+  syncSpeculativeInventionUI(); // Sync speculative invention settings with UI
+  await checkMarketDataAge(); // Check market data age on page load
 });
 
 // Load characters into dropdown
@@ -304,6 +376,41 @@ function setupEventListeners() {
       closeColumnConfigModal();
     }
   });
+
+  // Speculative Invention event listeners
+  const speculativeEnabledCheckbox = document.getElementById('speculative-invention-enabled');
+  const speculativeSettingsDiv = document.getElementById('speculative-invention-settings');
+  const decryptorStrategySelect = document.getElementById('decryptor-strategy');
+  const customVolumeRow = document.getElementById('custom-volume-row');
+  const customVolumeInput = document.getElementById('custom-volume');
+
+  // Toggle speculative invention
+  speculativeEnabledCheckbox?.addEventListener('change', async (e) => {
+    speculativeInventionSettings.enabled = e.target.checked;
+    if (speculativeSettingsDiv) {
+      speculativeSettingsDiv.style.display = e.target.checked ? 'block' : 'none';
+    }
+    await saveSpeculativeInventionSettings();
+  });
+
+  // Decryptor strategy change
+  decryptorStrategySelect?.addEventListener('change', async (e) => {
+    speculativeInventionSettings.decryptorStrategy = e.target.value;
+    // Show/hide custom volume input
+    if (customVolumeRow) {
+      customVolumeRow.style.display = e.target.value === 'custom-volume' ? 'flex' : 'none';
+    }
+    await saveSpeculativeInventionSettings();
+  });
+
+  // Custom volume input
+  customVolumeInput?.addEventListener('change', async (e) => {
+    const value = parseInt(e.target.value);
+    if (!isNaN(value) && value > 0) {
+      speculativeInventionSettings.customVolume = value;
+      await saveSpeculativeInventionSettings();
+    }
+  });
 }
 
 // Main calculation function
@@ -313,6 +420,9 @@ async function calculateSummary() {
     alert('Please select a facility');
     return;
   }
+
+  // Debug: Log speculative invention settings
+  console.log('[DEBUG] Speculative Invention Settings:', speculativeInventionSettings);
 
   // Show loading
   showLoading('Loading blueprints...');
@@ -413,6 +523,11 @@ async function calculateSummary() {
     // Start timing for all calculations
     const calculationStartTime = performance.now();
 
+    // Invention tracking counters
+    let t1BlueprintsFound = 0;
+    let inventionDataCalculated = 0;
+    let inventionErrors = 0;
+
     // Parallel batch processing configuration
     const BATCH_SIZE = 6; // Process 6 blueprints concurrently
     const totalBlueprints = filteredBlueprints.length;
@@ -456,12 +571,20 @@ async function calculateSummary() {
     console.log(`[Manufacturing Summary] Calculated ${processedCount} blueprints in ${totalElapsedTime.toFixed(2)}ms (${(totalElapsedTime / 1000).toFixed(2)}s)`);
     console.log(`[Manufacturing Summary] Average time per blueprint: ${avgTimePerBlueprint.toFixed(2)}ms`);
 
+    // Count invention results
+    const inventionResults = calculatedData.filter(d => d.inventionStatus).length;
+    console.log(`[INVENTION SUMMARY] Speculative Invention enabled: ${speculativeInventionSettings.enabled}`);
+    console.log(`[INVENTION SUMMARY] Blueprints with invention data: ${inventionResults}/${processedCount}`);
+
     // Apply market filters
     applyMarketFilters();
 
     hideLoading();
     sortTable(currentSort.column, currentSort.direction);
     displayResults();
+
+    // Check market data age and show warning if needed
+    await checkMarketDataAge();
 
   } catch (error) {
     console.error('Error calculating summary:', error);
@@ -506,9 +629,12 @@ function applyMarketFilters() {
 
 // Get blueprints based on current filter
 async function getBlueprintsByFilter() {
+  let blueprints = [];
+
   switch (currentFilter) {
     case 'all':
-      return await window.electronAPI.calculator.getAllBlueprints(null);
+      blueprints = await window.electronAPI.calculator.getAllBlueprints(null);
+      break;
 
     case 'owned':
     case 'corp':
@@ -579,16 +705,293 @@ async function getBlueprintsByFilter() {
 
       // Get full blueprint data from SDE
       const allBPs = await window.electronAPI.calculator.getAllBlueprints(null);
-      return allBPs.filter(bp => filteredBlueprints.some(owned => owned.typeId === bp.typeID));
+      blueprints = allBPs.filter(bp => filteredBlueprints.some(owned => owned.typeId === bp.typeID));
+      break;
 
     default:
       return [];
+  }
+
+  // Add speculative invention T2 blueprints if enabled
+  if (speculativeInventionSettings.enabled) {
+    console.log('[SPECULATIVE] Adding T2 blueprints for invention analysis...');
+    const allBPs = await window.electronAPI.calculator.getAllBlueprints(null);
+    const speculativeBlueprints = [];
+
+    // Find all T1 blueprints in the list
+    for (const blueprint of blueprints) {
+      if (blueprint.productMetaGroupID === 1) {
+        try {
+          const inventionInfo = await window.electronAPI.calculator.getInventionData(blueprint.typeID);
+
+          if (inventionInfo && inventionInfo.t2BlueprintTypeID) {
+            // Check if we already have this T2 blueprint in the list
+            const alreadyExists = blueprints.some(bp => bp.typeID === inventionInfo.t2BlueprintTypeID);
+
+            if (!alreadyExists) {
+              // Find the T2 blueprint in the SDE and add it
+              const t2Blueprint = allBPs.find(bp => bp.typeID === inventionInfo.t2BlueprintTypeID);
+              if (t2Blueprint) {
+                // Mark it as a speculative invention blueprint
+                speculativeBlueprints.push({
+                  ...t2Blueprint,
+                  isSpeculativeInvention: true,
+                  parentT1BlueprintTypeID: blueprint.typeID
+                });
+                console.log(`[SPECULATIVE] Added T2 blueprint ${t2Blueprint.typeName} from T1 ${blueprint.typeName}`);
+              }
+            }
+          }
+        } catch (error) {
+          console.error(`Error fetching invention data for ${blueprint.typeName}:`, error);
+        }
+      }
+    }
+
+    if (speculativeBlueprints.length > 0) {
+      console.log(`[SPECULATIVE] Added ${speculativeBlueprints.length} speculative T2 blueprints`);
+      blueprints = [...blueprints, ...speculativeBlueprints];
+    }
+  }
+
+  return blueprints;
+}
+
+// Calculate data for a speculative invention blueprint (T2 that isn't owned)
+async function calculateSpeculativeInventionData(blueprint, facility, svrPeriod, defaultCharacter, ownedBlueprintsList) {
+  try {
+    console.log(`[SPECULATIVE] Calculating invention data for T2 blueprint: ${blueprint.typeName}`);
+
+    const characterId = defaultCharacter ? defaultCharacter.characterId : null;
+    const parentT1BlueprintTypeID = blueprint.parentT1BlueprintTypeID;
+
+    // Get invention info for the parent T1 blueprint
+    const inventionInfo = await window.electronAPI.calculator.getInventionData(parentT1BlueprintTypeID);
+
+    if (!inventionInfo || !inventionInfo.t2BlueprintTypeID) {
+      console.error(`[SPECULATIVE] No invention data for T1 blueprint ${parentT1BlueprintTypeID}`);
+      return null;
+    }
+
+    // Get market settings for pricing
+    const marketSettings = await window.electronAPI.market.getSettings();
+    const regionId = marketSettings.regionId || 10000002;
+    const locationId = marketSettings.locationId || null;
+
+    // Fetch real market prices for invention materials (datacores, etc.)
+    const inventionMaterialPrices = {};
+    if (inventionInfo.materials) {
+      for (const [typeId, quantity] of Object.entries(inventionInfo.materials)) {
+        try {
+          const parsedTypeId = parseInt(typeId);
+          // Validate typeId before fetching price
+          if (!parsedTypeId || parsedTypeId === 0 || isNaN(parsedTypeId)) {
+            console.warn(`[SPECULATIVE] Skipping invalid invention material typeId: ${typeId}`);
+            continue;
+          }
+
+          const priceData = await window.electronAPI.market.calculatePrice(
+            parsedTypeId,
+            regionId,
+            locationId,
+            marketSettings.inputMaterials?.priceType || 'sell',
+            1
+          );
+          inventionMaterialPrices[typeId] = priceData.price;
+        } catch (error) {
+          console.error(`[SPECULATIVE ERROR] Error fetching price for material ${typeId}:`, error);
+          alert(`Error fetching market price for invention material (typeId: ${typeId}).\n\nError: ${error.message}`);
+          throw error;
+        }
+      }
+    }
+
+    // Calculate T2 manufacturing costs (ME=0, TE=0 for invented BPC)
+    const t2Result = await window.electronAPI.calculator.calculateMaterials(
+      blueprint.typeID,
+      1,
+      0, // ME level = 0 for invented BPCs
+      characterId,
+      facility.id
+    );
+
+    if (!t2Result || !t2Result.pricing) {
+      console.error(`[SPECULATIVE] Failed to calculate T2 manufacturing costs`);
+      return null;
+    }
+
+    const t2Pricing = t2Result.pricing;
+    const t2ProductPrice = t2Pricing.outputValue?.totalValue || 0;
+
+    // Extract T2 manufacturing costs and fees from pricing breakdown
+    const jcb = t2Pricing.jobCostBreakdown || {};
+    const jobCostsTotal = (jcb.jobBaseCost || 0) + (jcb.facilityTax || 0) + (jcb.sccSurcharge || 0);
+
+    const tb = t2Pricing.taxesBreakdown || {};
+    const materialBrokerFee = tb.materialBrokerFee || 0;
+    const productSellingFees = (tb.productSalesTax || 0) + (tb.productBrokerFee || 0);
+    const tradingFeesTotal = (tb.productSalesTax || 0) + (tb.productBrokerFee || 0) + (tb.materialBrokerFee || 0);
+
+    // Get character skills dynamically based on blueprint's actual requirements
+    const characterSkills = { encryption: 0, datacore1: 0, datacore2: 0 };
+
+    if (defaultCharacter?.characterId && inventionInfo?.skills?.length >= 3) {
+      try {
+        // Encryption skill IDs (all races including advanced/specialized)
+        const ENCRYPTION_SKILL_IDS = [3408, 21790, 21791, 23087, 23121, 52308, 55025];
+
+        // Separate encryption skill from datacore skills
+        const encryptionSkill = inventionInfo.skills.find(s =>
+          ENCRYPTION_SKILL_IDS.includes(s.skillID)
+        );
+
+        const datacoreSkills = inventionInfo.skills.filter(s =>
+          !ENCRYPTION_SKILL_IDS.includes(s.skillID)
+        );
+
+        // Get encryption skill level from character
+        if (encryptionSkill) {
+          characterSkills.encryption = await window.electronAPI.skills.getEffectiveLevel(
+            defaultCharacter.characterId,
+            encryptionSkill.skillID
+          ) || 0;
+        }
+
+        // Get datacore skill levels from character
+        if (datacoreSkills.length >= 2) {
+          characterSkills.datacore1 = await window.electronAPI.skills.getEffectiveLevel(
+            defaultCharacter.characterId,
+            datacoreSkills[0].skillID
+          ) || 0;
+
+          characterSkills.datacore2 = await window.electronAPI.skills.getEffectiveLevel(
+            defaultCharacter.characterId,
+            datacoreSkills[1].skillID
+          ) || 0;
+        }
+      } catch (error) {
+        console.error('[SPECULATIVE] Error getting character skills:', error);
+        // Falls back to defaults (0, 0, 0)
+      }
+    }
+
+    // Find best decryptor
+    const decryptorResult = await window.electronAPI.calculator.findBestDecryptor(
+      inventionInfo,
+      inventionMaterialPrices,
+      t2ProductPrice,
+      characterSkills,
+      facility,
+      speculativeInventionSettings.decryptorStrategy,
+      speculativeInventionSettings.customVolume
+    );
+
+    if (!decryptorResult || !decryptorResult.best) {
+      console.error(`[SPECULATIVE] No best decryptor found`);
+      return null;
+    }
+
+    const best = decryptorResult.best;
+
+    // Calculate total cost including invention
+    const totalCostWithInvention = best.totalCostPerItem || 0;
+    const inventionCostPerItem = best.inventionCostPerItem || 0;
+    const profit = t2ProductPrice - totalCostWithInvention;
+
+    // Calculate other metrics
+    const productionTimeSeconds = calculateProductionTime(blueprint.baseTime, 0, facility);
+    const productionTimeHours = productionTimeSeconds / 3600;
+    const iskPerHour = productionTimeHours > 0 ? profit / productionTimeHours : 0;
+    const svr = await calculateSVR(blueprint.productTypeID, svrPeriod, productionTimeHours);
+    const roi = totalCostWithInvention > 0 ? (profit / totalCostWithInvention) * 100 : 0;
+    const techLevel = determineTechLevel(blueprint);
+    const profitPercentage = totalCostWithInvention > 0 ? (profit / totalCostWithInvention) * 100 : 0;
+
+    // Calculate manufacturing steps (1 for main blueprint + intermediate components)
+    const intermediateComponents = best.breakdown?.[0]?.intermediateComponents || [];
+    const manufacturingSteps = 1 + intermediateComponents.length;
+
+    // Calculate M³ for inputs
+    const materialTypeIds = Object.keys(best.blueprintResult.materials).map(id => parseInt(id));
+    const materialVolumes = await window.electronAPI.sde.getItemVolumes(materialTypeIds);
+    let totalInputVolume = 0;
+    for (const [typeId, quantity] of Object.entries(best.blueprintResult.materials)) {
+        const volume = materialVolumes[typeId] || 0;
+        totalInputVolume += volume * quantity;
+    }
+
+    // Get M³ for output product
+    const productVolume = await window.electronAPI.sde.getItemVolume(blueprint.productTypeID);
+    const totalOutputVolume = productVolume * best.blueprintResult.product.quantity;
+
+      // Market metrics
+    const currentSellOrders = await calculateTotalSellVolume(blueprint.productTypeID);
+    const profitVelocity = await calculateProfitVelocity(blueprint.productTypeID, profit, 30);
+    const marketSaturation = await calculateMarketSaturation(blueprint.productTypeID, currentSellOrders, 30);
+    const priceMomentum = await calculatePriceMomentum(blueprint.productTypeID);
+    const profitStability = await calculateProfitStability(blueprint.productTypeID, profit, 28);
+    const demandGrowth = await calculateDemandGrowth(blueprint.productTypeID);
+    const materialCostVolatility = await calculateMaterialCostVolatility(t2Result.materials, 30);
+    const marketHealthScore = calculateMarketHealthScore(svr, marketSaturation, priceMomentum, profitStability);
+
+    console.log(`[SPECULATIVE] Successfully calculated: ${blueprint.typeName}, decryptor: ${best.name}, profit: ${profit.toLocaleString()} ISK`);
+
+    return {
+      blueprintTypeId: blueprint.typeID,
+      category: blueprint.category || 'Unknown',
+      itemName: blueprint.typeName,
+      productTypeId: blueprint.productTypeID,
+      productName: blueprint.productTypeName,
+      isOwned: false,
+      techLevel: techLevel,
+      bpType: 'BPC (Invented)',
+      meLevel: best.finalME,
+      teLevel: best.finalTE,
+      profit: profit,
+      iskPerHour: iskPerHour,
+      svr: svr,
+      totalCost: totalCostWithInvention,
+      roi: roi,
+      productionTimeHours,
+      jobCosts: jobCostsTotal,
+      materialPurchaseFees: materialBrokerFee,
+      productSellingFees: productSellingFees,
+      tradingFeesTotal: tradingFeesTotal,
+      blueprintType: 'BPC',
+      productMarketPrice: t2ProductPrice,
+      profitPercentage: profitPercentage,
+      manufacturingSteps: manufacturingSteps,
+      m3Inputs: totalInputVolume,
+      m3Outputs: totalOutputVolume,
+      currentSellOrders,
+      profitVelocity,
+      marketSaturation,
+      priceMomentum,
+      profitStability,
+      demandGrowth,
+      materialCostVolatility,
+      marketHealthScore,
+      // Speculative Invention data
+      inventionStatus: 'Speculative',
+      optimalDecryptor: best.name || 'No Decryptor',
+      inventionProbability: best.probability || 0,
+      inventionCostAttempt: best.totalCostPerAttempt || 0,
+      totalCostWithInvention: totalCostWithInvention,
+    };
+  } catch (error) {
+    console.error(`[SPECULATIVE ERROR] Error calculating speculative invention for ${blueprint.typeName}:`, error);
+    return null;
   }
 }
 
 // Calculate all data for a single blueprint
 async function calculateBlueprintData(blueprint, facility, svrPeriod, defaultCharacter, ownedBlueprintsList = null) {
   try {
+    // Handle speculative invention blueprints differently
+    if (blueprint.isSpeculativeInvention) {
+      return await calculateSpeculativeInventionData(blueprint, facility, svrPeriod, defaultCharacter, ownedBlueprintsList);
+    }
+
     const characterId = defaultCharacter ? defaultCharacter.characterId : null;
 
     // Get owned blueprint info from the provided list
@@ -678,10 +1081,14 @@ async function calculateBlueprintData(blueprint, facility, svrPeriod, defaultCha
     const materialCostVolatility = await calculateMaterialCostVolatility(result.materials, 30);
     const marketHealthScore = calculateMarketHealthScore(svr, marketSaturation, priceMomentum, profitStability);
 
+    // Initialize inventionData for normal blueprints (not used but referenced in return)
+    const inventionData = null;
+
     return {
       blueprintTypeId: blueprint.typeID,
       category: blueprint.category || 'Unknown',
       itemName: blueprint.typeName,
+      productTypeId: blueprint.productTypeID,
       productName: blueprint.productName,
       isOwned,
       techLevel,
@@ -714,6 +1121,12 @@ async function calculateBlueprintData(blueprint, facility, svrPeriod, defaultCha
       demandGrowth,
       materialCostVolatility,
       marketHealthScore,
+      // Speculative Invention data
+      inventionStatus: inventionData?.status || null,
+      optimalDecryptor: inventionData?.decryptor || null,
+      inventionProbability: inventionData?.probability || null,
+      inventionCostAttempt: inventionData?.costPerAttempt || null,
+      totalCostWithInvention: inventionData?.totalCostWithInvention || null,
     };
   } catch (error) {
     console.error(`Error calculating data for ${blueprint.typeName}:`, error);
@@ -742,6 +1155,12 @@ function calculateProductionTime(baseTime, teLevel, facility) {
 // Calculate SVR (Sales to Volume Ratio)
 async function calculateSVR(productTypeId, period, productionTimeHours) {
   try {
+    // Validate productTypeId
+    if (!productTypeId || productTypeId === 0 || isNaN(productTypeId)) {
+      console.warn(`[calculateSVR] Invalid productTypeId: ${productTypeId}`);
+      return 0;
+    }
+
     const marketSettings = await window.electronAPI.market.getSettings();
     const regionId = marketSettings.regionId || 10000002;
 
@@ -784,6 +1203,12 @@ async function calculateSVR(productTypeId, period, productionTimeHours) {
 // Calculate total sell volume from market orders
 async function calculateTotalSellVolume(productTypeId) {
   try {
+    // Validate productTypeId
+    if (!productTypeId || productTypeId === 0 || isNaN(productTypeId)) {
+      console.warn(`[calculateTotalSellVolume] Invalid productTypeId: ${productTypeId}`);
+      return 0;
+    }
+
     const marketSettings = await window.electronAPI.market.getSettings();
     const regionId = marketSettings.regionId || 10000002; // Default to The Forge
 
@@ -817,6 +1242,12 @@ async function calculateTotalSellVolume(productTypeId) {
 // Formula: (Average profit per unit) × (Average units sold per day)
 async function calculateProfitVelocity(productTypeId, profitPerUnit, period = 30) {
   try {
+    // Validate productTypeId
+    if (!productTypeId || productTypeId === 0 || isNaN(productTypeId)) {
+      console.warn(`[calculateProfitVelocity] Invalid productTypeId: ${productTypeId}`);
+      return 0;
+    }
+
     const marketSettings = await window.electronAPI.market.getSettings();
     const regionId = marketSettings.regionId || 10000002;
 
@@ -845,6 +1276,12 @@ async function calculateProfitVelocity(productTypeId, profitPerUnit, period = 30
 // Formula: Total Sell Volume Listed / Average Daily Sales Volume
 async function calculateMarketSaturation(productTypeId, totalSellVolume, period = 30) {
   try {
+    // Validate productTypeId
+    if (!productTypeId || productTypeId === 0 || isNaN(productTypeId)) {
+      console.warn(`[calculateMarketSaturation] Invalid productTypeId: ${productTypeId}`);
+      return 0;
+    }
+
     const marketSettings = await window.electronAPI.market.getSettings();
     const regionId = marketSettings.regionId || 10000002;
 
@@ -876,6 +1313,12 @@ async function calculateMarketSaturation(productTypeId, totalSellVolume, period 
 // Formula: (MA_7d - MA_30d) / MA_30d
 async function calculatePriceMomentum(productTypeId) {
   try {
+    // Validate productTypeId
+    if (!productTypeId || productTypeId === 0 || isNaN(productTypeId)) {
+      console.warn(`[calculatePriceMomentum] Invalid productTypeId: ${productTypeId}`);
+      return 0;
+    }
+
     const marketSettings = await window.electronAPI.market.getSettings();
     const regionId = marketSettings.regionId || 10000002;
 
@@ -908,6 +1351,12 @@ async function calculatePriceMomentum(productTypeId) {
 // Formula: 1 - (Standard Deviation of Weekly Margin / Average Weekly Margin)
 async function calculateProfitStability(productTypeId, currentProfit, period = 28) {
   try {
+    // Validate productTypeId
+    if (!productTypeId || productTypeId === 0 || isNaN(productTypeId)) {
+      console.warn(`[calculateProfitStability] Invalid productTypeId: ${productTypeId}`);
+      return 0;
+    }
+
     const marketSettings = await window.electronAPI.market.getSettings();
     const regionId = marketSettings.regionId || 10000002;
 
@@ -944,6 +1393,12 @@ async function calculateProfitStability(productTypeId, currentProfit, period = 2
 // Formula: (Avg daily sales last 7 days - Avg daily sales previous 7 days) / Avg daily sales previous 7 days
 async function calculateDemandGrowth(productTypeId) {
   try {
+    // Validate productTypeId
+    if (!productTypeId || productTypeId === 0 || isNaN(productTypeId)) {
+      console.warn(`[calculateDemandGrowth] Invalid productTypeId: ${productTypeId}`);
+      return 0;
+    }
+
     const marketSettings = await window.electronAPI.market.getSettings();
     const regionId = marketSettings.regionId || 10000002;
 
@@ -985,9 +1440,16 @@ async function calculateMaterialCostVolatility(materials, period = 30) {
     const materialPriceHistories = [];
     for (const [typeId, quantity] of Object.entries(materials)) {
       try {
-        const history = await window.electronAPI.market.fetchHistory(regionId, parseInt(typeId));
+        const parsedTypeId = parseInt(typeId);
+        // Validate typeId before fetching
+        if (!parsedTypeId || parsedTypeId === 0 || isNaN(parsedTypeId)) {
+          console.warn(`[calculateMaterialCostVolatility] Invalid material typeId: ${typeId}`);
+          continue;
+        }
+
+        const history = await window.electronAPI.market.fetchHistory(regionId, parsedTypeId);
         if (history && history.length > 0) {
-          materialPriceHistories.push({ typeId: parseInt(typeId), quantity, history });
+          materialPriceHistories.push({ typeId: parsedTypeId, quantity, history });
         }
       } catch (error) {
         console.error(`Error fetching history for material ${typeId}:`, error);
@@ -1329,6 +1791,11 @@ function displayResults(searchTerm = '') {
   filteredData.forEach(item => {
     const row = document.createElement('tr');
 
+    // Add speculative-row class if this is a speculative invention
+    if (item.inventionStatus === 'Speculative') {
+      row.classList.add('speculative-row');
+    }
+
     // Build row with visible columns in correct order
     row.innerHTML = visibleColumns.map(colId => getCellContent(colId, item)).join('');
 
@@ -1649,7 +2116,73 @@ function getCellContent(columnId, item) {
       return `<td class="text-right ${mhsClass}">${mhs.toFixed(3)}</td>`;
     }
 
+    // Speculative Invention Columns
+    case 'invention-status': {
+      if (!item.inventionStatus) return '<td class="text-center">N/A</td>';
+      if (item.inventionStatus === 'Speculative') {
+        return '<td class="text-center"><span class="speculative-badge">Speculative</span></td>';
+      } else if (item.inventionStatus === 'Owned T2 BPC') {
+        return '<td class="text-center"><span class="owned-t2-badge">Owned T2 BPC</span></td>';
+      }
+      return `<td class="text-center">${escapeHtml(item.inventionStatus)}</td>`;
+    }
+    case 'optimal-decryptor':
+      return `<td>${escapeHtml(item.optimalDecryptor || 'N/A')}</td>`;
+    case 'invention-probability': {
+      if (!item.inventionProbability) return '<td class="text-right">N/A</td>';
+      return `<td class="text-right">${(item.inventionProbability * 100).toFixed(2)}%</td>`;
+    }
+    case 'invention-cost-attempt':
+      return `<td class="text-right">${formatISK(item.inventionCostAttempt || 0)}</td>`;
+    case 'total-cost-with-invention':
+      return `<td class="text-right">${formatISK(item.totalCostWithInvention || 0)}</td>`;
+
     default:
       return '<td>N/A</td>';
+  }
+}
+
+/**
+ * Check market data age and show warning if needed
+ */
+async function checkMarketDataAge() {
+  try {
+    const lastFetch = await window.electronAPI.market.getLastFetchTime();
+    const warningElement = document.getElementById('market-data-warning');
+    const warningText = document.getElementById('market-data-warning-text');
+
+    if (!lastFetch) {
+      // No market data fetched yet
+      warningElement.classList.remove('hidden');
+      warningElement.classList.add('critical');
+      warningText.textContent = 'No market data available - results may be inaccurate';
+      return;
+    }
+
+    const now = Date.now();
+    const ageInMilliseconds = now - lastFetch;
+    const ageInHours = ageInMilliseconds / (1000 * 60 * 60);
+    const TWO_HOURS = 2;
+    const SIX_HOURS = 6;
+
+    if (ageInHours > SIX_HOURS) {
+      // Critical warning: over 6 hours old
+      warningElement.classList.remove('hidden');
+      warningElement.classList.add('critical');
+      const hours = Math.floor(ageInHours);
+      warningText.textContent = `Market data is ${hours} hours old - prices may be significantly outdated`;
+    } else if (ageInHours > TWO_HOURS) {
+      // Warning: over 2 hours old
+      warningElement.classList.remove('hidden');
+      warningElement.classList.remove('critical');
+      const hours = Math.floor(ageInHours);
+      const minutes = Math.floor((ageInHours - hours) * 60);
+      warningText.textContent = `Market data is ${hours}h ${minutes}m old`;
+    } else {
+      // Fresh data, hide warning
+      warningElement.classList.add('hidden');
+    }
+  } catch (error) {
+    console.error('Error checking market data age:', error);
   }
 }

@@ -43,6 +43,13 @@ const defaultSettings = {
       minVolume: 1000,
     },
     warningThreshold: 0.3, // Warn if price deviates >30% from historical
+    speculativeInvention: {
+      enabled: false, // Default OFF for performance
+      decryptorStrategy: 'total-per-item', // Recommended default
+      customVolume: 1,
+      showOnlyProfitable: true,
+      minProfitThreshold: 0,
+    },
   },
   owned_blueprints: [],
   sde: {

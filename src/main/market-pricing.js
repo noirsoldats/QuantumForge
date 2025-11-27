@@ -122,9 +122,12 @@ function getBestPriceWithMinVolume(orders, isBuy = false, minVolume = 1000) {
     return topOrders.reduce((sum, o) => sum + o.price, 0) / topOrders.length;
   }
 
-  // Return best price from valid orders
+  // Return best price from valid orders using reduce to avoid stack overflow
   const prices = validOrders.map(o => o.price);
-  return isBuy ? Math.max(...prices) : Math.min(...prices);
+  if (prices.length === 0) return 0;
+  return isBuy
+    ? prices.reduce((max, p) => Math.max(max, p), -Infinity)
+    : prices.reduce((min, p) => Math.min(min, p), Infinity);
 }
 
 /**
@@ -227,6 +230,18 @@ function calculateMedian(values) {
  * @returns {Promise<Object>} Price calculation result
  */
 async function calculateRealisticPrice(typeId, regionId, locationId, priceType, quantity, settings = {}) {
+  // Validate typeId
+  if (!typeId || typeId === 0 || isNaN(typeId)) {
+    console.error(`[calculateRealisticPrice] Invalid typeId: ${typeId}. Stack trace:`, new Error().stack);
+    return {
+      price: 0,
+      method: 'error',
+      confidence: 'none',
+      warning: `Invalid typeId: ${typeId}`,
+      metadata: {},
+    };
+  }
+
   const isBuy = priceType === 'buy';
 
   console.log(`[Price Calc] TypeID: ${typeId}, Region: ${regionId}, Location: ${locationId}, Type: ${priceType}, Qty: ${quantity}`);
@@ -277,10 +292,12 @@ async function calculateRealisticPrice(typeId, regionId, locationId, priceType, 
   const percentilePrice = calculatePercentilePrice(orders, isBuy, settings.percentile || 0.2);
   const minVolumePrice = getBestPriceWithMinVolume(orders, isBuy, settings.minVolume || Math.min(quantity * 0.1, 1000));
 
-  // Remove outliers and get best price
+  // Remove outliers and get best price using reduce to avoid stack overflow
   const cleanedOrders = removeOutliers(orders, isBuy);
   const cleanedBestPrice = cleanedOrders.length > 0
-    ? (isBuy ? Math.max(...cleanedOrders.map(o => o.price)) : Math.min(...cleanedOrders.map(o => o.price)))
+    ? (isBuy
+        ? cleanedOrders.reduce((max, o) => Math.max(max, o.price), -Infinity)
+        : cleanedOrders.reduce((min, o) => Math.min(min, o.price), Infinity))
     : 0;
 
   // Collect candidate prices
@@ -302,7 +319,9 @@ async function calculateRealisticPrice(typeId, regionId, locationId, priceType, 
   // Filter to only the order type we want (buy or sell)
   const relevantOrders = orders.filter(o => o.is_buy_order === isBuy);
   const immediatePrice = relevantOrders.length > 0
-    ? (isBuy ? Math.max(...relevantOrders.map(o => o.price)) : Math.min(...relevantOrders.map(o => o.price)))
+    ? (isBuy
+        ? relevantOrders.reduce((max, o) => Math.max(max, o.price), -Infinity)
+        : relevantOrders.reduce((min, o) => Math.min(min, o.price), Infinity))
     : 0;
 
   console.log(`[Price Calc] Relevant orders (is_buy=${isBuy}): ${relevantOrders.length}, Immediate price: ${immediatePrice}`);

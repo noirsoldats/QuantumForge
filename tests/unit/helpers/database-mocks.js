@@ -385,6 +385,23 @@ function createInMemoryDatabase() {
       level INTEGER,
       PRIMARY KEY (typeID, activityID, skillID)
     );
+
+    -- Dogma Type Attributes (for decryptor bonuses, rig bonuses, structure bonuses, etc.)
+    CREATE TABLE IF NOT EXISTS dgmTypeAttributes (
+      typeID INTEGER NOT NULL,
+      attributeID INTEGER NOT NULL,
+      valueInt INTEGER,
+      valueFloat REAL,
+      PRIMARY KEY (typeID, attributeID)
+    );
+
+    -- Dogma Attribute Definitions (for attribute names and descriptions)
+    CREATE TABLE IF NOT EXISTS dgmAttributeTypes (
+      attributeID INTEGER PRIMARY KEY,
+      attributeName TEXT,
+      displayName TEXT,
+      description TEXT
+    );
   `);
 
   return db;
@@ -528,6 +545,50 @@ function populateDatabase(db, fixtures) {
         INSERT OR REPLACE INTO invTypes (typeID, typeName)
         VALUES (?, ?)
       `).run(inv.encryptionSkill.skillID, inv.encryptionSkill.skillName);
+    }
+  }
+
+  // Insert decryptor data
+  if (fixtures.decryptors) {
+    for (const decryptor of fixtures.decryptors) {
+      // Insert decryptor type into invTypes (groupID 1304 = Decryptors)
+      db.prepare(`
+        INSERT OR REPLACE INTO invTypes (typeID, typeName, groupID, published)
+        VALUES (?, ?, 1304, 1)
+      `).run(decryptor.typeID, decryptor.typeName);
+
+      // Insert decryptor attributes into dgmTypeAttributes
+      // Attribute 1112: Probability Multiplier
+      if (decryptor.probabilityModifier !== undefined) {
+        db.prepare(`
+          INSERT OR REPLACE INTO dgmTypeAttributes (typeID, attributeID, valueFloat)
+          VALUES (?, 1112, ?)
+        `).run(decryptor.typeID, decryptor.probabilityModifier);
+      }
+
+      // Attribute 1113: ME Modifier
+      if (decryptor.meModifier !== undefined) {
+        db.prepare(`
+          INSERT OR REPLACE INTO dgmTypeAttributes (typeID, attributeID, valueInt)
+          VALUES (?, 1113, ?)
+        `).run(decryptor.typeID, decryptor.meModifier);
+      }
+
+      // Attribute 1114: TE Modifier
+      if (decryptor.teModifier !== undefined) {
+        db.prepare(`
+          INSERT OR REPLACE INTO dgmTypeAttributes (typeID, attributeID, valueInt)
+          VALUES (?, 1114, ?)
+        `).run(decryptor.typeID, decryptor.teModifier);
+      }
+
+      // Attribute 1124: Runs Modifier
+      if (decryptor.runsModifier !== undefined) {
+        db.prepare(`
+          INSERT OR REPLACE INTO dgmTypeAttributes (typeID, attributeID, valueInt)
+          VALUES (?, 1124, ?)
+        `).run(decryptor.typeID, decryptor.runsModifier);
+      }
     }
   }
 }

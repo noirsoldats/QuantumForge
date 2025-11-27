@@ -161,12 +161,9 @@ async function calculateManufacturingJobCost(blueprintTypeId, runs, systemId, fa
   // Get system cost index for manufacturing
   const costIndices = getCostIndices(systemId);
   const manufacturingIndex = costIndices.find(idx => idx.activity === MANUFACTURING_ACTIVITY);
-
-  if (!manufacturingIndex || manufacturingIndex.costIndex === 0) {
-    console.log(`No manufacturing cost index for system ${systemId}, returning 0 job cost`);
-    return {
+  const jobCostObj = {
       estimatedItemValue: 0,
-      systemCostIndex: 0,
+      systemCostIndex: manufacturingIndex.costIndex,
       jobGrossCost: 0,
       structureRollBonus: 0,
       jobBaseCost: 0,
@@ -174,8 +171,13 @@ async function calculateManufacturingJobCost(blueprintTypeId, runs, systemId, fa
       facilityTaxRate: 0,
       sccSurcharge: 0,
       totalJobCost: 0
-    };
+  };
+
+  if (!manufacturingIndex || manufacturingIndex.costIndex === 0) {
+    console.log(`No manufacturing cost index for system ${systemId}, returning 0 job cost`);
+    return jobCostObj;
   }
+  jobCostObj.systemCostIndex = manufacturingIndex.costIndex;
 
   // Calculate EIV (Estimated Item Value) from base materials at ME 0
   // EIV = sum of (adjusted_price × quantity) for each base material
@@ -189,17 +191,7 @@ async function calculateManufacturingJobCost(blueprintTypeId, runs, systemId, fa
 
     if (!baseMaterials || baseMaterials.length === 0) {
       console.warn(`No materials found for blueprint ${blueprintTypeId}`);
-      return {
-        estimatedItemValue: 0,
-        systemCostIndex: manufacturingIndex.costIndex,
-        jobGrossCost: 0,
-        structureRollBonus: 0,
-        jobBaseCost: 0,
-        facilityTax: 0,
-        facilityTaxRate: 0,
-        sccSurcharge: 0,
-        totalJobCost: 0
-      };
+      return jobCostObj;
     }
 
     // Calculate EIV from base materials × runs × adjusted prices
@@ -220,9 +212,11 @@ async function calculateManufacturingJobCost(blueprintTypeId, runs, systemId, fa
   } catch (error) {
     console.error(`Error calculating EIV for blueprint ${blueprintTypeId}:`, error);
   }
+  jobCostObj.estimatedItemValue = estimatedItemValue;
 
   // Job Gross Cost = EIV × System Cost Index
   const jobGrossCost = estimatedItemValue * manufacturingIndex.costIndex;
+  jobCostObj.jobGrossCost = jobGrossCost;
 
   // Structure cost bonus (cost reduction from structure type)
   // NPC stations = 0%, Player structures vary by type (Raitaru: 3%, Azbel: 4%, Sotiyo: 5%)
@@ -232,9 +226,11 @@ async function calculateManufacturingJobCost(blueprintTypeId, runs, systemId, fa
     structureCostBonus = facility.structureBonuses.costReduction || 0;
     console.log(`Using structure cost bonus: ${structureCostBonus}% for ${facility.structureBonuses.structureName}`);
   }
+  jobCostObj.structureRollBonus = structureCostBonus;
 
   // Job Base Cost = Job Gross Cost × (1 - Structure Bonus%)
   const jobBaseCost = jobGrossCost * (1 - structureCostBonus / 100);
+  jobCostObj.jobBaseCost = jobBaseCost;
 
   // Facility tax rate (set by structure owner in player structures)
   // NPC stations: 0.25%, Player structures: variable (typically 0-10%)
@@ -249,27 +245,20 @@ async function calculateManufacturingJobCost(blueprintTypeId, runs, systemId, fa
       facilityTaxRate = 0;
     }
   }
+  jobCostObj.facilityTaxRate = facilityTaxRate;
 
   // Facility Tax = EIV × Facility Tax Rate
   const facilityTax = estimatedItemValue * (facilityTaxRate / 100);
+  jobCostObj.facilityTax = facilityTax;
 
   // SCC Surcharge = 4% of Estimated Item Value
   const sccSurcharge = estimatedItemValue * 0.04;
+  jobCostObj.sccSurcharge = sccSurcharge;
 
   // Total Job Cost
-  const totalJobCost = jobBaseCost + facilityTax + sccSurcharge;
+  jobCostObj.totalJobCost = jobBaseCost + facilityTax + sccSurcharge;
 
-  return {
-    estimatedItemValue,
-    systemCostIndex: manufacturingIndex.costIndex,
-    jobGrossCost,
-    structureCostBonus,
-    jobBaseCost,
-    facilityTax,
-    facilityTaxRate,
-    sccSurcharge,
-    totalJobCost
-  };
+  return jobCostObj;
 }
 
 /**

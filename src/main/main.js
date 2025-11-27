@@ -269,9 +269,11 @@ app.whenReady().then(async () => {
   // Skip wizard and mark as completed
   if (configFileExists && isFirstLaunch) {
     console.log('[App] Existing config detected without firstLaunchCompleted flag, migrating...');
-    updateSettings('general.firstLaunchCompleted', true);
-    updateSettings('general.wizardVersion', '1.0');
-    updateSettings('general.wizardCompletedAt', new Date().toISOString());
+    updateSettings('general', {
+        "firstLaunchCompleted": true,
+        "wizardVersion": "1.0",
+        "wizardCompletedAt": new Date().toISOString()
+    })
     console.log('[App] Migration complete, proceeding with normal startup');
     await startNormalApplication();
     return;
@@ -804,7 +806,8 @@ function setupIPCHandlers() {
 
   ipcMain.handle('market:fetchOrders', async (event, regionId, typeId, locationFilter) => {
     try {
-      return await fetchMarketOrders(regionId, typeId, locationFilter);
+      // Always use cached data (forceRefresh=false) - only manual refresh triggers ESI fetch
+      return await fetchMarketOrders(regionId, typeId, locationFilter, false);
     } catch (error) {
       console.error('Error fetching market orders:', error);
       return [];
@@ -813,7 +816,8 @@ function setupIPCHandlers() {
 
   ipcMain.handle('market:fetchHistory', async (event, regionId, typeId) => {
     try {
-      return await fetchMarketHistory(regionId, typeId);
+      // Auto-refresh: forceRefresh=false allows automatic staleness check (11:05 UTC cutoff)
+      return await fetchMarketHistory(regionId, typeId, false);
     } catch (error) {
       console.error('Error fetching market history:', error);
       return [];
