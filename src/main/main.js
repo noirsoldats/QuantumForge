@@ -62,7 +62,11 @@ const {
   getSdePath,
   sdeExists,
   deleteSDE,
+  getSdeSource,
+  setSdeSource,
   MINIMUM_SDE_VERSION,
+  GITHUB_REPO_OWNER,
+  GITHUB_REPO_NAME,
 } = require('./sde-manager');
 const {
   getSkillName,

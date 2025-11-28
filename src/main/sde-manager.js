@@ -189,13 +189,46 @@ async function getLatestVersion() {
 }
 
 /**
- * Compare two version strings numerically
+ * Detect version format
+ * @param {string} version - Version string
+ * @returns {string} 'date' for YYYYMMDD format, 'numeric' for GitHub format, 'unknown' otherwise
+ */
+function detectVersionFormat(version) {
+  if (!version) return 'unknown';
+
+  // Check if it's a date format (YYYYMMDD - 8 digits starting with 20)
+  if (/^20\d{6}$/.test(version)) {
+    return 'date';
+  }
+
+  // Check if it's numeric (GitHub format - typically 7 digits)
+  if (/^\d+$/.test(version)) {
+    return 'numeric';
+  }
+
+  return 'unknown';
+}
+
+/**
+ * Compare two version strings (handles mixed date/numeric formats)
  * @param {string} v1 - First version
  * @param {string} v2 - Second version
  * @returns {number} -1 if v1 < v2, 0 if equal, 1 if v1 > v2
  */
 function compareVersions(v1, v2) {
-  // Convert to numbers for proper comparison
+  const format1 = detectVersionFormat(v1);
+  const format2 = detectVersionFormat(v2);
+
+  // If comparing different formats (old date vs new GitHub),
+  // always consider the date format as older
+  if (format1 === 'date' && format2 === 'numeric') {
+    return -1; // date format is older, needs update
+  }
+  if (format1 === 'numeric' && format2 === 'date') {
+    return 1; // numeric is newer
+  }
+
+  // Same format or both unknown - compare numerically
   const num1 = parseInt(v1, 10);
   const num2 = parseInt(v2, 10);
 
@@ -274,13 +307,20 @@ async function downloadSDE(progressCallback = null) {
 }
 
 /**
- * Download a file from URL
+ * Download a file from URL (with redirect support)
  * @param {string} url - URL to download from
  * @param {string} dest - Destination file path
  * @param {Function} progressCallback - Callback for progress updates
+ * @param {number} redirectCount - Internal redirect counter (max 5)
  */
-function downloadFile(url, dest, progressCallback = null) {
+function downloadFile(url, dest, progressCallback = null, redirectCount = 0) {
   return new Promise((resolve, reject) => {
+    // Prevent infinite redirect loops
+    if (redirectCount > 5) {
+      reject(new Error('Too many redirects (max 5)'));
+      return;
+    }
+
     const file = createWriteStream(dest);
 
     const options = {
@@ -290,6 +330,27 @@ function downloadFile(url, dest, progressCallback = null) {
     };
 
     https.get(url, options, (response) => {
+      // Handle redirects (301, 302, 307, 308)
+      if (response.statusCode === 301 || response.statusCode === 302 ||
+          response.statusCode === 307 || response.statusCode === 308) {
+        file.close();
+        fs.unlinkSync(dest);
+
+        const redirectUrl = response.headers.location;
+        if (!redirectUrl) {
+          reject(new Error(`Redirect (${response.statusCode}) without location header`));
+          return;
+        }
+
+        console.log(`Following redirect (${response.statusCode}) to: ${redirectUrl}`);
+
+        // Follow the redirect
+        downloadFile(redirectUrl, dest, progressCallback, redirectCount + 1)
+          .then(resolve)
+          .catch(reject);
+        return;
+      }
+
       // Check for HTTP errors
       if (response.statusCode === 403) {
         file.close();

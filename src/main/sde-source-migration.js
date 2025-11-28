@@ -67,31 +67,45 @@ function needsMigration() {
   const source = getSdeSource();
   const state = getMigrationState();
 
+  console.log('[Migration] Checking migration status:', { source, state });
+
   // Migration already complete
   if (state.migrationComplete) {
-    return false;
-  }
-
-  // Max 3 attempts
-  if (state.migrationAttempts >= 3) {
-    console.log('Migration skipped: max attempts reached');
+    console.log('[Migration] Migration already completed');
     return false;
   }
 
   // Already on GitHub source
   if (source === 'github') {
     // Mark as complete if not already
+    console.log('[Migration] Already on GitHub source, marking complete');
     if (!state.migrationComplete) {
       saveMigrationState({ ...state, migrationComplete: true });
     }
     return false;
   }
 
+  // Max 3 attempts - but reset if user manually downloaded or if source changed
+  if (state.migrationAttempts >= 3) {
+    console.log('[Migration] Max attempts reached, checking if reset needed');
+    // If source is now github, reset the migration state
+    if (source === 'github') {
+      console.log('[Migration] Source is GitHub, resetting migration state');
+      resetMigrationState();
+      saveMigrationState({ migrationComplete: true, migrationAttempts: 0 });
+      return false;
+    }
+    console.log('[Migration] Skipped: max attempts reached without success');
+    return false;
+  }
+
   // Legacy Fuzzwork or no source set but SDE exists
   if (source === 'fuzzwork' || (source === null && sdeExists())) {
+    console.log('[Migration] Migration needed - legacy SDE detected');
     return true;
   }
 
+  console.log('[Migration] No migration needed');
   return false;
 }
 
@@ -225,7 +239,20 @@ function resetMigrationState() {
     migrationError: null,
   };
   saveMigrationState(state);
-  console.log('Migration state reset');
+  console.log('[Migration] Migration state reset');
+  return state;
+}
+
+/**
+ * Force mark migration as complete (useful after manual SDE download)
+ */
+function markMigrationComplete() {
+  const state = getMigrationState();
+  state.migrationComplete = true;
+  state.migrationError = null;
+  saveMigrationState(state);
+  console.log('[Migration] Migration marked as complete');
+  return state;
 }
 
 module.exports = {
@@ -233,4 +260,5 @@ module.exports = {
   migrateToGitHub,
   getMigrationState,
   resetMigrationState,
+  markMigrationComplete,
 };
