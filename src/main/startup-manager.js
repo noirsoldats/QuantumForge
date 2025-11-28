@@ -2,6 +2,7 @@ const { ipcMain } = require('electron');
 const { initializeMarketDatabase } = require('./market-database');
 const { checkUpdateRequired, sdeExists, downloadAndValidateSDE, getSdePath } = require('./sde-manager');
 const { loadSettings, updateSettings } = require('./settings-manager');
+const { needsMigration, migrateToGitHub } = require('./sde-source-migration');
 
 /**
  * Orchestrates all startup checks and initialization
@@ -17,6 +18,9 @@ async function runStartupChecks(splashWindow) {
 
     // Step 2: Check for Application Updates
     await runAppUpdateCheck(splashWindow);
+
+    // Step 2.5: Migrate SDE source if needed (silent migration)
+    await runSDEMigration(splashWindow);
 
     // Step 3: Check SDE Status
     await runSDECheck(splashWindow);
@@ -323,6 +327,70 @@ async function downloadUpdate(splashWindow, autoUpdater) {
 }
 
 /**
+ * Step 2.5: Migrate SDE Source (Silent Migration)
+ */
+async function runSDEMigration(splashWindow) {
+  // Check if migration is needed
+  if (!needsMigration()) {
+    console.log('[Startup] No SDE migration needed');
+    return;
+  }
+
+  console.log('[Startup] SDE migration required (Fuzzwork → GitHub)');
+
+  splashWindow.webContents.send('startup:progress', {
+    task: 'sdeMigration',
+    status: 'Migrating SDE source...',
+    complete: null,
+  });
+
+  try {
+    const result = await migrateToGitHub((progress) => {
+      // Forward migration progress
+      splashWindow.webContents.send('startup:progress', {
+        task: 'sdeMigration',
+        status: progress.message || `Migrating SDE... ${progress.percent || 0}%`,
+        percentage: progress.percent,
+        complete: null,
+      });
+    });
+
+    if (result.success) {
+      console.log('[Startup] SDE migration completed successfully');
+      splashWindow.webContents.send('startup:progress', {
+        task: 'sdeMigration',
+        status: result.message || 'Migration complete',
+        complete: true,
+      });
+    } else if (result.skipped) {
+      // Migration skipped (e.g., GitHub unavailable) - continue with existing SDE
+      console.log('[Startup] SDE migration skipped:', result.reason);
+      splashWindow.webContents.send('startup:progress', {
+        task: 'sdeMigration',
+        status: 'Migration skipped (will retry later)',
+        complete: true,
+      });
+    } else {
+      // Migration failed but not critical - continue with existing SDE
+      console.error('[Startup] SDE migration failed:', result.error);
+      splashWindow.webContents.send('startup:progress', {
+        task: 'sdeMigration',
+        status: 'Migration failed (using current SDE)',
+        complete: true,
+      });
+    }
+  } catch (error) {
+    // Migration error - not critical, continue with existing SDE
+    console.error('[Startup] SDE migration error:', error);
+    splashWindow.webContents.send('startup:progress', {
+      task: 'sdeMigration',
+      status: 'Migration error (using current SDE)',
+      complete: true,
+    });
+  }
+}
+
+/**
  * Step 3: Check SDE Status
  */
 async function runSDECheck(splashWindow) {
@@ -417,7 +485,7 @@ async function requireSDEDownload(splashWindow, data) {
       splashWindow.webContents.send('startup:requireAction', {
         action: 'sdeDownload',
         data: {
-          size: 150 * 1024 * 1024, // Approximate 150MB
+          size: 50 * 1024 * 1024, // Approximate 50MB (GitHub stripped version)
         },
       });
     } else if (data.isCritical) {

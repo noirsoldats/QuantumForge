@@ -417,6 +417,7 @@ async function loadSdeStatus() {
 
 // Update SDE UI elements
 function updateSdeUI(status, validationStatus, hasBackup, backupVersion) {
+  const sourceEl = document.getElementById('sde-source');
   const currentVersionEl = document.getElementById('sde-current-version');
   const latestVersionEl = document.getElementById('sde-latest-version');
   const minimumVersionEl = document.getElementById('sde-minimum-version');
@@ -428,6 +429,7 @@ function updateSdeUI(status, validationStatus, hasBackup, backupVersion) {
   const restoreBtn = document.getElementById('sde-restore-btn');
 
   if (status.error) {
+    if (sourceEl) sourceEl.textContent = 'Unknown';
     if (currentVersionEl) currentVersionEl.textContent = 'Error';
     if (latestVersionEl) latestVersionEl.textContent = 'Error';
     if (statusEl) {
@@ -436,6 +438,18 @@ function updateSdeUI(status, validationStatus, hasBackup, backupVersion) {
     }
     if (updateBtn) updateBtn.disabled = true;
     return;
+  }
+
+  // SDE Source
+  if (sourceEl) {
+    const source = status.source || 'github';
+    if (source === 'github') {
+      sourceEl.innerHTML = '<a href="https://github.com/noirsoldats/eve-sde-converter" target="_blank" style="color: #00d4ff; text-decoration: none;">GitHub (eve-sde-converter)</a>';
+    } else if (source === 'fuzzwork') {
+      sourceEl.textContent = 'Fuzzwork (Legacy)';
+    } else {
+      sourceEl.textContent = 'Local';
+    }
   }
 
   // Current version

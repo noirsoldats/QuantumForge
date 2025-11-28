@@ -3,6 +3,7 @@ const path             = require('path');
 const Database         = require('better-sqlite3');
 const {app}            = require('electron');
 const {getCostIndices} = require('./esi-cost-indices');
+const {getSdePath}     = require('./sde-manager');
 
 // In-memory caches for performance optimization
 const typeNameCache     = new Map();
@@ -10,12 +11,12 @@ const materialTreeCache = new Map();
 const MAX_CACHE_SIZE    = 100;
 
 /**
- * Get the path to the SDE database
+ * Get the path to the SDE database (handles both old and new filenames)
  * @returns {string} Path to SDE database
  */
 function getSDEPath() {
-    const userDataPath = app.getPath('userData');
-    return path.join(userDataPath, 'sde', 'sqlite-latest.sqlite');
+    // Use sde-manager's getSdePath which handles both old and new filenames
+    return getSdePath();
 }
 
 /**

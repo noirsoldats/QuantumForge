@@ -451,7 +451,9 @@ function setupIPCHandlers() {
   // Handle IPC for SDE management
   ipcMain.handle('sde:checkUpdate', async () => {
     try {
-      return await checkUpdateRequired();
+      const status = await checkUpdateRequired();
+      const source = getSdeSource();
+      return { ...status, source };
     } catch (error) {
       console.error('SDE check update error:', error);
       return { error: error.message };
