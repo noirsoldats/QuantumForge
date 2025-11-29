@@ -505,6 +505,21 @@ body {
   text-align: center;
 }
 
+/* Location column tooltip styling */
+.summary-table td[title] {
+  cursor: help;
+  position: relative;
+}
+
+.summary-table td[title]:hover {
+  text-decoration: underline;
+  text-decoration-style: dotted;
+  text-decoration-color: rgba(100, 180, 255, 0.5);
+}
+
+/* Enhanced native tooltip appearance handled by browser */
+/* Modern browsers style the title attribute tooltip automatically */
+
 .summary-table .positive {
   color: #4ade80;
 }

@@ -2,10 +2,11 @@ const fs = require('fs');
 const path = require('path');
 const { app } = require('electron');
 const {isTokenExpired, refreshAccessToken} = require("./esi-auth");
+const { getConfigPath } = require('./config-migration');
+const { getCharacterDatabase } = require('./character-database');
 
-// Get the user data directory
-const userDataPath = app.getPath('userData');
-const settingsFilePath = path.join(userDataPath, 'quantum_config.json');
+// Get the settings file path (from config/ subdirectory)
+const settingsFilePath = getConfigPath();
 
 // Default settings
 const defaultSettings = {
@@ -184,46 +185,50 @@ function getSettingsFilePath() {
  */
 function addCharacter(characterData) {
   try {
+    const db = getCharacterDatabase();
     const settings = loadSettings();
 
     // Check if character already exists
-    const existingIndex = settings.accounts.characters.findIndex(
-      (char) => char.characterId === characterData.character.characterId
+    const existing = db.prepare('SELECT character_id FROM characters WHERE character_id = ?').get(characterData.character.characterId);
+
+    const now = Date.now();
+
+    db.prepare(`
+      INSERT OR REPLACE INTO characters (
+        character_id, character_name, corporation_id, alliance_id,
+        portrait, access_token, refresh_token, expires_at,
+        token_type, scopes, added_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      characterData.character.characterId,
+      characterData.character.characterName,
+      characterData.character.corporationId || null,
+      characterData.character.allianceId || null,
+      characterData.character.portrait || null,
+      characterData.access_token,
+      characterData.refresh_token,
+      characterData.expires_at,
+      characterData.token_type || 'Bearer',
+      JSON.stringify(characterData.character.scopes || []),
+      existing ? existing.added_at : now,
+      now
     );
 
-    const characterEntry = {
-      characterId: characterData.character.characterId,
-      characterName: characterData.character.characterName,
-      corporationId: characterData.character.corporationId,
-      allianceId: characterData.character.allianceId,
-      scopes: characterData.character.scopes,
-      portrait: characterData.character.portrait,
-      accessToken: characterData.access_token,
-      refreshToken: characterData.refresh_token,
-      expiresAt: characterData.expires_at,
-      tokenType: characterData.token_type,
-      addedAt: Date.now(),
-      skills: null,
-      skillOverrides: {},
-    };
-
-    if (existingIndex >= 0) {
-      // Update existing character
-      settings.accounts.characters[existingIndex] = characterEntry;
+    if (existing) {
       console.log('Updated existing character:', characterData.character.characterName);
     } else {
-      // Add new character
-      settings.accounts.characters.push(characterEntry);
       console.log('Added new character:', characterData.character.characterName);
 
       // Automatically set as default if this is the first character
-      if (settings.accounts.characters.length === 1) {
+      const characterCount = db.prepare('SELECT COUNT(*) as count FROM characters').get().count;
+      if (characterCount === 1) {
         settings.accounts.defaultCharacterId = characterData.character.characterId;
+        saveSettings(settings);
         console.log('Automatically set first character as default:', characterData.character.characterName);
       }
     }
 
-    return saveSettings(settings);
+    return true;
   } catch (error) {
     console.error('Error adding character:', error);
     return false;
@@ -237,30 +242,23 @@ function addCharacter(characterData) {
  */
 function removeCharacter(characterId) {
   try {
+    const db = getCharacterDatabase();
     const settings = loadSettings();
 
     // Clear default character if this was it
     if (settings.accounts.defaultCharacterId === characterId) {
       delete settings.accounts.defaultCharacterId;
+      saveSettings(settings);
       console.log('Cleared default character as it was removed');
     }
 
-    settings.accounts.characters = settings.accounts.characters.filter(
-      (char) => char.characterId !== characterId
-    );
-
-    // Remove all blueprints for this character
-    if (settings.owned_blueprints) {
-      const blueprintsBefore = settings.owned_blueprints.length;
-      settings.owned_blueprints = settings.owned_blueprints.filter(
-        (bp) => bp.characterId !== characterId
-      );
-      const blueprintsRemoved = blueprintsBefore - settings.owned_blueprints.length;
-      console.log(`Removed ${blueprintsRemoved} blueprints for character ${characterId}`);
-    }
+    // Delete character (CASCADE will handle related skills, blueprints, etc.)
+    const result = db.prepare('DELETE FROM characters WHERE character_id = ?').run(characterId);
 
     console.log('Removed character:', characterId);
-    return saveSettings(settings);
+    console.log(`Cascade deleted all related data (skills, blueprints, etc.) for character ${characterId}`);
+
+    return result.changes > 0;
   } catch (error) {
     console.error('Error removing character:', error);
     return false;
@@ -275,20 +273,24 @@ function removeCharacter(characterId) {
  */
 function updateCharacterTokens(characterId, tokenData) {
   try {
-    const settings = loadSettings();
+    const db = getCharacterDatabase();
 
-    const character = settings.accounts.characters.find(
-      (char) => char.characterId === characterId
+    const result = db.prepare(`
+      UPDATE characters
+      SET access_token = ?, refresh_token = ?, expires_at = ?, token_type = ?, updated_at = ?
+      WHERE character_id = ?
+    `).run(
+      tokenData.access_token,
+      tokenData.refresh_token,
+      tokenData.expires_at,
+      tokenData.token_type || 'Bearer',
+      Date.now(),
+      characterId
     );
 
-    if (character) {
-      character.accessToken = tokenData.access_token;
-      character.refreshToken = tokenData.refresh_token;
-      character.expiresAt = tokenData.expires_at;
-      character.tokenType = tokenData.token_type;
-
+    if (result.changes > 0) {
       console.log('Updated tokens for character:', characterId);
-      return saveSettings(settings);
+      return true;
     }
 
     console.error('Character not found:', characterId);
@@ -304,8 +306,27 @@ function updateCharacterTokens(characterId, tokenData) {
  * @returns {Array} Array of characters
  */
 function getCharacters() {
-  const settings = loadSettings();
-  return settings.accounts.characters || [];
+  try {
+    const db = getCharacterDatabase();
+    const rows = db.prepare('SELECT * FROM characters ORDER BY character_name').all();
+
+    return rows.map(row => ({
+      characterId: row.character_id,
+      characterName: row.character_name,
+      corporationId: row.corporation_id,
+      allianceId: row.alliance_id,
+      portrait: row.portrait,
+      accessToken: row.access_token,
+      refreshToken: row.refresh_token,
+      expiresAt: row.expires_at,
+      tokenType: row.token_type,
+      scopes: JSON.parse(row.scopes),
+      addedAt: row.added_at,
+    }));
+  } catch (error) {
+    console.error('Error getting characters from database:', error);
+    return [];
+  }
 }
 
 /**
@@ -314,8 +335,64 @@ function getCharacters() {
  * @returns {Object|null} Character data or null
  */
 function getCharacter(characterId) {
-  const settings = loadSettings();
-  return settings.accounts.characters.find((char) => char.characterId === characterId) || null;
+  try {
+    const db = getCharacterDatabase();
+    const row = db.prepare('SELECT * FROM characters WHERE character_id = ?').get(characterId);
+
+    if (!row) return null;
+
+    // Get skills data
+    const skillsMetadata = db.prepare('SELECT * FROM skills_metadata WHERE character_id = ?').get(characterId);
+    const skillRows = db.prepare('SELECT * FROM skills WHERE character_id = ?').all(characterId);
+    const skillOverrideRows = db.prepare('SELECT skill_id, override_level FROM skill_overrides WHERE character_id = ?').all(characterId);
+
+    // Build skills object
+    let skills = null;
+    if (skillsMetadata) {
+      const skillsMap = {};
+      for (const skill of skillRows) {
+        skillsMap[skill.skill_id] = {
+          skillId: skill.skill_id,
+          activeSkillLevel: skill.active_skill_level,
+          trainedSkillLevel: skill.trained_skill_level,
+          skillpointsInSkill: skill.skillpoints_in_skill,
+        };
+      }
+
+      skills = {
+        totalSp: skillsMetadata.total_sp,
+        unallocatedSp: skillsMetadata.unallocated_sp,
+        skills: skillsMap,
+        lastUpdated: skillsMetadata.last_updated,
+        cacheExpiresAt: skillsMetadata.cache_expires_at,
+      };
+    }
+
+    // Build skill overrides object
+    const skillOverrides = {};
+    for (const override of skillOverrideRows) {
+      skillOverrides[override.skill_id] = override.override_level;
+    }
+
+    return {
+      characterId: row.character_id,
+      characterName: row.character_name,
+      corporationId: row.corporation_id,
+      allianceId: row.alliance_id,
+      portrait: row.portrait,
+      accessToken: row.access_token,
+      refreshToken: row.refresh_token,
+      expiresAt: row.expires_at,
+      tokenType: row.token_type,
+      scopes: JSON.parse(row.scopes),
+      addedAt: row.added_at,
+      skills: skills,
+      skillOverrides: skillOverrides,
+    };
+  } catch (error) {
+    console.error('Error getting character from database:', error);
+    return null;
+  }
 }
 
 /**
@@ -326,19 +403,62 @@ function getCharacter(characterId) {
  */
 function updateCharacterSkills(characterId, skillsData) {
   try {
-    const settings = loadSettings();
-    const character = settings.accounts.characters.find(
-      (char) => char.characterId === characterId
-    );
+    const db = getCharacterDatabase();
 
-    if (character) {
-      character.skills = skillsData;
-      console.log('Updated skills for character:', characterId);
-      return saveSettings(settings);
+    // Verify character exists
+    const character = db.prepare('SELECT character_id FROM characters WHERE character_id = ?').get(characterId);
+    if (!character) {
+      console.error('Character not found:', characterId);
+      return false;
     }
 
-    console.error('Character not found:', characterId);
-    return false;
+    // Begin transaction
+    db.exec('BEGIN TRANSACTION');
+
+    try {
+      // Update skills metadata
+      db.prepare(`
+        INSERT OR REPLACE INTO skills_metadata (
+          character_id, total_sp, unallocated_sp, last_updated, cache_expires_at
+        ) VALUES (?, ?, ?, ?, ?)
+      `).run(
+        characterId,
+        skillsData.totalSp || 0,
+        skillsData.unallocatedSp || 0,
+        skillsData.lastUpdated || Date.now(),
+        skillsData.cacheExpiresAt || null
+      );
+
+      // Delete existing skills for this character
+      db.prepare('DELETE FROM skills WHERE character_id = ?').run(characterId);
+
+      // Insert all skills
+      const insertSkill = db.prepare(`
+        INSERT INTO skills (
+          character_id, skill_id, active_skill_level,
+          trained_skill_level, skillpoints_in_skill
+        ) VALUES (?, ?, ?, ?, ?)
+      `);
+
+      if (skillsData.skills) {
+        for (const [skillId, skillData] of Object.entries(skillsData.skills)) {
+          insertSkill.run(
+            characterId,
+            parseInt(skillId),
+            skillData.activeSkillLevel,
+            skillData.trainedSkillLevel,
+            skillData.skillpointsInSkill
+          );
+        }
+      }
+
+      db.exec('COMMIT');
+      console.log('Updated skills for character:', characterId);
+      return true;
+    } catch (error) {
+      db.exec('ROLLBACK');
+      throw error;
+    }
   } catch (error) {
     console.error('Error updating character skills:', error);
     return false;
@@ -352,14 +472,15 @@ function updateCharacterSkills(characterId, skillsData) {
  */
 function getSkillsCacheStatus(characterId) {
   try {
-    const character = getCharacter(characterId);
+    const db = getCharacterDatabase();
+    const metadata = db.prepare('SELECT cache_expires_at FROM skills_metadata WHERE character_id = ?').get(characterId);
 
-    if (!character || !character.skills || !character.skills.cacheExpiresAt) {
+    if (!metadata || !metadata.cache_expires_at) {
       return { isCached: false, expiresAt: null, remainingSeconds: 0 };
     }
 
     const now = Date.now();
-    const expiresAt = character.skills.cacheExpiresAt;
+    const expiresAt = metadata.cache_expires_at;
     const remainingMs = expiresAt - now;
     const remainingSeconds = Math.max(0, Math.floor(remainingMs / 1000));
 
@@ -381,19 +502,22 @@ function getSkillsCacheStatus(characterId) {
  */
 function getBlueprintsCacheStatus(characterId) {
   try {
-    const settings = loadSettings();
+    const db = getCharacterDatabase();
 
     // Find any blueprint for this character to get cache info
-    const characterBlueprint = settings.owned_blueprints.find(
-      bp => bp.characterId === characterId && bp.source === 'esi' && bp.cacheExpiresAt
-    );
+    const blueprint = db.prepare(`
+      SELECT cache_expires_at
+      FROM blueprints
+      WHERE character_id = ? AND source = 'esi' AND cache_expires_at IS NOT NULL
+      LIMIT 1
+    `).get(characterId);
 
-    if (!characterBlueprint || !characterBlueprint.cacheExpiresAt) {
+    if (!blueprint || !blueprint.cache_expires_at) {
       return { isCached: false, expiresAt: null, remainingSeconds: 0 };
     }
 
     const now = Date.now();
-    const expiresAt = characterBlueprint.cacheExpiresAt;
+    const expiresAt = blueprint.cache_expires_at;
     const remainingMs = expiresAt - now;
     const remainingSeconds = Math.max(0, Math.floor(remainingMs / 1000));
 
@@ -417,30 +541,29 @@ function getBlueprintsCacheStatus(characterId) {
  */
 function setSkillOverride(characterId, skillId, level) {
   try {
-    const settings = loadSettings();
-    const character = settings.accounts.characters.find(
-      (char) => char.characterId === characterId
-    );
+    const db = getCharacterDatabase();
 
-    if (character) {
-      if (!character.skillOverrides) {
-        character.skillOverrides = {};
-      }
-
-      if (level === null || level === undefined) {
-        // Remove override
-        delete character.skillOverrides[skillId];
-      } else {
-        // Set override
-        character.skillOverrides[skillId] = level;
-      }
-
-      console.log(`Set skill override for character ${characterId}, skill ${skillId}: ${level}`);
-      return saveSettings(settings);
+    // Verify character exists
+    const character = db.prepare('SELECT character_id FROM characters WHERE character_id = ?').get(characterId);
+    if (!character) {
+      console.error('Character not found:', characterId);
+      return false;
     }
 
-    console.error('Character not found:', characterId);
-    return false;
+    if (level === null || level === undefined) {
+      // Remove override
+      db.prepare('DELETE FROM skill_overrides WHERE character_id = ? AND skill_id = ?').run(characterId, skillId);
+      console.log(`Removed skill override for character ${characterId}, skill ${skillId}`);
+    } else {
+      // Set override
+      db.prepare(`
+        INSERT OR REPLACE INTO skill_overrides (character_id, skill_id, override_level)
+        VALUES (?, ?, ?)
+      `).run(characterId, skillId, level);
+      console.log(`Set skill override for character ${characterId}, skill ${skillId}: ${level}`);
+    }
+
+    return true;
   } catch (error) {
     console.error('Error setting skill override:', error);
     return false;
@@ -455,20 +578,24 @@ function setSkillOverride(characterId, skillId, level) {
  */
 function getEffectiveSkillLevel(characterId, skillId) {
   try {
-    const character = getCharacter(characterId);
+    const db = getCharacterDatabase();
 
+    // Verify character exists
+    const character = db.prepare('SELECT character_id FROM characters WHERE character_id = ?').get(characterId);
     if (!character) {
       return null;
     }
 
     // Check for override first
-    if (character.skillOverrides && character.skillOverrides[skillId] !== undefined) {
-      return character.skillOverrides[skillId];
+    const override = db.prepare('SELECT override_level FROM skill_overrides WHERE character_id = ? AND skill_id = ?').get(characterId, skillId);
+    if (override) {
+      return override.override_level;
     }
 
     // Return actual skill level
-    if (character.skills && character.skills.skills && character.skills.skills[skillId]) {
-      return character.skills.skills[skillId].trainedSkillLevel;
+    const skill = db.prepare('SELECT trained_skill_level FROM skills WHERE character_id = ? AND skill_id = ?').get(characterId, skillId);
+    if (skill) {
+      return skill.trained_skill_level;
     }
 
     return 0; // Skill not trained
@@ -485,19 +612,18 @@ function getEffectiveSkillLevel(characterId, skillId) {
  */
 function clearSkillOverrides(characterId) {
   try {
-    const settings = loadSettings();
-    const character = settings.accounts.characters.find(
-      (char) => char.characterId === characterId
-    );
+    const db = getCharacterDatabase();
 
-    if (character) {
-      character.skillOverrides = {};
-      console.log('Cleared skill overrides for character:', characterId);
-      return saveSettings(settings);
+    // Verify character exists
+    const character = db.prepare('SELECT character_id FROM characters WHERE character_id = ?').get(characterId);
+    if (!character) {
+      console.error('Character not found:', characterId);
+      return false;
     }
 
-    console.error('Character not found:', characterId);
-    return false;
+    db.prepare('DELETE FROM skill_overrides WHERE character_id = ?').run(characterId);
+    console.log('Cleared skill overrides for character:', characterId);
+    return true;
   } catch (error) {
     console.error('Error clearing skill overrides:', error);
     return false;
@@ -511,12 +637,11 @@ function clearSkillOverrides(characterId) {
  */
 function setDefaultCharacter(characterId) {
   try {
+    const db = getCharacterDatabase();
     const settings = loadSettings();
 
-    // Verify character exists
-    const character = settings.accounts.characters.find(
-      (char) => char.characterId === characterId
-    );
+    // Verify character exists in SQLite
+    const character = db.prepare('SELECT character_id FROM characters WHERE character_id = ?').get(characterId);
 
     if (!character) {
       console.error('Character not found:', characterId);
@@ -548,9 +673,7 @@ function getDefaultCharacter() {
       return null;
     }
 
-    return settings.accounts.characters.find(
-      (char) => char.characterId === settings.accounts.defaultCharacterId
-    ) || null;
+    return getCharacter(settings.accounts.defaultCharacterId);
   } catch (error) {
     console.error('Error getting default character:', error);
     return null;
@@ -586,30 +709,61 @@ function clearDefaultCharacter() {
  */
 function updateCharacterBlueprints(characterId, blueprintsData) {
   try {
-    const settings = loadSettings();
+    const db = getCharacterDatabase();
 
-    if (!settings.owned_blueprints) {
-      settings.owned_blueprints = [];
+    // Verify character exists
+    const character = db.prepare('SELECT character_id FROM characters WHERE character_id = ?').get(characterId);
+    if (!character) {
+      console.error('Character not found:', characterId);
+      return false;
     }
 
-    // Remove existing ESI blueprints for this character
-    settings.owned_blueprints = settings.owned_blueprints.filter(
-      bp => !(bp.characterId === characterId && bp.source === 'esi')
-    );
+    // Begin transaction
+    db.exec('BEGIN TRANSACTION');
 
-    // Add new blueprints with metadata
-    blueprintsData.blueprints.forEach(bp => {
-      settings.owned_blueprints.push({
-        ...bp,
-        overrides: {}, // For ME/TE overrides
-        manuallyAdded: false,
-        lastUpdated: blueprintsData.lastUpdated,
-        cacheExpiresAt: blueprintsData.cacheExpiresAt,
-      });
-    });
+    try {
+      // Remove existing ESI blueprints for this character
+      db.prepare('DELETE FROM blueprints WHERE character_id = ? AND source = ?').run(characterId, 'esi');
 
-    console.log(`Updated ${blueprintsData.blueprints.length} blueprints for character:`, characterId);
-    return saveSettings(settings);
+      // Insert new blueprints
+      const insertBlueprint = db.prepare(`
+        INSERT INTO blueprints (
+          item_id, type_id, character_id, corporation_id, location_id,
+          location_flag, quantity, time_efficiency, material_efficiency,
+          runs, is_copy, is_corporation, source, manually_added,
+          fetched_at, last_updated, cache_expires_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+
+      for (const bp of blueprintsData.blueprints) {
+        insertBlueprint.run(
+          bp.itemId,
+          bp.typeId,
+          characterId,
+          bp.corporationId || null,
+          bp.locationId || null,
+          bp.locationFlag || null,
+          bp.quantity,
+          bp.timeEfficiency || 0,
+          bp.materialEfficiency || 0,
+          bp.runs || -1,
+          bp.isCopy ? 1 : 0,
+          bp.isCorporation ? 1 : 0,
+          'esi',
+          0,
+          bp.fetchedAt || Date.now(),
+          blueprintsData.lastUpdated,
+          blueprintsData.cacheExpiresAt || null
+        );
+      }
+
+      db.exec('COMMIT');
+      console.log(`Updated ${blueprintsData.blueprints.length} blueprints for character:`, characterId);
+      return true;
+    } catch (error) {
+      db.exec('ROLLBACK');
+      throw error;
+    }
   } catch (error) {
     console.error('Error updating character blueprints:', error);
     return false;
@@ -623,33 +777,47 @@ function updateCharacterBlueprints(characterId, blueprintsData) {
  */
 function addManualBlueprint(blueprint) {
   try {
-    const settings = loadSettings();
+    const db = getCharacterDatabase();
 
-    if (!settings.owned_blueprints) {
-      settings.owned_blueprints = [];
+    // Verify character exists
+    const character = db.prepare('SELECT character_id FROM characters WHERE character_id = ?').get(blueprint.characterId);
+    if (!character) {
+      console.error('Character not found:', blueprint.characterId);
+      return false;
     }
 
-    const newBlueprint = {
-      itemId: `manual-${Date.now()}`,
-      typeId: blueprint.typeId,
-      locationId: blueprint.locationId || 0,
-      locationFlag: blueprint.locationFlag || 'Hangar',
-      quantity: blueprint.isCopy ? -2 : -1,
-      timeEfficiency: blueprint.timeEfficiency || 0,
-      materialEfficiency: blueprint.materialEfficiency || 0,
-      runs: blueprint.runs || (blueprint.isCopy ? 1 : -1),
-      isCopy: blueprint.isCopy || false,
-      source: 'manual',
-      characterId: blueprint.characterId,
-      manuallyAdded: true,
-      overrides: {},
-      fetchedAt: Date.now(),
-      lastUpdated: Date.now(),
-    };
+    const itemId = `manual-${Date.now()}`;
+    const now = Date.now();
 
-    settings.owned_blueprints.push(newBlueprint);
-    console.log('Added manual blueprint:', newBlueprint.typeId);
-    return saveSettings(settings);
+    db.prepare(`
+      INSERT INTO blueprints (
+        item_id, type_id, character_id, corporation_id, location_id,
+        location_flag, quantity, time_efficiency, material_efficiency,
+        runs, is_copy, is_corporation, source, manually_added,
+        fetched_at, last_updated, cache_expires_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      itemId,
+      blueprint.typeId,
+      blueprint.characterId,
+      null,
+      blueprint.locationId || 0,
+      blueprint.locationFlag || 'Hangar',
+      blueprint.isCopy ? -2 : -1,
+      blueprint.timeEfficiency || 0,
+      blueprint.materialEfficiency || 0,
+      blueprint.runs || (blueprint.isCopy ? 1 : -1),
+      blueprint.isCopy ? 1 : 0,
+      0,
+      'manual',
+      1,
+      now,
+      now,
+      null
+    );
+
+    console.log('Added manual blueprint:', blueprint.typeId);
+    return true;
   } catch (error) {
     console.error('Error adding manual blueprint:', error);
     return false;
@@ -663,18 +831,12 @@ function addManualBlueprint(blueprint) {
  */
 function removeBlueprint(itemId) {
   try {
-    const settings = loadSettings();
+    const db = getCharacterDatabase();
 
-    if (!settings.owned_blueprints) {
-      return true;
-    }
-
-    settings.owned_blueprints = settings.owned_blueprints.filter(
-      bp => bp.itemId !== itemId
-    );
+    const result = db.prepare('DELETE FROM blueprints WHERE item_id = ?').run(itemId);
 
     console.log('Removed blueprint:', itemId);
-    return saveSettings(settings);
+    return result.changes > 0;
   } catch (error) {
     console.error('Error removing blueprint:', error);
     return false;
@@ -690,33 +852,29 @@ function removeBlueprint(itemId) {
  */
 function setBlueprintOverride(itemId, field, value) {
   try {
-    const settings = loadSettings();
+    const db = getCharacterDatabase();
 
-    if (!settings.owned_blueprints) {
-      return false;
-    }
-
-    const blueprint = settings.owned_blueprints.find(bp => bp.itemId === itemId);
-
+    // Verify blueprint exists
+    const blueprint = db.prepare('SELECT item_id FROM blueprints WHERE item_id = ?').get(itemId);
     if (!blueprint) {
       console.error('Blueprint not found:', itemId);
       return false;
     }
 
-    if (!blueprint.overrides) {
-      blueprint.overrides = {};
-    }
-
     if (value === null || value === undefined) {
       // Remove override
-      delete blueprint.overrides[field];
+      db.prepare('DELETE FROM blueprint_overrides WHERE item_id = ? AND field = ?').run(itemId, field);
+      console.log(`Removed blueprint override for ${itemId}, ${field}`);
     } else {
       // Set override
-      blueprint.overrides[field] = value;
+      db.prepare(`
+        INSERT OR REPLACE INTO blueprint_overrides (item_id, field, value)
+        VALUES (?, ?, ?)
+      `).run(itemId, field, String(value));
+      console.log(`Set blueprint override for ${itemId}, ${field}: ${value}`);
     }
 
-    console.log(`Set blueprint override for ${itemId}, ${field}: ${value}`);
-    return saveSettings(settings);
+    return true;
   } catch (error) {
     console.error('Error setting blueprint override:', error);
     return false;
@@ -730,17 +888,48 @@ function setBlueprintOverride(itemId, field, value) {
  */
 function getBlueprints(characterId = null) {
   try {
-    const settings = loadSettings();
+    const db = getCharacterDatabase();
 
-    if (!settings.owned_blueprints) {
-      return [];
-    }
+    let query = 'SELECT * FROM blueprints';
+    let params = [];
 
     if (characterId) {
-      return settings.owned_blueprints.filter(bp => bp.characterId === characterId);
+      query += ' WHERE character_id = ?';
+      params.push(characterId);
     }
 
-    return settings.owned_blueprints;
+    const rows = db.prepare(query).all(...params);
+
+    // Map database rows to expected format with overrides
+    return rows.map(row => {
+      // Get overrides for this blueprint
+      const overrideRows = db.prepare('SELECT field, value FROM blueprint_overrides WHERE item_id = ?').all(row.item_id);
+      const overrides = {};
+      for (const override of overrideRows) {
+        overrides[override.field] = parseFloat(override.value);
+      }
+
+      return {
+        itemId: row.item_id,
+        typeId: row.type_id,
+        characterId: row.character_id,
+        corporationId: row.corporation_id,
+        locationId: row.location_id,
+        locationFlag: row.location_flag,
+        quantity: row.quantity,
+        timeEfficiency: row.time_efficiency,
+        materialEfficiency: row.material_efficiency,
+        runs: row.runs,
+        isCopy: row.is_copy === 1,
+        isCorporation: row.is_corporation === 1,
+        source: row.source,
+        manuallyAdded: row.manually_added === 1,
+        fetchedAt: row.fetched_at,
+        lastUpdated: row.last_updated,
+        cacheExpiresAt: row.cache_expires_at,
+        overrides: overrides,
+      };
+    });
   } catch (error) {
     console.error('Error getting blueprints:', error);
     return [];
@@ -754,23 +943,23 @@ function getBlueprints(characterId = null) {
  */
 function getEffectiveBlueprintValues(itemId) {
   try {
-    const settings = loadSettings();
+    const db = getCharacterDatabase();
 
-    if (!settings.owned_blueprints) {
-      return null;
-    }
-
-    const blueprint = settings.owned_blueprints.find(bp => bp.itemId === itemId);
+    const blueprint = db.prepare('SELECT material_efficiency, time_efficiency FROM blueprints WHERE item_id = ?').get(itemId);
 
     if (!blueprint) {
       return null;
     }
 
+    // Get overrides
+    const meOverride = db.prepare('SELECT value FROM blueprint_overrides WHERE item_id = ? AND field = ?').get(itemId, 'materialEfficiency');
+    const teOverride = db.prepare('SELECT value FROM blueprint_overrides WHERE item_id = ? AND field = ?').get(itemId, 'timeEfficiency');
+
     return {
-      materialEfficiency: blueprint.overrides?.materialEfficiency ?? blueprint.materialEfficiency,
-      timeEfficiency: blueprint.overrides?.timeEfficiency ?? blueprint.timeEfficiency,
-      hasMEOverride: blueprint.overrides?.materialEfficiency !== undefined,
-      hasTEOverride: blueprint.overrides?.timeEfficiency !== undefined,
+      materialEfficiency: meOverride ? parseFloat(meOverride.value) : blueprint.material_efficiency,
+      timeEfficiency: teOverride ? parseFloat(teOverride.value) : blueprint.time_efficiency,
+      hasMEOverride: meOverride !== undefined,
+      hasTEOverride: teOverride !== undefined,
     };
   } catch (error) {
     console.error('Error getting effective blueprint values:', error);

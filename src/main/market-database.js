@@ -2,6 +2,7 @@ const Database = require('better-sqlite3');
 const path = require('path');
 const { app } = require('electron');
 const fs = require('fs');
+const { getMarketDbPath } = require('./config-migration');
 
 let db = null;
 
@@ -9,8 +10,7 @@ let db = null;
  * Get the path to the market database
  */
 function getMarketDatabasePath() {
-  const userDataPath = app.getPath('userData');
-  return path.join(userDataPath, 'market_data.sqlite');
+  return getMarketDbPath();
 }
 
 /**

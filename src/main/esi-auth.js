@@ -15,6 +15,7 @@ const ESI_CONFIG = {
     'esi-industry.read_character_mining.v1',
     'esi-markets.read_character_orders.v1',
     'esi-assets.read_assets.v1',
+    'esi-assets.read_corporation_assets.v1',
     'esi-characters.read_blueprints.v1',
     'esi-corporations.read_blueprints.v1',
     'esi-wallet.read_character_wallet.v1',

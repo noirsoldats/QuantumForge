@@ -54,6 +54,7 @@ const {
 const { authenticateWithESI, refreshAccessToken, isTokenExpired } = require('./esi-auth');
 const { fetchCharacterSkills } = require('./esi-skills');
 const { fetchCharacterBlueprints } = require('./esi-blueprints');
+const { fetchCharacterAssets, fetchCorporationAssets, saveAssets, getAssets, getAssetsCacheStatus } = require('./esi-assets');
 const {
   getCurrentVersion,
   getLatestVersion,
@@ -257,6 +258,26 @@ function createWindow() {
 
 app.whenReady().then(async () => {
   console.log('[App] Application ready');
+
+  // Run config migration BEFORE anything else
+  const { needsConfigMigration, migrateConfigFiles } = require('./config-migration');
+  if (needsConfigMigration()) {
+    console.log('[App] Running config migration...');
+    await migrateConfigFiles();
+    console.log('[App] Config migration complete');
+  }
+
+  // Initialize character database
+  const { initializeCharacterDatabase } = require('./character-database');
+  initializeCharacterDatabase();
+
+  // Run character data migration (JSON to SQLite)
+  const { needsCharacterDataMigration, migrateCharacterDataToSqlite } = require('./character-data-migration');
+  if (needsCharacterDataMigration()) {
+    console.log('[App] Running character data migration...');
+    await migrateCharacterDataToSqlite();
+    console.log('[App] Character data migration complete');
+  }
 
   // Setup IPC handlers first (needed by both wizard and normal app)
   setupIPCHandlers();
@@ -677,6 +698,40 @@ function setupIPCHandlers() {
     createBlueprintsWindow(characterId);
   });
 
+  // Assets IPC Handlers
+  ipcMain.handle('assets:fetch', async (event, characterId) => {
+    try {
+      // Fetch character assets
+      const characterAssetsData = await fetchCharacterAssets(characterId);
+      saveAssets(characterAssetsData);
+
+      // Fetch corporation assets if character is in a corp
+      const character = getCharacter(characterId);
+      if (character && character.corporationId) {
+        const corporationAssetsData = await fetchCorporationAssets(characterId, character.corporationId);
+        saveAssets(corporationAssetsData);
+      }
+
+      return { success: true };
+    } catch (error) {
+      console.error('Error fetching assets:', error);
+      throw error;
+    }
+  });
+
+  ipcMain.handle('assets:get', (event, characterId, isCorporation) => {
+    return getAssets(characterId, isCorporation);
+  });
+
+  ipcMain.handle('assets:getCacheStatus', (event, characterId, isCorporation) => {
+    return getAssetsCacheStatus(characterId, isCorporation);
+  });
+
+  ipcMain.handle('assets:openWindow', (event, characterId) => {
+    const { createAssetsWindow } = require('./assets-window');
+    createAssetsWindow(characterId);
+  });
+
   // Manufacturing Summary Window
   ipcMain.handle('manufacturingSummary:openWindow', () => {
     const { createManufacturingSummaryWindow } = require('./manufacturing-summary-window');
@@ -1068,6 +1123,26 @@ function setupIPCHandlers() {
     }
   });
 
+  ipcMain.handle('sde:getTypeName', async (event, typeId) => {
+    try {
+      const { getTypeName } = require('./sde-database');
+      return await getTypeName(typeId);
+    } catch (error) {
+      console.error('Error getting type name:', error);
+      throw new Error(error.message || 'Failed to get type name from SDE');
+    }
+  });
+
+  ipcMain.handle('sde:getTypeNames', async (event, typeIds) => {
+    try {
+      const { getTypeNames } = require('./sde-database');
+      return await getTypeNames(typeIds);
+    } catch (error) {
+      console.error('Error getting type names:', error);
+      throw new Error(error.message || 'Failed to get type names from SDE');
+    }
+  });
+
   ipcMain.handle('sde:getAllBlueprints', async () => {
     try {
       return await getAllBlueprints();
@@ -1181,6 +1256,33 @@ function setupIPCHandlers() {
     } catch (error) {
       console.error('Error getting item volumes:', error);
       return {};
+    }
+  });
+
+  ipcMain.handle('sde:getLocationName', async (event, locationId) => {
+    try {
+      const { getLocationName } = require('./sde-database');
+      return await getLocationName(locationId);
+    } catch (error) {
+      console.error('Error getting location name:', error);
+      return null;
+    }
+  });
+
+  // Location resolution IPC handler
+  ipcMain.handle('location:resolve', async (event, locationId, characterId, isCorporation) => {
+    try {
+      const { resolveLocationInfo } = require('./location-resolver');
+      return await resolveLocationInfo(locationId, characterId, isCorporation);
+    } catch (error) {
+      console.error('Error resolving location:', error);
+      return {
+        systemName: 'Error',
+        stationName: 'Error',
+        containerNames: [],
+        fullPath: 'Error',
+        locationType: 'error',
+      };
     }
   });
 

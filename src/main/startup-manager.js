@@ -701,7 +701,7 @@ async function runCharacterDataRefresh(splashWindow) {
   });
 
   try {
-    const { getCharacters, getSkillsCacheStatus, getBlueprintsCacheStatus, getSetting } = require('./settings-manager');
+    const { getCharacters, getSkillsCacheStatus, getBlueprintsCacheStatus, getSetting, updateCharacterSkills, updateCharacterBlueprints } = require('./settings-manager');
     const { fetchCharacterSkills } = require('./esi-skills');
     const { fetchCharacterBlueprints } = require('./esi-blueprints');
 
@@ -778,7 +778,8 @@ async function runCharacterDataRefresh(splashWindow) {
             complete: null,
           });
 
-          await fetchCharacterSkills(character.characterId);
+          const skillsData = await fetchCharacterSkills(character.characterId);
+          updateCharacterSkills(character.characterId, skillsData);
         }
 
         // Refresh blueprints if needed
@@ -791,7 +792,8 @@ async function runCharacterDataRefresh(splashWindow) {
             complete: null,
           });
 
-          await fetchCharacterBlueprints(character.characterId);
+          const blueprintsData = await fetchCharacterBlueprints(character.characterId);
+          updateCharacterBlueprints(character.characterId, blueprintsData);
         }
 
         completed++;

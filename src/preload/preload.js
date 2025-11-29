@@ -58,6 +58,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getBlueprintNames: (typeIds) => ipcRenderer.invoke('sde:getBlueprintNames', typeIds),
     getAllBlueprints: () => ipcRenderer.invoke('sde:getAllBlueprints'),
     searchBlueprints: (searchTerm) => ipcRenderer.invoke('sde:searchBlueprints', searchTerm),
+    // Type lookups
+    getTypeName: (typeId) => ipcRenderer.invoke('sde:getTypeName', typeId),
+    getTypeNames: (typeIds) => ipcRenderer.invoke('sde:getTypeNames', typeIds),
     // Market location lookups
     getAllRegions: () => ipcRenderer.invoke('sde:getAllRegions'),
     getAllSystems: () => ipcRenderer.invoke('sde:getAllSystems'),
@@ -69,6 +72,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getSystemSecurityStatus: (systemId) => ipcRenderer.invoke('sde:getSystemSecurityStatus', systemId),
     getItemVolume: (typeId) => ipcRenderer.invoke('sde:getItemVolume', typeId),
     getItemVolumes: (typeIds) => ipcRenderer.invoke('sde:getItemVolumes', typeIds),
+    getLocationName: (locationId) => ipcRenderer.invoke('sde:getLocationName', locationId),
   },
 
   // Skills API
@@ -95,6 +99,21 @@ contextBridge.exposeInMainWorld('electronAPI', {
     openInCalculator: (blueprintTypeId, meLevel) => ipcRenderer.invoke('blueprints:openInCalculator', blueprintTypeId, meLevel),
     onCharacterId: (callback) => ipcRenderer.on('blueprints:set-character-id', (event, id) => callback(id)),
     onOpenInCalculator: (callback) => ipcRenderer.on('calculator:openBlueprint', (event, data) => callback(data)),
+  },
+
+  // Assets API
+  assets: {
+    fetch: (characterId) => ipcRenderer.invoke('assets:fetch', characterId),
+    get: (characterId, isCorporation) => ipcRenderer.invoke('assets:get', characterId, isCorporation),
+    getCacheStatus: (characterId, isCorporation) => ipcRenderer.invoke('assets:getCacheStatus', characterId, isCorporation),
+    openWindow: (characterId) => ipcRenderer.invoke('assets:openWindow', characterId),
+    onCharacterId: (callback) => ipcRenderer.on('assets:set-character-id', (event, id) => callback(id)),
+  },
+
+  // Location API
+  location: {
+    resolve: (locationId, characterId, isCorporation) =>
+      ipcRenderer.invoke('location:resolve', locationId, characterId, isCorporation),
   },
 
   // Market API

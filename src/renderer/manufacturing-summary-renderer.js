@@ -122,6 +122,8 @@ const ALL_COLUMNS = [
   { id: 'roi', label: 'ROI %', default: true, sortable: true, align: 'right' },
 
   // Optional columns
+  { id: 'owner', label: 'Owner', default: false, sortable: true, align: 'left' },
+  { id: 'location', label: 'Location', default: false, sortable: true, align: 'left' },
   { id: 'job-costs', label: 'Job Costs', default: false, sortable: true, align: 'right' },
   { id: 'material-purchase-fees', label: 'Material Purchase Fees', default: false, sortable: true, align: 'right' },
   { id: 'product-selling-fees', label: 'Product Selling Fees', default: false, sortable: true, align: 'right' },
@@ -192,10 +194,14 @@ document.addEventListener('DOMContentLoaded', async () => {
   await checkMarketDataAge(); // Check market data age on page load
 });
 
+// Store characters globally for owner lookup
+let allCharacters = [];
+
 // Load characters into dropdown
 async function loadCharacters() {
   try {
     const characters = await window.electronAPI.esi.getCharacters();
+    allCharacters = characters || []; // Store for later lookup
     const characterSelect = document.getElementById('character-select');
 
     if (characters && characters.length > 0) {
@@ -212,6 +218,13 @@ async function loadCharacters() {
   } catch (error) {
     console.error('Error loading characters:', error);
   }
+}
+
+// Helper to get character name by ID
+function getCharacterName(characterId) {
+  if (!characterId) return null;
+  const character = allCharacters.find(c => c.characterId === characterId);
+  return character ? character.characterName : 'Unknown Character';
 }
 
 // Sync saved filter config with main UI checkboxes
@@ -320,12 +333,16 @@ function setupEventListeners() {
     const iphInput = document.getElementById('iph-threshold');
     if (iphInput) {
       iphInput.disabled = !e.target.checked;
+      iphInput.value = e.target.checked ? 0 : '';
+      // Manually update the filter value to match the input
+      marketFilters.iphThreshold = e.target.checked ? 0 : null;
     }
   });
 
   document.getElementById('iph-threshold')?.addEventListener('input', (e) => {
     const value = parseFloat(e.target.value);
-    marketFilters.iphThreshold = value > 0 ? value : null;
+    // Allow any valid number including 0 and negatives, only reject NaN (empty/invalid input)
+    marketFilters.iphThreshold = !isNaN(value) ? value : null;
   });
 
   document.getElementById('profit-threshold-enabled')?.addEventListener('change', (e) => {
@@ -333,12 +350,16 @@ function setupEventListeners() {
     const profitInput = document.getElementById('profit-threshold');
     if (profitInput) {
       profitInput.disabled = !e.target.checked;
+      profitInput.value = e.target.checked ? 0 : '';
+      // Manually update the filter value to match the input
+      marketFilters.profitThreshold = e.target.checked ? 0 : null;
     }
   });
 
   document.getElementById('profit-threshold')?.addEventListener('input', (e) => {
     const value = parseFloat(e.target.value);
-    marketFilters.profitThreshold = value > 0 ? value : null;
+    // Allow any valid number including 0 and negatives, only reject NaN (empty/invalid input)
+    marketFilters.profitThreshold = !isNaN(value) ? value : null;
   });
 
   // Calculate button
@@ -977,6 +998,10 @@ async function calculateSpeculativeInventionData(blueprint, facility, svrPeriod,
       inventionProbability: best.probability || 0,
       inventionCostAttempt: best.totalCostPerAttempt || 0,
       totalCostWithInvention: totalCostWithInvention,
+      // Owner and Location data (null for speculative blueprints)
+      ownerCharacterId: null,
+      locationId: null,
+      locationName: null,
     };
   } catch (error) {
     console.error(`[SPECULATIVE ERROR] Error calculating speculative invention for ${blueprint.typeName}:`, error);
@@ -1001,6 +1026,31 @@ async function calculateBlueprintData(blueprint, facility, svrPeriod, defaultCha
     const isOwned = !!ownedBP;
     const meLevel = ownedBP ? (ownedBP.materialEfficiency || 0) : 0;
     const teLevel = ownedBP ? (ownedBP.timeEfficiency || 0) : 0;
+
+    // Resolve location information if owned
+    let locationInfo = null;
+    if (ownedBP && ownedBP.locationId) {
+      try {
+        // Determine if this is a corporation blueprint
+        const isCorporation = ownedBP.isCorporation || false;
+
+        // Use new enhanced location resolver
+        locationInfo = await window.electronAPI.location.resolve(
+          ownedBP.locationId,
+          characterId,
+          isCorporation
+        );
+      } catch (error) {
+        console.error(`Error resolving location ${ownedBP.locationId}:`, error);
+        locationInfo = {
+          systemName: 'Unknown',
+          stationName: 'Unknown',
+          containerNames: [],
+          fullPath: 'Unknown',
+          locationType: 'error',
+        };
+      }
+    }
 
     // Calculate materials and pricing
     const result = await window.electronAPI.calculator.calculateMaterials(
@@ -1127,6 +1177,12 @@ async function calculateBlueprintData(blueprint, facility, svrPeriod, defaultCha
       inventionProbability: inventionData?.probability || null,
       inventionCostAttempt: inventionData?.costPerAttempt || null,
       totalCostWithInvention: inventionData?.totalCostWithInvention || null,
+      // Owner and Location data
+      ownerCharacterId: ownedBP ? ownedBP.characterId : null,
+      locationId: ownedBP ? ownedBP.locationId : null,
+      locationInfo: locationInfo, // Store full location info object
+      // Keep backward compatibility
+      locationName: locationInfo ? locationInfo.stationName : null,
     };
   } catch (error) {
     console.error(`Error calculating data for ${blueprint.typeName}:`, error);
@@ -1724,6 +1780,14 @@ function sortTable(column, direction = null) {
         aVal = a.roi;
         bVal = b.roi;
         break;
+      case 'owner':
+        aVal = getCharacterName(a.ownerCharacterId) || 'N/A';
+        bVal = getCharacterName(b.ownerCharacterId) || 'N/A';
+        break;
+      case 'location':
+        aVal = a.locationName || 'N/A';
+        bVal = b.locationName || 'N/A';
+        break;
       case 'profit-velocity':
         aVal = a.profitVelocity || 0;
         bVal = b.profitVelocity || 0;
@@ -2054,6 +2118,24 @@ function getCellContent(columnId, item) {
       return `<td class="text-right">${formatISK(item.totalCost)}</td>`;
     case 'roi':
       return `<td class="text-right ${roiClass}">${item.roi.toFixed(2)}%</td>`;
+    case 'owner': {
+      if (!item.ownerCharacterId) {
+        return '<td>N/A</td>';
+      }
+      const ownerName = getCharacterName(item.ownerCharacterId);
+      return `<td>${escapeHtml(ownerName)}</td>`;
+    }
+    case 'location': {
+      if (!item.locationInfo) {
+        return '<td class="text-center">-</td>';
+      }
+
+      const systemName = escapeHtml(item.locationInfo.systemName);
+      const fullPath = escapeHtml(item.locationInfo.fullPath);
+
+      // Display system name with tooltip showing full path
+      return `<td title="${fullPath}">${systemName}</td>`;
+    }
     case 'job-costs':
       return `<td class="text-right">${formatISK(item.jobCosts || 0)}</td>`;
     case 'material-purchase-fees':

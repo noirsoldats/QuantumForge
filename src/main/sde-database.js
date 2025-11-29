@@ -311,6 +311,80 @@ async function getBlueprintNames(typeIds) {
 }
 
 /**
+ * Get a type name from the SDE
+ * @param {number} typeId - Type ID
+ * @returns {Promise<string>} Type name
+ */
+async function getTypeName(typeId) {
+  try {
+    const database = await getDatabase();
+
+    return new Promise((resolve, reject) => {
+      database.get(
+        'SELECT typeName FROM invTypes WHERE typeID = ?',
+        [typeId],
+        (err, row) => {
+          if (err) {
+            console.error('Error querying type name:', err);
+            reject(err);
+          } else {
+            resolve(row ? row.typeName : `Unknown Type (${typeId})`);
+          }
+        }
+      );
+    });
+  } catch (error) {
+    console.error('Error getting type name:', error);
+    return `Type ${typeId}`;
+  }
+}
+
+/**
+ * Get multiple type names from the SDE
+ * @param {number[]} typeIds - Array of type IDs
+ * @returns {Promise<Object>} Map of type ID to type name
+ */
+async function getTypeNames(typeIds) {
+  try {
+    const database = await getDatabase();
+
+    return new Promise((resolve, reject) => {
+      const placeholders = typeIds.map(() => '?').join(',');
+      const query = `SELECT typeID, typeName FROM invTypes WHERE typeID IN (${placeholders})`;
+
+      database.all(query, typeIds, (err, rows) => {
+        if (err) {
+          console.error('Error querying type names:', err);
+          reject(err);
+        } else {
+          const nameMap = {};
+          rows.forEach(row => {
+            nameMap[row.typeID] = row.typeName;
+          });
+
+          // Fill in missing types
+          typeIds.forEach(id => {
+            if (!nameMap[id]) {
+              nameMap[id] = `Unknown Type (${id})`;
+            }
+          });
+
+          resolve(nameMap);
+        }
+      });
+    });
+  } catch (error) {
+    console.error('Error getting type names:', error);
+    // Return fallback map
+    const fallbackMap = {};
+    typeIds.forEach(id => {
+      fallbackMap[id] = `Type ${id}`;
+    });
+    return fallbackMap;
+  }
+}
+
+/**
  * Get all blueprints from SDE
  * @returns {Promise<Array>} Array of all blueprints
  */
@@ -935,6 +1009,115 @@ async function getItemVolumes(typeIds) {
   }
 }
 
+/**
+ * Get location name by location ID
+ * @param {number} locationId - Location ID (station or structure)
+ * @returns {Promise<string|null>} Location name or null if not found
+ */
+async function getLocationName(locationId) {
+  try {
+    const database = await getDatabase();
+
+    console.log(`Getting location name for location ID ${locationId}`);
+    return new Promise((resolve, reject) => {
+      database.get(
+        `SELECT stationName
+         FROM staStations
+         WHERE stationID = ?`,
+        [locationId],
+        (err, row) => {
+          if (err) {
+            console.error('Error querying location name:', err);
+            reject(err);
+          } else {
+            resolve(row ? row.stationName : null);
+          }
+        }
+      );
+    });
+  } catch (error) {
+    console.error('Error getting location name:', error);
+    return null;
+  }
+}
+
+/**
+ * Detect location type based on ID range
+ * @param {number} locationId - Location ID
+ * @returns {string} Location type: 'asset', 'npc-station', 'structure', 'system', 'unknown'
+ */
+function detectLocationType(locationId) {
+  if (locationId >= 1000000000000) {
+    return 'asset'; // Could be container or structure
+  } else if (locationId >= 60000000 && locationId <= 69999999) {
+    return 'npc-station';
+  } else if (locationId >= 30000000 && locationId <= 39999999) {
+    return 'system';
+  }
+  return 'unknown';
+}
+
+/**
+ * Get system name from station ID
+ * @param {number} stationId - Station ID
+ * @returns {Promise<string|null>} System name or null if not found
+ */
+async function getSystemNameFromStation(stationId) {
+  try {
+    const database = await getDatabase();
+
+    return new Promise((resolve, reject) => {
+      database.get(
+        `SELECT s.solarSystemName
+         FROM staStations st
+         JOIN mapSolarSystems s ON st.solarSystemID = s.solarSystemID
+         WHERE st.stationID = ?`,
+        [stationId],
+        (err, row) => {
+          if (err) {
+            console.error('Error querying system name from station:', err);
+            reject(err);
+          } else {
+            resolve(row ? row.solarSystemName : null);
+          }
+        }
+      );
+    });
+  } catch (error) {
+    console.error('Error getting system name from station:', error);
+    return null;
+  }
+}
+
+/**
+ * Get system name by system ID
+ * @param {number} systemId - Solar system ID
+ * @returns {Promise<string|null>} System name or null if not found
+ */
+async function getSystemName(systemId) {
+  try {
+    const database = await getDatabase();
+
+    return new Promise((resolve, reject) => {
+      database.get(
+        'SELECT solarSystemName FROM mapSolarSystems WHERE solarSystemID = ?',
+        [systemId],
+        (err, row) => {
+          if (err) {
+            console.error('Error querying system name:', err);
+            reject(err);
+          } else {
+            resolve(row ? row.solarSystemName : null);
+          }
+        }
+      );
+    });
+  } catch (error) {
+    console.error('Error getting system name:', error);
+    return null;
+  }
+}
+
 module.exports = {
   getDatabase,
   closeDatabase,
@@ -945,6 +1128,8 @@ module.exports = {
   searchSkills,
   getBlueprintName,
   getBlueprintNames,
+  getTypeName,
+  getTypeNames,
   getAllBlueprints,
   searchBlueprints,
   getAllRegions,
@@ -961,4 +1146,8 @@ module.exports = {
   getSystemSecurityStatus,
   getItemVolume,
   getItemVolumes,
+  getLocationName,
+  detectLocationType,
+  getSystemNameFromStation,
+  getSystemName,
 };
