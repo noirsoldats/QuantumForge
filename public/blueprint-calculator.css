@@ -82,6 +82,30 @@
   transform: none;
 }
 
+.secondary-button {
+  padding: 10px 20px;
+  background-color: transparent;
+  border: 1px solid #3a3a4e;
+  border-radius: 8px;
+  color: #ffffff;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.secondary-button:hover {
+  background-color: #2a2a3e;
+  border-color: #5865f2;
+}
+
+.secondary-button:active {
+  background-color: #252538;
+}
+
 .calculator-main {
   flex: 1;
   overflow-y: auto;
@@ -1151,4 +1175,120 @@
   width: 40px;
   height: 40px;
   border-width: 3px;
+}
+
+/* Modal Base Styles */
+.modal {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: rgba(0, 0, 0, 0.7);
+  display: none;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.modal-content {
+  background-color: #2a2a3e;
+  border-radius: 8px;
+  width: 500px;
+  max-width: 90vw;
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+}
+
+.modal-header {
+  padding: 20px 24px;
+  border-bottom: 1px solid #3a3a4e;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.modal-header h2 {
+  font-size: 20px;
+  font-weight: 600;
+  margin: 0;
+}
+
+.close-btn {
+  background: none;
+  border: none;
+  color: #b9bbbe;
+  font-size: 28px;
+  cursor: pointer;
+  padding: 0;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  transition: all 0.2s;
+}
+
+.close-btn:hover {
+  background-color: #1e1e2e;
+  color: #ffffff;
+}
+
+.modal-body {
+  padding: 24px;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.modal-body label {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 14px;
+  font-weight: 500;
+  color: #b9bbbe;
+}
+
+/* Plan Selection Modal */
+.plan-selection-options {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.plan-option {
+  display: flex;
+  align-items: center;
+  padding: 12px;
+  background-color: #1a1a24;
+  border: 2px solid #2a2a3e;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.plan-option:hover {
+  background-color: #252538;
+  border-color: #5865f2;
+}
+
+.plan-option input[type="radio"] {
+  margin-right: 12px;
+  cursor: pointer;
+}
+
+.plan-option.selected {
+  background-color: #252538;
+  border-color: #5865f2;
+}
+
+.modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 16px 24px;
+  border-top: 1px solid #2a2a3e;
 }

@@ -131,6 +131,12 @@ function setupEventListeners() {
     updateDataBtn.addEventListener('click', handleUpdateData);
   }
 
+  // Add to Plan button
+  const addToPlanBtn = document.getElementById('add-to-plan-btn');
+  if (addToPlanBtn) {
+    addToPlanBtn.addEventListener('click', handleAddToPlan);
+  }
+
   // ME and Runs inputs - recalculate on change
   const meInput = document.getElementById('me-level');
   const runsInput = document.getElementById('runs');
@@ -389,11 +395,214 @@ async function handleCalculate() {
     await displayMaterialsCalculation(result, runs, facilityId);
 
     hideLoading();
+
+    // Show "Add to Plan" button after successful calculation
+    const addToPlanBtn = document.getElementById('add-to-plan-btn');
+    if (addToPlanBtn) {
+      addToPlanBtn.style.display = 'inline-flex';
+    }
   } catch (error) {
     console.error('Error calculating materials:', error);
     hideLoading();
     alert('Failed to calculate materials: ' + error.message);
   }
+}
+
+// Handle add to plan button
+async function handleAddToPlan() {
+  if (!currentBlueprint) {
+    alert('No blueprint selected');
+    return;
+  }
+
+  try {
+    // Get current character
+    const characterId = currentDefaultCharacter?.characterId || null;
+    if (!characterId) {
+      alert('Please select a default character first');
+      return;
+    }
+
+    // Get all plans for this character
+    const plans = await window.electronAPI.plans.getAll(characterId, {});
+
+    // Show modal
+    showPlanSelectionModal(plans, characterId);
+
+  } catch (error) {
+    console.error('Error loading plans:', error);
+    alert('Failed to load plans: ' + error.message);
+  }
+}
+
+function showPlanSelectionModal(plans, characterId) {
+  const modal = document.getElementById('plan-selection-modal');
+  const optionsContainer = document.getElementById('plan-selection-options');
+  const newPlanSection = document.getElementById('new-plan-section');
+  const newPlanInput = document.getElementById('new-plan-name-input');
+
+  if (!modal || !optionsContainer) {
+    console.error('Modal elements not found!');
+    alert('Error: Modal elements not found in the DOM');
+    return;
+  }
+
+  // Clear previous options
+  optionsContainer.innerHTML = '';
+  newPlanSection.style.display = 'none';
+  newPlanInput.value = '';
+
+  // Add existing plans as radio options
+  if (plans && plans.length > 0) {
+    plans.forEach(plan => {
+      const option = document.createElement('label');
+      option.className = 'plan-option';
+      option.innerHTML = `
+        <input type="radio" name="plan-selection" value="${plan.planId}">
+        <span>${plan.planName} (${plan.status})</span>
+      `;
+      optionsContainer.appendChild(option);
+    });
+  }
+
+  // Add "Create New Plan" option
+  const newPlanOption = document.createElement('label');
+  newPlanOption.className = 'plan-option';
+  newPlanOption.innerHTML = `
+    <input type="radio" name="plan-selection" value="new">
+    <span>Create New Plan</span>
+  `;
+  optionsContainer.appendChild(newPlanOption);
+
+  // Show/hide new plan name input when "new" is selected
+  optionsContainer.querySelectorAll('input[type="radio"]').forEach(radio => {
+    radio.addEventListener('change', (e) => {
+      if (e.target.value === 'new') {
+        newPlanSection.style.display = 'block';
+      } else {
+        newPlanSection.style.display = 'none';
+      }
+    });
+  });
+
+  // Show modal
+  modal.style.display = 'flex';
+
+  // Handle confirm button
+  const confirmBtn = document.getElementById('confirm-plan-selection-btn');
+  const newConfirmHandler = async () => {
+    const selectedRadio = optionsContainer.querySelector('input[type="radio"]:checked');
+    if (!selectedRadio) {
+      alert('Please select a plan or create a new one.');
+      return;
+    }
+
+    try {
+      let planId;
+
+      if (selectedRadio.value === 'new') {
+        // Create new plan
+        const planName = newPlanInput.value.trim() || null;
+        const newPlan = await window.electronAPI.plans.create(characterId, planName, null);
+        planId = newPlan.planId;
+      } else {
+        planId = selectedRadio.value;
+      }
+
+      // Close modal
+      modal.style.display = 'none';
+      confirmBtn.removeEventListener('click', newConfirmHandler);
+
+      // Add blueprint to plan
+      await addCurrentBlueprintToPlan(planId);
+
+    } catch (error) {
+      console.error('Error creating/selecting plan:', error);
+      alert('Error: ' + error.message);
+    }
+  };
+
+  confirmBtn.addEventListener('click', newConfirmHandler);
+
+  // Handle cancel/close
+  const closeModal = () => {
+    modal.style.display = 'none';
+    confirmBtn.removeEventListener('click', newConfirmHandler);
+  };
+
+  document.getElementById('cancel-plan-selection-btn').onclick = closeModal;
+  document.getElementById('close-plan-selection-modal-btn').onclick = closeModal;
+
+  // Click outside to close
+  modal.onclick = (e) => {
+    if (e.target === modal) {
+      closeModal();
+    }
+  };
+}
+
+async function addCurrentBlueprintToPlan(planId) {
+  const meLevel = parseInt(document.getElementById('me-level').value) || 0;
+  const runs = parseInt(document.getElementById('runs').value) || 1;
+  const teLevel = 0; // Calculator doesn't currently expose TE
+  const facilityId = document.getElementById('facility-select').value || null;
+
+  try {
+    // Get facility snapshot if facility selected
+    let facilitySnapshot = null;
+    if (facilityId) {
+      const facilities = await window.electronAPI.facilities.getFacilities();
+      const facility = facilities.find(f => f.id === facilityId);
+      if (facility) {
+        facilitySnapshot = {
+          name: facility.name,
+          systemId: facility.systemId,
+          structureTypeId: facility.structureTypeId,
+          rigs: facility.rigs || []
+        };
+      }
+    }
+
+    // Add blueprint to plan
+    const blueprintConfig = {
+      blueprintTypeId: currentBlueprint.typeID,
+      runs,
+      productionLines: 1,
+      meLevel,
+      teLevel,
+      facilityId,
+      facilitySnapshot,
+    };
+
+    await window.electronAPI.plans.addBlueprint(planId, blueprintConfig);
+
+    alert('Blueprint added to plan successfully!');
+  } catch (error) {
+    console.error('Error adding to plan:', error);
+    alert('Failed to add blueprint to plan: ' + error.message);
+  }
+}
+
+// Legacy function - no longer used
+function showPlanSelectionDialog(options) {
+  return new Promise((resolve) => {
+    const message = 'Select a plan or create a new one:\n\n' + options.map((opt, idx) => `${idx}: ${opt}`).join('\n');
+    const input = prompt(message + '\n\nEnter number:');
+
+    if (input === null) {
+      resolve(null);
+      return;
+    }
+
+    const selection = parseInt(input);
+    if (isNaN(selection) || selection < 0 || selection >= options.length) {
+      alert('Invalid selection');
+      resolve(null);
+      return;
+    }
+
+    resolve(selection);
+  });
 }
 
 // Handle update data button

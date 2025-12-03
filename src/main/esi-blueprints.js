@@ -75,7 +75,7 @@ async function fetchCorporationBlueprints(characterId, corporationId) {
     // Transform blueprints data
     const blueprints = allBlueprintsData.map(bp => {
       return {
-        itemId: bp.item_id,
+        itemId: String(Math.floor(bp.item_id)),
         typeId: bp.type_id,
         locationId: bp.location_id,
         locationFlag: bp.location_flag,
@@ -172,7 +172,7 @@ async function fetchCharacterBlueprints(characterId) {
     // Transform character blueprints data
     const characterBlueprints = allBlueprintsData.map(bp => {
       return {
-        itemId: bp.item_id,
+        itemId: String(Math.floor(bp.item_id)),
         typeId: bp.type_id,
         locationId: bp.location_id,
         locationFlag: bp.location_flag,

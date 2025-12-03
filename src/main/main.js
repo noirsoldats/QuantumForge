@@ -55,6 +55,45 @@ const { authenticateWithESI, refreshAccessToken, isTokenExpired } = require('./e
 const { fetchCharacterSkills } = require('./esi-skills');
 const { fetchCharacterBlueprints } = require('./esi-blueprints');
 const { fetchCharacterAssets, fetchCorporationAssets, saveAssets, getAssets, getAssetsCacheStatus } = require('./esi-assets');
+const { fetchCharacterIndustryJobs, saveIndustryJobs, getIndustryJobs, getIndustryJobsCacheStatus } = require('./esi-industry-jobs');
+const { fetchCharacterWalletTransactions, saveWalletTransactions, getWalletTransactions, getWalletTransactionsCacheStatus } = require('./esi-wallet');
+const {
+  createManufacturingPlan,
+  getManufacturingPlan,
+  getManufacturingPlans,
+  updateManufacturingPlan,
+  deleteManufacturingPlan,
+  addBlueprintToPlan,
+  updatePlanBlueprint,
+  removeBlueprintFromPlan,
+  getPlanBlueprints,
+  recalculatePlanMaterials,
+  getPlanMaterials,
+  getPlanProducts,
+  getPlanSummary,
+  refreshActivePlansESIData,
+  getPlanAnalytics,
+  markMaterialAcquired,
+  unmarkMaterialAcquired,
+  updateMaterialAcquisition,
+  updateMaterialCustomPrice,
+} = require('./manufacturing-plans');
+const {
+  matchJobsToPlan,
+  saveJobMatches,
+  matchTransactionsToPlan,
+  saveTransactionMatches,
+  confirmJobMatch,
+  rejectJobMatch,
+  confirmTransactionMatch,
+  rejectTransactionMatch,
+  getPendingMatches,
+  getPlanActuals,
+  getConfirmedJobMatches,
+  unlinkJobMatch,
+  getConfirmedTransactionMatches,
+  unlinkTransactionMatch,
+} = require('./plan-matching');
 const {
   getCurrentVersion,
   getLatestVersion,
@@ -270,6 +309,14 @@ app.whenReady().then(async () => {
   // Initialize character database
   const { initializeCharacterDatabase } = require('./character-database');
   initializeCharacterDatabase();
+
+  // Run database schema migrations (must run AFTER database initialization)
+  const { needsSchemaMigrations, runSchemaMigrations } = require('./database-schema-migrations');
+  if (needsSchemaMigrations()) {
+    console.log('[App] Running database schema migrations...');
+    await runSchemaMigrations();
+    console.log('[App] Database schema migrations complete');
+  }
 
   // Run character data migration (JSON to SQLite)
   const { needsCharacterDataMigration, migrateCharacterDataToSqlite } = require('./character-data-migration');
@@ -730,6 +777,186 @@ function setupIPCHandlers() {
   ipcMain.handle('assets:openWindow', (event, characterId) => {
     const { createAssetsWindow } = require('./assets-window');
     createAssetsWindow(characterId);
+  });
+
+  // Industry Jobs IPC Handlers
+  ipcMain.handle('industryJobs:fetch', async (event, characterId, includeCompleted) => {
+    try {
+      const jobsData = await fetchCharacterIndustryJobs(characterId, includeCompleted);
+      saveIndustryJobs(jobsData);
+      return { success: true, count: jobsData.jobs.length };
+    } catch (error) {
+      console.error('Error fetching industry jobs:', error);
+      throw error;
+    }
+  });
+
+  ipcMain.handle('industryJobs:get', (event, characterId, filters) => {
+    return getIndustryJobs(characterId, filters);
+  });
+
+  ipcMain.handle('industryJobs:getCacheStatus', (event, characterId) => {
+    return getIndustryJobsCacheStatus(characterId);
+  });
+
+  // Wallet Transactions IPC Handlers
+  ipcMain.handle('wallet:fetchTransactions', async (event, characterId, fromId) => {
+    try {
+      const transactionsData = await fetchCharacterWalletTransactions(characterId, fromId);
+      saveWalletTransactions(transactionsData);
+      return { success: true, count: transactionsData.transactions.length };
+    } catch (error) {
+      console.error('Error fetching wallet transactions:', error);
+      throw error;
+    }
+  });
+
+  ipcMain.handle('wallet:getTransactions', (event, characterId, filters) => {
+    return getWalletTransactions(characterId, filters);
+  });
+
+  ipcMain.handle('wallet:getCacheStatus', (event, characterId) => {
+    return getWalletTransactionsCacheStatus(characterId);
+  });
+
+  // Manufacturing Plans IPC Handlers
+  ipcMain.handle('plans:create', (event, characterId, planName, description) => {
+    return createManufacturingPlan(characterId, planName, description);
+  });
+
+  ipcMain.handle('plans:get', (event, planId) => {
+    return getManufacturingPlan(planId);
+  });
+
+  ipcMain.handle('plans:getAll', (event, characterId, filters) => {
+    return getManufacturingPlans(characterId, filters);
+  });
+
+  ipcMain.handle('plans:update', (event, planId, updates) => {
+    return updateManufacturingPlan(planId, updates);
+  });
+
+  ipcMain.handle('plans:delete', (event, planId) => {
+    return deleteManufacturingPlan(planId);
+  });
+
+  ipcMain.handle('plans:addBlueprint', async (event, planId, blueprintConfig) => {
+    return await addBlueprintToPlan(planId, blueprintConfig);
+  });
+
+  ipcMain.handle('plans:updateBlueprint', async (event, planBlueprintId, updates) => {
+    return await updatePlanBlueprint(planBlueprintId, updates);
+  });
+
+  ipcMain.handle('plans:removeBlueprint', async (event, planBlueprintId) => {
+    return await removeBlueprintFromPlan(planBlueprintId);
+  });
+
+  ipcMain.handle('plans:getBlueprints', (event, planId) => {
+    return getPlanBlueprints(planId);
+  });
+
+  ipcMain.handle('plans:getMaterials', async (event, planId, includeAssets) => {
+    return await getPlanMaterials(planId, includeAssets);
+  });
+
+  ipcMain.handle('plans:getProducts', (event, planId) => {
+    return getPlanProducts(planId);
+  });
+
+  ipcMain.handle('plans:getSummary', async (event, planId) => {
+    return await getPlanSummary(planId);
+  });
+
+  ipcMain.handle('plans:recalculateMaterials', async (event, planId, refreshPrices) => {
+    return await recalculatePlanMaterials(planId, refreshPrices);
+  });
+
+  ipcMain.handle('plans:refreshESIData', async (event, characterId) => {
+    return await refreshActivePlansESIData(characterId);
+  });
+
+  ipcMain.handle('plans:openWindow', () => {
+    const { createManufacturingPlansWindow } = require('./manufacturing-plans-window');
+    createManufacturingPlansWindow();
+  });
+
+  // Plan Matching Handlers
+  ipcMain.handle('plans:matchJobs', (event, planId, options) => {
+    return matchJobsToPlan(planId, options);
+  });
+
+  ipcMain.handle('plans:saveJobMatches', (event, matches) => {
+    return saveJobMatches(matches);
+  });
+
+  ipcMain.handle('plans:matchTransactions', (event, planId, options) => {
+    return matchTransactionsToPlan(planId, options);
+  });
+
+  ipcMain.handle('plans:saveTransactionMatches', (event, matches) => {
+    return saveTransactionMatches(matches);
+  });
+
+  ipcMain.handle('plans:confirmJobMatch', (event, matchId) => {
+    return confirmJobMatch(matchId);
+  });
+
+  ipcMain.handle('plans:rejectJobMatch', (event, matchId) => {
+    return rejectJobMatch(matchId);
+  });
+
+  ipcMain.handle('plans:confirmTransactionMatch', (event, matchId) => {
+    return confirmTransactionMatch(matchId);
+  });
+
+  ipcMain.handle('plans:rejectTransactionMatch', (event, matchId) => {
+    return rejectTransactionMatch(matchId);
+  });
+
+  ipcMain.handle('plans:getPendingMatches', (event, planId) => {
+    return getPendingMatches(planId);
+  });
+
+  ipcMain.handle('plans:getConfirmedJobMatches', (event, planId) => {
+    return getConfirmedJobMatches(planId);
+  });
+
+  ipcMain.handle('plans:unlinkJobMatch', (event, matchId) => {
+    return unlinkJobMatch(matchId);
+  });
+
+  ipcMain.handle('plans:getConfirmedTransactionMatches', (event, planId) => {
+    return getConfirmedTransactionMatches(planId);
+  });
+
+  ipcMain.handle('plans:unlinkTransactionMatch', (event, matchId) => {
+    return unlinkTransactionMatch(matchId);
+  });
+
+  ipcMain.handle('plans:getActuals', (event, planId) => {
+    return getPlanActuals(planId);
+  });
+
+  ipcMain.handle('plans:getAnalytics', async (event, planId) => {
+    return await getPlanAnalytics(planId);
+  });
+
+  // Material Acquisition Handlers
+  ipcMain.handle('plans:markMaterialAcquired', (event, planId, typeId, options) => {
+    return markMaterialAcquired(planId, typeId, options);
+  });
+
+  ipcMain.handle('plans:unmarkMaterialAcquired', (event, planId, typeId) => {
+    return unmarkMaterialAcquired(planId, typeId);
+  });
+
+  ipcMain.handle('plans:updateMaterialAcquisition', (event, planId, typeId, updates) => {
+    return updateMaterialAcquisition(planId, typeId, updates);
+  });
+
+  ipcMain.handle('plans:updateMaterialCustomPrice', (event, planId, typeId, customPrice) => {
+    return updateMaterialCustomPrice(planId, typeId, customPrice);
   });
 
   // Manufacturing Summary Window

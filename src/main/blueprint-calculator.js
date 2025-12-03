@@ -28,12 +28,12 @@ function getSDEPath() {
  * @param {number} characterId - Character ID (affects owned blueprint ME lookups)
  * @returns {string} Cache key
  */
-function getMaterialCacheKey(blueprintTypeId, runs, meLevel, facility, characterId) {
+function getMaterialCacheKey(blueprintTypeId, runs, meLevel, facility, characterId, useIntermediates = true) {
     const facilityKey = facility ?
                         `${facility.systemId}_${facility.structureTypeId}_${(facility.rigs || []).map(r => r.typeId).sort().join(',')}` :
                         'none';
     const charKey     = characterId || 'none';
-    return `${blueprintTypeId}_${runs}_${meLevel}_${facilityKey}_${charKey}`;
+    return `${blueprintTypeId}_${runs}_${meLevel}_${facilityKey}_${charKey}_${useIntermediates ? '1' : '0'}`;
 }
 
 /**
@@ -326,7 +326,7 @@ function getProductGroupId(productTypeId, db = null) {
  * @param db
  * @returns {Object} Calculation result with materials and breakdown
  */
-async function calculateBlueprintMaterials(blueprintTypeId, runs = 1, meLevel = 0, characterId = null, facility = null, depth = 0, db = null) {
+async function calculateBlueprintMaterials(blueprintTypeId, runs = 1, meLevel = 0, characterId = null, facility = null, useIntermediates = true, depth = 0, db = null) {
     const MAX_DEPTH = 10; // Prevent infinite recursion
 
     if (depth > MAX_DEPTH) {
@@ -340,7 +340,7 @@ async function calculateBlueprintMaterials(blueprintTypeId, runs = 1, meLevel = 
 
     // Check cache (only for top-level calls, depth 0)
     if (depth === 0) {
-        const cacheKey     = getMaterialCacheKey(blueprintTypeId, runs, meLevel, facility, characterId);
+        const cacheKey     = getMaterialCacheKey(blueprintTypeId, runs, meLevel, facility, characterId, useIntermediates);
         const cachedResult = materialTreeCache.get(cacheKey);
 
         if (cachedResult) {
@@ -379,7 +379,7 @@ async function calculateBlueprintMaterials(blueprintTypeId, runs = 1, meLevel = 
         // Check if this material can be manufactured
         const subBlueprintId = getBlueprintForProduct(material.typeID, db);
 
-        if (subBlueprintId) {
+        if (subBlueprintId && useIntermediates) {
             // This is an intermediate component - get its ME if owned
             const subME = characterId ? getOwnedBlueprintME(characterId, subBlueprintId) : 0;
 
@@ -390,6 +390,7 @@ async function calculateBlueprintMaterials(blueprintTypeId, runs = 1, meLevel = 
                 subME,
                 characterId,
                 facility,  // Pass facility through recursion
+                useIntermediates,  // Pass useIntermediates flag through recursion
                 depth + 1,
                 db  // Pass db connection through recursion
             );
@@ -410,7 +411,7 @@ async function calculateBlueprintMaterials(blueprintTypeId, runs = 1, meLevel = 
                 subMaterials:    subCalculation.materials
             });
         } else {
-            // This is a raw material
+            // This is a raw material (or intermediates are disabled)
             adjustedMaterials[material.typeID] = (adjustedMaterials[material.typeID] || 0) + adjustedQty;
 
             rawMaterials.push({
@@ -489,14 +490,15 @@ async function calculateBlueprintMaterials(blueprintTypeId, runs = 1, meLevel = 
         product:   {
             typeID:   product.typeID,
             typeName: getTypeName(product.typeID, db),
-            quantity: product.quantity * runs
+            quantity: product.quantity * runs,
+            baseQuantity: product.quantity  // Quantity per run from SDE
         },
         pricing:   pricing
     };
 
     // Cache result (only for top-level calls, depth 0)
     if (depth === 0) {
-        const cacheKey = getMaterialCacheKey(blueprintTypeId, runs, meLevel, facility, characterId);
+        const cacheKey = getMaterialCacheKey(blueprintTypeId, runs, meLevel, facility, characterId, useIntermediates);
         materialTreeCache.set(cacheKey, structuredClone(result));
 
         // Limit cache size to prevent memory issues

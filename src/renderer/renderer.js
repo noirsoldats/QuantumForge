@@ -138,6 +138,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
   }
 
+  const manufacturingPlansCard = document.getElementById('manufacturing-plans-card');
+  if (manufacturingPlansCard) {
+    manufacturingPlansCard.addEventListener('click', () => {
+      console.log('Opening Manufacturing Plans');
+      window.electronAPI.plans.openWindow();
+    });
+  }
+
   // Load default character avatar
   await loadDefaultCharacterAvatar();
 

@@ -130,6 +130,7 @@ All main-renderer communication uses IPC handlers registered in `src/main/main.j
 - Settings window (`src/main/settings-window.js`, `public/settings.html`): Modal window for configuration
 - Skills window (`src/main/skills-window.js`, `public/skills.html`): Character skill viewer per character
 - Blueprints window (`src/main/blueprints-window.js`, `public/blueprints.html`): Blueprint library per character
+- Manufacturing Plans window (`src/main/manufacturing-plans-window.js`, `public/manufacturing-plans.html`): Plan management and tracking
 - Market page (loaded into main window): Market data viewer and pricing configuration
 - Blueprint Calculator page (loaded into main window): Manufacturing calculator
 - Facilities page (loaded into main window): Facility manager
@@ -143,6 +144,7 @@ All main-renderer communication uses IPC handlers registered in `src/main/main.j
 - `sde/sqlite-latest.sqlite`: Eve Online static data
 - `sde/version.txt`: SDE version tracking
 - `market-data.db`: Cached market orders and history
+- `character-data.db`: Per-character data including manufacturing plans, industry jobs, wallet transactions
 
 **Settings Structure**:
 ```javascript
@@ -215,6 +217,75 @@ Use appropriate database library based on module context.
 - Refresh if needed: `refreshAccessToken(character.refreshToken)`
 - Handle ESI rate limiting (error status 420)
 - Cache responses when appropriate to reduce API load
+
+### Manufacturing Plans System
+
+**Overview**: Multi-tab planning and tracking system for managing industrial operations, combining planned blueprints with actual ESI data.
+
+**Core Modules** (`src/main/`):
+- `manufacturing-plans.js` - Plan CRUD operations, blueprint management, material/product calculation, summary analytics
+- `plan-matching.js` - Heuristic-based matching of ESI jobs/transactions to plans with confidence scoring
+- `esi-industry-jobs.js` - Fetch and cache character industry jobs from ESI
+- `esi-wallet.js` - Fetch and cache character wallet transactions from ESI
+- `character-database.js` - Database schema with 10 tables for plans, blueprints, materials, products, jobs, transactions, matches
+
+**Database Tables** (in `character-data.db`):
+- `manufacturing_plans` - Plan metadata (name, description, status, timestamps)
+- `plan_blueprints` - Blueprints in plan with runs, lines, ME/TE, facility snapshot
+- `plan_materials` - Aggregated materials with frozen prices
+- `plan_products` - Aggregated products with frozen prices
+- `industry_jobs` - Cached ESI industry jobs per character
+- `wallet_transactions` - Cached ESI wallet transactions per character
+- `plan_job_matches` - Job-to-blueprint matches with confidence scores
+- `plan_transaction_matches` - Transaction-to-material/product matches with confidence scores
+
+**Key Features**:
+
+1. **Plan Management**:
+   - Create/update/delete manufacturing plans
+   - Status workflow: active → completed → archived
+   - Per-character plan organization
+
+2. **Blueprint Configuration**:
+   - Add blueprints with runs, production lines, ME/TE levels
+   - Facility snapshot (frozen at blueprint add time to preserve historical data)
+   - Automatic material/product aggregation across all blueprints
+   - Price freezing at blueprint add time (manual refresh available)
+
+3. **Smart Matching System**:
+   - Heuristic-based confidence scoring (0.0 - 1.0 scale)
+   - Job matching criteria: blueprint type (+0.3), exact runs (+0.4), facility (+0.3), time window (+0.2), recent (+0.1)
+   - Transaction matching criteria: type (+0.3), direction (+0.3), price within 20% (+0.3), timing (+0.1)
+   - User confirmation required (pending → confirmed/rejected)
+   - Only confirmed matches count toward actuals
+
+4. **Analytics & Tracking**:
+   - Progress metrics: job completion, material purchases, product sales, overall completion
+   - Planned vs Actual comparisons: material costs, product value, profit, ROI
+   - Color-coded deltas (green = better than planned, red = worse)
+   - Visual progress bars for completion tracking
+
+5. **Auto-Refresh**:
+   - Background refresh every 15 minutes for active plans only
+   - Fetches latest ESI industry jobs and wallet transactions
+   - Silent updates with console logging
+   - Manual refresh button available in Analytics tab
+
+**UI Tabs** (`public/manufacturing-plans.html`, `src/renderer/manufacturing-plans-renderer.js`):
+- **Overview**: Summary stats (material cost, product value, profit, ROI), plan description
+- **Blueprints**: List of blueprints in plan with configuration details, add/remove buttons
+- **Materials**: Shopping list with optional owned assets (personal/corp), price refresh
+- **Products**: Expected output products with quantities and values
+- **Jobs**: Pending/confirmed industry job matches with confidence badges, approve/reject actions
+- **Transactions**: Pending/confirmed wallet transaction matches with confidence badges
+- **Analytics**: Progress bars, planned vs actual comparison cards
+
+**Error Handling & UX**:
+- Loading overlay with spinner for async operations
+- Toast notifications for success/error/warning/info messages
+- Confirmation dialogs for destructive actions (delete plan, remove blueprint, etc.)
+- Tooltips on key buttons explaining functionality
+- Graceful error handling with user-friendly messages
 
 ### Price Calculation Flow
 

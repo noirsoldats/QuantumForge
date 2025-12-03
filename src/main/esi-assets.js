@@ -233,7 +233,7 @@ function saveAssets(assetsData) {
 
       for (const asset of assetsData.assets) {
         insertAsset.run(
-          asset.item_id,
+          String(Math.floor(asset.item_id)),
           assetsData.characterId,
           asset.type_id,
           asset.location_id,

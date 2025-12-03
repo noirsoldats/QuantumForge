@@ -6,6 +6,7 @@ let currentFilter = 'owned';
 let currentCharacterFilter = 'default';
 let selectedCharacterId = null;
 let currentSort = { column: 'profit', direction: 'desc' };
+let selectedBlueprints = new Set(); // Track selected blueprint typeIds
 
 // Market filter state
 let marketFilters = {
@@ -107,6 +108,8 @@ function syncSpeculativeInventionUI() {
 
 // Column configuration
 const ALL_COLUMNS = [
+  // Selection column (always visible)
+  { id: 'select', label: '<input type="checkbox" id="select-all-checkbox" title="Select All">', default: true, sortable: false, align: 'center' },
   // Default columns
   { id: 'category', label: 'Category', default: true, sortable: true, align: 'left' },
   { id: 'name', label: 'Item Name', default: true, sortable: true, align: 'left' },
@@ -432,6 +435,9 @@ function setupEventListeners() {
       await saveSpeculativeInventionSettings();
     }
   });
+
+  // Add to Plan button
+  document.getElementById('add-selected-to-plan-btn')?.addEventListener('click', handleBulkAddToPlan);
 }
 
 // Main calculation function
@@ -1866,6 +1872,12 @@ function displayResults(searchTerm = '') {
     tbody.appendChild(row);
   });
 
+  // Add event listeners for checkboxes
+  setupCheckboxListeners();
+
+  // Restore checkbox state from selectedBlueprints Set
+  restoreCheckboxState();
+
   showResults();
 }
 
@@ -2094,6 +2106,8 @@ function getCellContent(columnId, item) {
   const roiClass = item.roi > 0 ? 'positive' : item.roi < 0 ? 'negative' : 'neutral';
 
   switch (columnId) {
+    case 'select':
+      return `<td class="text-center"><input type="checkbox" class="row-select-checkbox" data-blueprint-id="${item.blueprintTypeId}"></td>`;
     case 'category':
       return `<td>${escapeHtml(item.category)}</td>`;
     case 'name':
@@ -2266,5 +2280,261 @@ async function checkMarketDataAge() {
     }
   } catch (error) {
     console.error('Error checking market data age:', error);
+  }
+}
+
+// Blueprint selection functions
+function setupCheckboxListeners() {
+  // Select all checkbox
+  const selectAllCheckbox = document.getElementById('select-all-checkbox');
+  if (selectAllCheckbox) {
+    selectAllCheckbox.addEventListener('change', (e) => {
+      const checkboxes = document.querySelectorAll('.row-select-checkbox');
+      checkboxes.forEach(checkbox => {
+        checkbox.checked = e.target.checked;
+        const blueprintId = checkbox.dataset.blueprintId;
+        if (e.target.checked) {
+          selectedBlueprints.add(blueprintId);
+        } else {
+          selectedBlueprints.delete(blueprintId);
+        }
+      });
+      updateSelectionUI();
+    });
+  }
+
+  // Individual row checkboxes
+  document.querySelectorAll('.row-select-checkbox').forEach(checkbox => {
+    checkbox.addEventListener('change', (e) => {
+      const blueprintId = e.target.dataset.blueprintId;
+      if (e.target.checked) {
+        selectedBlueprints.add(blueprintId);
+      } else {
+        selectedBlueprints.delete(blueprintId);
+      }
+      updateSelectionUI();
+    });
+  });
+}
+
+function restoreCheckboxState() {
+  // Restore checked state for all checkboxes based on selectedBlueprints Set
+  document.querySelectorAll('.row-select-checkbox').forEach(checkbox => {
+    const blueprintId = checkbox.dataset.blueprintId;
+    checkbox.checked = selectedBlueprints.has(blueprintId);
+  });
+
+  // Update UI to reflect current selection
+  updateSelectionUI();
+}
+
+function updateSelectionUI() {
+  const count = selectedBlueprints.size;
+  const countSpan = document.getElementById('selected-count');
+  const addButton = document.getElementById('add-selected-to-plan-btn');
+
+  if (countSpan) {
+    countSpan.textContent = count;
+  }
+
+  if (addButton) {
+    addButton.style.display = count > 0 ? 'flex' : 'none';
+  }
+
+  // Update select-all checkbox state
+  const selectAllCheckbox = document.getElementById('select-all-checkbox');
+  const allCheckboxes = document.querySelectorAll('.row-select-checkbox');
+  if (selectAllCheckbox && allCheckboxes.length > 0) {
+    const allChecked = Array.from(allCheckboxes).every(cb => cb.checked);
+    const someChecked = Array.from(allCheckboxes).some(cb => cb.checked);
+    selectAllCheckbox.checked = allChecked;
+    selectAllCheckbox.indeterminate = someChecked && !allChecked;
+  }
+}
+
+async function handleBulkAddToPlan() {
+  if (selectedBlueprints.size === 0) {
+    alert('Please select at least one blueprint to add to a plan.');
+    return;
+  }
+
+  try {
+    // Get default character
+    const defaultChar = await window.electronAPI.esi.getDefaultCharacter();
+    if (!defaultChar) {
+      alert('No default character selected. Please set a default character in settings.');
+      return;
+    }
+
+    // Load all plans for this character
+    const plans = await window.electronAPI.plans.getAll(defaultChar.characterId, {});
+
+    // Show plan selection modal
+    showPlanSelectionModal(plans, defaultChar);
+
+  } catch (error) {
+    console.error('Error loading plans:', error);
+    alert('Error loading plans: ' + error.message);
+  }
+}
+
+function showPlanSelectionModal(plans, defaultChar) {
+  const modal = document.getElementById('plan-selection-modal');
+  const optionsContainer = document.getElementById('plan-selection-options');
+  const newPlanSection = document.getElementById('new-plan-section');
+  const newPlanInput = document.getElementById('new-plan-name-input');
+
+  // Clear previous options
+  optionsContainer.innerHTML = '';
+  newPlanSection.style.display = 'none';
+  newPlanInput.value = '';
+
+  // Add existing plans as radio options
+  if (plans && plans.length > 0) {
+    plans.forEach(plan => {
+      const option = document.createElement('label');
+      option.className = 'plan-option';
+      option.innerHTML = `
+        <input type="radio" name="plan-selection" value="${plan.planId}">
+        <span>${plan.planName}</span>
+      `;
+      optionsContainer.appendChild(option);
+    });
+  }
+
+  // Add "Create New Plan" option
+  const newPlanOption = document.createElement('label');
+  newPlanOption.className = 'plan-option';
+  newPlanOption.innerHTML = `
+    <input type="radio" name="plan-selection" value="new">
+    <span>Create New Plan</span>
+  `;
+  optionsContainer.appendChild(newPlanOption);
+
+  // Show/hide new plan name input when "new" is selected
+  optionsContainer.querySelectorAll('input[type="radio"]').forEach(radio => {
+    radio.addEventListener('change', (e) => {
+      if (e.target.value === 'new') {
+        newPlanSection.style.display = 'block';
+      } else {
+        newPlanSection.style.display = 'none';
+      }
+    });
+  });
+
+  // Show modal
+  modal.style.display = 'flex';
+
+  // Handle confirm button
+  const confirmBtn = document.getElementById('confirm-plan-selection-btn');
+  const newConfirmHandler = async () => {
+    const selectedRadio = optionsContainer.querySelector('input[type="radio"]:checked');
+    if (!selectedRadio) {
+      alert('Please select a plan or create a new one.');
+      return;
+    }
+
+    try {
+      let selectedPlanId;
+
+      if (selectedRadio.value === 'new') {
+        // Create new plan
+        const planName = newPlanInput.value.trim() || undefined;
+        const newPlan = await window.electronAPI.plans.create(
+          defaultChar.characterId,
+          planName,
+          'Bulk import from Manufacturing Summary'
+        );
+        selectedPlanId = newPlan.planId;
+      } else {
+        selectedPlanId = selectedRadio.value;
+      }
+
+      // Close modal
+      modal.style.display = 'none';
+      confirmBtn.removeEventListener('click', newConfirmHandler);
+
+      // Add blueprints to plan
+      await addBlueprintsToSelectedPlan(selectedPlanId);
+
+    } catch (error) {
+      console.error('Error creating/selecting plan:', error);
+      alert('Error: ' + error.message);
+    }
+  };
+
+  confirmBtn.addEventListener('click', newConfirmHandler);
+
+  // Handle cancel/close
+  const closeModal = () => {
+    modal.style.display = 'none';
+    confirmBtn.removeEventListener('click', newConfirmHandler);
+  };
+
+  document.getElementById('cancel-plan-selection-btn').onclick = closeModal;
+  document.getElementById('close-plan-selection-modal-btn').onclick = closeModal;
+
+  // Click outside to close
+  modal.onclick = (e) => {
+    if (e.target === modal) {
+      closeModal();
+    }
+  };
+}
+
+async function addBlueprintsToSelectedPlan(selectedPlanId) {
+  try {
+    // Get current facility ID
+    const facilityId = document.getElementById('facility-select')?.value || null;
+    let facilitySnapshot = null;
+    if (facilityId) {
+      const facilities = await window.electronAPI.facilities.getFacilities();
+      const facility = facilities.find(f => f.id === facilityId);
+      if (facility) {
+        facilitySnapshot = {
+          name: facility.name,
+          systemId: facility.systemId,
+          structureTypeId: facility.structureTypeId,
+          rigs: facility.rigs || []
+        };
+      }
+    }
+
+    // Add all selected blueprints to the plan
+    let successCount = 0;
+    for (const typeIdStr of selectedBlueprints) {
+      const typeId = parseInt(typeIdStr);
+      const blueprintData = calculatedData.find(item => item.blueprintTypeId === typeId);
+
+      if (blueprintData) {
+        try {
+          await window.electronAPI.plans.addBlueprint(selectedPlanId, {
+            blueprintTypeId: typeId,
+            runs: 1,
+            productionLines: 1,
+            meLevel: blueprintData.meLevel || 0,
+            teLevel: blueprintData.teLevel || 0,
+            facilityId: facilityId,
+            facilitySnapshot: facilitySnapshot
+          });
+          successCount++;
+        } catch (error) {
+          console.error(`Error adding blueprint ${typeId}:`, error);
+        }
+      }
+    }
+
+    alert(`Successfully added ${successCount} blueprint(s) to the plan.`);
+
+    // Clear selections
+    selectedBlueprints.clear();
+    document.querySelectorAll('.row-select-checkbox').forEach(cb => cb.checked = false);
+    const selectAllCheckbox = document.getElementById('select-all-checkbox');
+    if (selectAllCheckbox) selectAllCheckbox.checked = false;
+    updateSelectionUI();
+
+  } catch (error) {
+    console.error('Error adding blueprints to plan:', error);
+    alert('Error adding blueprints to plan: ' + error.message);
   }
 }

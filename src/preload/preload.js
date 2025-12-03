@@ -110,6 +110,61 @@ contextBridge.exposeInMainWorld('electronAPI', {
     onCharacterId: (callback) => ipcRenderer.on('assets:set-character-id', (event, id) => callback(id)),
   },
 
+  // Industry Jobs API
+  industryJobs: {
+    fetch: (characterId, includeCompleted) => ipcRenderer.invoke('industryJobs:fetch', characterId, includeCompleted),
+    get: (characterId, filters) => ipcRenderer.invoke('industryJobs:get', characterId, filters),
+    getCacheStatus: (characterId) => ipcRenderer.invoke('industryJobs:getCacheStatus', characterId),
+  },
+
+  // Wallet API
+  wallet: {
+    fetchTransactions: (characterId, fromId) => ipcRenderer.invoke('wallet:fetchTransactions', characterId, fromId),
+    getTransactions: (characterId, filters) => ipcRenderer.invoke('wallet:getTransactions', characterId, filters),
+    getCacheStatus: (characterId) => ipcRenderer.invoke('wallet:getCacheStatus', characterId),
+  },
+
+  // Manufacturing Plans API
+  plans: {
+    create: (characterId, planName, description) => ipcRenderer.invoke('plans:create', characterId, planName, description),
+    get: (planId) => ipcRenderer.invoke('plans:get', planId),
+    getAll: (characterId, filters) => ipcRenderer.invoke('plans:getAll', characterId, filters),
+    update: (planId, updates) => ipcRenderer.invoke('plans:update', planId, updates),
+    delete: (planId) => ipcRenderer.invoke('plans:delete', planId),
+    addBlueprint: (planId, blueprintConfig) => ipcRenderer.invoke('plans:addBlueprint', planId, blueprintConfig),
+    updateBlueprint: (planBlueprintId, updates) => ipcRenderer.invoke('plans:updateBlueprint', planBlueprintId, updates),
+    removeBlueprint: (planBlueprintId) => ipcRenderer.invoke('plans:removeBlueprint', planBlueprintId),
+    getBlueprints: (planId) => ipcRenderer.invoke('plans:getBlueprints', planId),
+    getMaterials: (planId, includeAssets) => ipcRenderer.invoke('plans:getMaterials', planId, includeAssets),
+    getProducts: (planId) => ipcRenderer.invoke('plans:getProducts', planId),
+    getSummary: (planId) => ipcRenderer.invoke('plans:getSummary', planId),
+    recalculateMaterials: (planId, refreshPrices) => ipcRenderer.invoke('plans:recalculateMaterials', planId, refreshPrices),
+    refreshESIData: (characterId) => ipcRenderer.invoke('plans:refreshESIData', characterId),
+    openWindow: () => ipcRenderer.invoke('plans:openWindow'),
+    // Matching functions
+    matchJobs: (planId, options) => ipcRenderer.invoke('plans:matchJobs', planId, options),
+    saveJobMatches: (matches) => ipcRenderer.invoke('plans:saveJobMatches', matches),
+    matchTransactions: (planId, options) => ipcRenderer.invoke('plans:matchTransactions', planId, options),
+    saveTransactionMatches: (matches) => ipcRenderer.invoke('plans:saveTransactionMatches', matches),
+    confirmJobMatch: (matchId) => ipcRenderer.invoke('plans:confirmJobMatch', matchId),
+    rejectJobMatch: (matchId) => ipcRenderer.invoke('plans:rejectJobMatch', matchId),
+    confirmTransactionMatch: (matchId) => ipcRenderer.invoke('plans:confirmTransactionMatch', matchId),
+    rejectTransactionMatch: (matchId) => ipcRenderer.invoke('plans:rejectTransactionMatch', matchId),
+    getPendingMatches: (planId) => ipcRenderer.invoke('plans:getPendingMatches', planId),
+    getConfirmedJobMatches: (planId) => ipcRenderer.invoke('plans:getConfirmedJobMatches', planId),
+    unlinkJobMatch: (matchId) => ipcRenderer.invoke('plans:unlinkJobMatch', matchId),
+    getConfirmedTransactionMatches: (planId) => ipcRenderer.invoke('plans:getConfirmedTransactionMatches', planId),
+    unlinkTransactionMatch: (matchId) => ipcRenderer.invoke('plans:unlinkTransactionMatch', matchId),
+    getActuals: (planId) => ipcRenderer.invoke('plans:getActuals', planId),
+    getAnalytics: (planId) => ipcRenderer.invoke('plans:getAnalytics', planId),
+    refreshESIData: (characterId) => ipcRenderer.invoke('plans:refreshESIData', characterId),
+    // Material acquisition functions
+    markMaterialAcquired: (planId, typeId, options) => ipcRenderer.invoke('plans:markMaterialAcquired', planId, typeId, options),
+    unmarkMaterialAcquired: (planId, typeId) => ipcRenderer.invoke('plans:unmarkMaterialAcquired', planId, typeId),
+    updateMaterialAcquisition: (planId, typeId, updates) => ipcRenderer.invoke('plans:updateMaterialAcquisition', planId, typeId, updates),
+    updateMaterialCustomPrice: (planId, typeId, customPrice) => ipcRenderer.invoke('plans:updateMaterialCustomPrice', planId, typeId, customPrice),
+  },
+
   // Location API
   location: {
     resolve: (locationId, characterId, isCorporation) =>

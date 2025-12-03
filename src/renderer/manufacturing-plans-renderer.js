@@ -1,0 +1,1882 @@
+// Manufacturing Plans Renderer
+// Handles UI for creating and managing manufacturing plans
+
+// State
+let allPlans = [];
+let selectedPlanId = null;
+let currentCharacterId = null;
+let activeTab = 'overview';
+let selectedBlueprintTypeId = null;
+let facilities = [];
+let autoRefreshInterval = null;
+
+// Initialize
+document.addEventListener('DOMContentLoaded', async () => {
+  await loadCharacters();
+  await loadFacilities();
+  setupEventListeners();
+  startAutoRefresh();
+});
+
+// Load characters into dropdown
+async function loadCharacters() {
+  const selector = document.getElementById('character-selector');
+  const characters = await window.electronAPI.esi.getCharacters();
+
+  selector.innerHTML = '';
+
+  if (characters.length === 0) {
+    selector.innerHTML = '<option value="">No characters found</option>';
+    return;
+  }
+
+  for (const char of characters) {
+    const option = document.createElement('option');
+    option.value = char.characterId;
+    option.textContent = char.characterName;
+    selector.appendChild(option);
+  }
+
+  // Get default character
+  const defaultChar = await window.electronAPI.esi.getDefaultCharacter();
+  if (defaultChar) {
+    selector.value = defaultChar.characterId;
+    currentCharacterId = defaultChar.characterId;
+    await loadPlans();
+  } else if (characters.length > 0) {
+    currentCharacterId = characters[0].characterId;
+    selector.value = currentCharacterId;
+    await loadPlans();
+  }
+}
+
+// Load facilities for dropdown
+async function loadFacilities() {
+  facilities = await window.electronAPI.facilities.getFacilities();
+}
+
+// Setup event listeners
+function setupEventListeners() {
+  // Character selector
+  document.getElementById('character-selector').addEventListener('change', async (e) => {
+    currentCharacterId = parseInt(e.target.value);
+    await loadPlans();
+    showEmptyState();
+  });
+
+  // Create plan button
+  document.getElementById('create-plan-btn').addEventListener('click', showCreatePlanModal);
+
+  // Create plan modal
+  document.getElementById('close-create-modal-btn').addEventListener('click', hideCreatePlanModal);
+  document.getElementById('cancel-create-btn').addEventListener('click', hideCreatePlanModal);
+  document.getElementById('confirm-create-btn').addEventListener('click', createPlan);
+
+  // Plan actions
+  document.getElementById('delete-plan-btn').addEventListener('click', deletePlan);
+  document.getElementById('complete-plan-btn').addEventListener('click', completePlan);
+
+  // Plan name editing
+  document.getElementById('plan-name').addEventListener('blur', updatePlanName);
+  document.getElementById('plan-description').addEventListener('blur', updatePlanDescription);
+
+  // Tab switching
+  document.querySelectorAll('.tab-button').forEach(btn => {
+    btn.addEventListener('click', (e) => switchTab(e.target.dataset.tab));
+  });
+
+  // Blueprint tab
+  document.getElementById('add-blueprint-btn').addEventListener('click', showAddBlueprintModal);
+  document.getElementById('close-blueprint-modal-btn').addEventListener('click', hideAddBlueprintModal);
+  document.getElementById('blueprint-search-modal').addEventListener('input', searchBlueprints);
+
+  // Configure blueprint modal
+  document.getElementById('close-configure-modal-btn').addEventListener('click', hideConfigureBlueprintModal);
+  document.getElementById('cancel-configure-btn').addEventListener('click', hideConfigureBlueprintModal);
+  document.getElementById('confirm-configure-btn').addEventListener('click', confirmAddBlueprint);
+
+  // Materials tab
+  document.getElementById('include-assets-checkbox').addEventListener('change', loadMaterials);
+  document.getElementById('refresh-prices-btn').addEventListener('click', refreshPrices);
+
+  // Jobs tab
+  document.getElementById('match-jobs-btn').addEventListener('click', matchJobs);
+
+  // Transactions tab
+  document.getElementById('match-transactions-btn').addEventListener('click', matchTransactions);
+
+  // Analytics tab
+  document.getElementById('refresh-esi-data-btn').addEventListener('click', refreshESIData);
+
+  // Search and filters
+  document.getElementById('plan-search').addEventListener('input', filterPlans);
+  document.querySelectorAll('input[name="status-filter"]').forEach(radio => {
+    radio.addEventListener('change', filterPlans);
+  });
+}
+
+// Load plans for current character
+async function loadPlans() {
+  if (!currentCharacterId) return;
+
+  const statusFilter = document.querySelector('input[name="status-filter"]:checked').value;
+  const filters = statusFilter === 'all' ? {} : { status: statusFilter };
+
+  allPlans = await window.electronAPI.plans.getAll(currentCharacterId, filters);
+  renderPlansList();
+}
+
+// Render plans list
+function renderPlansList() {
+  const container = document.getElementById('plans-list');
+  const searchTerm = document.getElementById('plan-search').value.toLowerCase();
+
+  const filteredPlans = allPlans.filter(plan =>
+    plan.planName.toLowerCase().includes(searchTerm)
+  );
+
+  if (filteredPlans.length === 0) {
+    container.innerHTML = '<div class="loading">No plans found</div>';
+    return;
+  }
+
+  container.innerHTML = filteredPlans.map(plan => {
+    const created = new Date(plan.createdAt);
+    return `
+      <div class="plan-card ${plan.planId === selectedPlanId ? 'selected' : ''}" data-plan-id="${plan.planId}">
+        <div class="plan-card-header">
+          <div>
+            <div class="plan-card-name">${escapeHtml(plan.planName)}</div>
+            <div class="plan-card-date">${created.toLocaleDateString()} ${created.toLocaleTimeString()}</div>
+          </div>
+          <span class="status-badge ${plan.status}">${plan.status}</span>
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  // Add click handlers
+  container.querySelectorAll('.plan-card').forEach(card => {
+    card.addEventListener('click', () => selectPlan(card.dataset.planId));
+  });
+}
+
+// Select a plan
+async function selectPlan(planId) {
+  selectedPlanId = planId;
+  renderPlansList();
+  await loadPlanDetails();
+}
+
+// Load and display plan details
+async function loadPlanDetails() {
+  if (!selectedPlanId) {
+    showEmptyState();
+    return;
+  }
+
+  const plan = await window.electronAPI.plans.get(selectedPlanId);
+  if (!plan) {
+    showEmptyState();
+    return;
+  }
+
+  // Show detail view
+  document.getElementById('empty-state').style.display = 'none';
+  document.getElementById('plan-detail').style.display = 'flex';
+
+  // Update header
+  document.getElementById('plan-name').textContent = plan.planName;
+  document.getElementById('plan-status').textContent = plan.status;
+  document.getElementById('plan-status').className = `status-badge ${plan.status}`;
+
+  const created = new Date(plan.createdAt);
+  document.getElementById('plan-created').textContent = `Created: ${created.toLocaleDateString()} ${created.toLocaleTimeString()}`;
+  document.getElementById('plan-description').value = plan.description || '';
+
+  // Load current tab content
+  await loadTabContent(activeTab);
+}
+
+// Show empty state
+function showEmptyState() {
+  selectedPlanId = null;
+  document.getElementById('empty-state').style.display = 'flex';
+  document.getElementById('plan-detail').style.display = 'none';
+}
+
+// Switch tabs
+async function switchTab(tabName) {
+  activeTab = tabName;
+
+  // Update tab buttons
+  document.querySelectorAll('.tab-button').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.tab === tabName);
+  });
+
+  // Update tab panels
+  document.querySelectorAll('.tab-panel').forEach(panel => {
+    panel.classList.remove('active');
+  });
+  document.getElementById(`${tabName}-tab`).classList.add('active');
+
+  // Load tab content
+  await loadTabContent(tabName);
+}
+
+// Load tab content
+async function loadTabContent(tabName) {
+  if (!selectedPlanId) return;
+
+  switch (tabName) {
+    case 'overview':
+      await loadOverview();
+      break;
+    case 'blueprints':
+      await loadBlueprints();
+      break;
+    case 'materials':
+      await loadMaterials();
+      break;
+    case 'products':
+      await loadProducts();
+      break;
+    case 'jobs':
+      await loadJobs();
+      break;
+    case 'transactions':
+      await loadTransactions();
+      break;
+    case 'analytics':
+      await loadAnalytics();
+      break;
+  }
+}
+
+// Load overview tab
+async function loadOverview() {
+  const summary = await window.electronAPI.plans.getSummary(selectedPlanId);
+
+  document.getElementById('overview-material-cost').textContent = formatISK(summary.materialCost);
+  document.getElementById('overview-material-meta').textContent = `${summary.materialsWithPrice}/${summary.totalMaterials} priced`;
+
+  document.getElementById('overview-product-value').textContent = formatISK(summary.productValue);
+  document.getElementById('overview-product-meta').textContent = `${summary.productsWithPrice}/${summary.totalProducts} priced`;
+
+  const profit = summary.estimatedProfit;
+  const profitEl = document.getElementById('overview-profit');
+  profitEl.textContent = formatISK(profit);
+  profitEl.style.color = profit >= 0 ? '#57f287' : '#ed4245';
+
+  document.getElementById('overview-roi').textContent = `${summary.roi.toFixed(1)}% ROI`;
+}
+
+// Load blueprints tab
+async function loadBlueprints() {
+  const blueprints = await window.electronAPI.plans.getBlueprints(selectedPlanId);
+  const container = document.getElementById('blueprints-list-tab');
+
+  if (blueprints.length === 0) {
+    container.innerHTML = '<div class="loading">No blueprints in this plan. Click "Add Blueprint" to get started.</div>';
+    return;
+  }
+
+  // Get blueprint names
+  const typeIds = blueprints.map(bp => bp.blueprintTypeId);
+  const names = await window.electronAPI.sde.getBlueprintNames(typeIds);
+
+  container.innerHTML = `
+    <table>
+      <thead>
+        <tr>
+          <th>Blueprint</th>
+          <th>Runs</th>
+          <th>Lines</th>
+          <th>ME</th>
+          <th>TE</th>
+          <th>Facility</th>
+          <th>
+            Build Plan
+            <span class="info-icon" title="Raw Materials: Build all components from blueprints&#10;Components: Buy all components from market&#10;Build/Buy: Optimize between building and buying (coming soon)">ⓘ</span>
+          </th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${blueprints.map(bp => {
+          const name = names[bp.blueprintTypeId] || `Type ${bp.blueprintTypeId}`;
+          const facilityName = bp.facilitySnapshot ? (bp.facilitySnapshot.name || 'Unknown') : 'None';
+          const facilityId = bp.facilityId || '';
+          return `
+            <tr data-blueprint-id="${bp.planBlueprintId}" data-editing="false">
+              <td>${escapeHtml(name)}</td>
+              <td class="editable-cell" data-field="runs">
+                <span class="cell-value">${bp.runs}</span>
+                <input type="number" class="cell-input" value="${bp.runs}" min="1" style="display: none;">
+              </td>
+              <td class="editable-cell" data-field="lines">
+                <span class="cell-value">${bp.lines}</span>
+                <input type="number" class="cell-input" value="${bp.lines}" min="1" style="display: none;">
+              </td>
+              <td class="editable-cell" data-field="meLevel">
+                <span class="cell-value">${bp.meLevel}</span>
+                <input type="number" class="cell-input" value="${bp.meLevel}" min="0" max="10" style="display: none;">
+              </td>
+              <td class="editable-cell" data-field="teLevel">
+                <span class="cell-value">${bp.teLevel || 0}</span>
+                <input type="number" class="cell-input" value="${bp.teLevel || 0}" min="0" max="20" style="display: none;">
+              </td>
+              <td class="editable-cell" data-field="facilityId">
+                <span class="cell-value">${escapeHtml(facilityName)}</span>
+                <select class="cell-input" style="display: none;">
+                  <option value="">No facility</option>
+                  ${facilities.map(f => `<option value="${f.id}" ${f.id === facilityId ? 'selected' : ''}>${escapeHtml(f.name)}</option>`).join('')}
+                </select>
+              </td>
+              <td class="editable-cell" data-field="useIntermediates">
+                <span class="cell-value">${bp.useIntermediates === 'raw_materials' ? 'Raw Materials' : bp.useIntermediates === 'components' ? 'Components' : bp.useIntermediates === 'build_buy' ? 'Build/Buy' : (bp.useIntermediates ? 'Raw Materials' : 'Components')}</span>
+                <select class="cell-input" style="display: none;">
+                  <option value="raw_materials" ${bp.useIntermediates === 'raw_materials' || bp.useIntermediates === 1 || bp.useIntermediates === true ? 'selected' : ''}>Raw Materials</option>
+                  <option value="components" ${bp.useIntermediates === 'components' || bp.useIntermediates === 0 || bp.useIntermediates === false ? 'selected' : ''}>Components</option>
+                  <option value="build_buy" ${bp.useIntermediates === 'build_buy' ? 'selected' : ''} disabled>Build/Buy (Coming Soon)</option>
+                </select>
+              </td>
+              <td class="blueprint-actions">
+                <button class="secondary-button small edit-btn" data-action="edit">Edit</button>
+                <button class="primary-button small save-btn" data-action="save" style="display: none;">Save</button>
+                <button class="secondary-button small cancel-btn" data-action="cancel" style="display: none;">Cancel</button>
+                <button class="secondary-button small remove-btn" data-action="remove">Remove</button>
+              </td>
+            </tr>
+          `;
+        }).join('')}
+      </tbody>
+    </table>
+  `;
+
+  // Add event listeners for blueprint actions
+  container.querySelectorAll('tr[data-blueprint-id]').forEach(row => {
+    const blueprintId = row.dataset.blueprintId;
+
+    row.querySelector('[data-action="edit"]')?.addEventListener('click', () => editBlueprint(blueprintId));
+    row.querySelector('[data-action="save"]')?.addEventListener('click', () => saveBlueprintEdit(blueprintId));
+    row.querySelector('[data-action="cancel"]')?.addEventListener('click', () => cancelBlueprintEdit(blueprintId));
+    row.querySelector('[data-action="remove"]')?.addEventListener('click', () => removeBlueprint(blueprintId));
+  });
+}
+
+// Load materials tab
+async function loadMaterials() {
+  const includeAssets = document.getElementById('include-assets-checkbox').checked;
+  const materials = await window.electronAPI.plans.getMaterials(selectedPlanId, includeAssets);
+  const container = document.getElementById('materials-list-tab');
+
+  if (materials.length === 0) {
+    container.innerHTML = '<div class="loading">No materials calculated. Add blueprints to this plan.</div>';
+    return;
+  }
+
+  // Get material names
+  const typeIds = materials.map(m => m.typeId);
+  const names = await window.electronAPI.sde.getTypeNames(typeIds);
+
+  container.innerHTML = `
+    <table>
+      <thead>
+        <tr>
+          <th>Material</th>
+          <th>Needed</th>
+          ${includeAssets ? '<th>Owned (Personal)</th><th>Owned (Corp)</th><th>Still Needed</th>' : ''}
+          <th>Price</th>
+          <th>Total Cost</th>
+          <th>Acquisition</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${materials.map(m => {
+          const name = names[m.typeId] || `Type ${m.typeId}`;
+          const stillNeeded = includeAssets ? Math.max(0, m.quantity - m.ownedPersonal - m.ownedCorp) : m.quantity;
+
+          // Use custom price if set, otherwise base price
+          const effectivePrice = m.customPrice !== null ? m.customPrice : m.basePrice;
+          const price = effectivePrice ? formatISK(effectivePrice) : 'N/A';
+          const total = effectivePrice ? formatISK(effectivePrice * m.quantity) : 'N/A';
+
+          // Acquisition status - build badges array
+          const badges = [];
+
+          // 1. Manual acquisition badge
+          if (m.manuallyAcquiredQuantity > 0) {
+            const methodLabel = m.acquisitionMethod
+              ? m.acquisitionMethod.replace('_', ' ').toUpperCase()
+              : 'MANUAL';
+            const note = m.acquisitionNote || 'Manually marked as acquired';
+            badges.push(`<span class="status-badge acquired" title="${escapeHtml(note)}">${methodLabel}: ${formatNumber(m.manuallyAcquiredQuantity)}</span>`);
+          }
+
+          // 2. Purchased badge (confirmed transactions)
+          if (m.purchasedQuantity && m.purchasedQuantity > 0) {
+            const title = `${m.purchaseMatchCount || 0} confirmed transaction match(es)`;
+            badges.push(`<span class="status-badge purchased" title="${title}">PURCHASED: ${formatNumber(m.purchasedQuantity)}</span>`);
+          }
+
+          // 3. Manufactured badge (confirmed jobs)
+          if (m.manufacturedQuantity && m.manufacturedQuantity > 0) {
+            const title = `${m.manufacturingMatchCount || 0} confirmed job match(es)`;
+            badges.push(`<span class="status-badge manufactured" title="${title}">MANUFACTURED: ${formatNumber(m.manufacturedQuantity)}</span>`);
+          }
+
+          // Display badges or "Not Acquired"
+          const acquisitionDisplay = badges.length > 0
+            ? badges.join(' ')
+            : '<span class="status-badge">Not Acquired</span>';
+
+          // Calculate completion for visual feedback
+          const totalAcquired = (m.manuallyAcquiredQuantity || 0) + (m.purchasedQuantity || 0) + (m.manufacturedQuantity || 0);
+          const isFullyAcquired = totalAcquired >= m.quantity;
+
+          return `
+            <tr data-type-id="${m.typeId}" ${isFullyAcquired ? 'data-fully-acquired="true"' : ''}>
+              <td>${escapeHtml(name)}</td>
+              <td>${formatNumber(m.quantity)}</td>
+              ${includeAssets ? `
+                <td>${formatNumber(m.ownedPersonal)}</td>
+                <td>${formatNumber(m.ownedCorp)}</td>
+                <td>${formatNumber(stillNeeded)}</td>
+              ` : ''}
+              <td>
+                ${m.customPrice !== null ? '<span class="custom-price-indicator" title="Custom price set">⚙️</span> ' : ''}
+                ${price}
+              </td>
+              <td>${total}</td>
+              <td>${acquisitionDisplay}</td>
+              <td>
+                ${m.manuallyAcquiredQuantity > 0 ? `
+                  <button class="secondary-button small edit-acquisition-btn"
+                    data-type-id="${m.typeId}"
+                    data-material-name="${escapeHtml(name)}"
+                    data-quantity-needed="${m.quantity}"
+                    data-already-acquired="${totalAcquired}"
+                    data-manual-quantity="${m.manuallyAcquiredQuantity}"
+                    data-still-needed="${Math.max(0, m.quantity - totalAcquired)}">Edit Acquisition</button>
+                  <button class="secondary-button small unmark-btn" data-type-id="${m.typeId}">Remove Manual</button>
+                ` : `
+                  <button class="secondary-button small mark-acquired-btn"
+                    data-type-id="${m.typeId}"
+                    data-material-name="${escapeHtml(name)}"
+                    data-quantity-needed="${m.quantity}"
+                    data-already-acquired="${totalAcquired}"
+                    data-still-needed="${Math.max(0, m.quantity - totalAcquired)}">Mark Acquired</button>
+                `}
+              </td>
+            </tr>
+          `;
+        }).join('')}
+      </tbody>
+    </table>
+  `;
+
+  // Attach event listeners after rendering
+  container.querySelectorAll('.mark-acquired-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const typeId = parseInt(btn.dataset.typeId);
+      const materialName = btn.dataset.materialName;
+      const quantityNeeded = parseInt(btn.dataset.quantityNeeded);
+      const alreadyAcquired = parseInt(btn.dataset.alreadyAcquired);
+      const stillNeeded = parseInt(btn.dataset.stillNeeded);
+      showAcquireMaterialModal(typeId, materialName, quantityNeeded, alreadyAcquired, stillNeeded);
+    });
+  });
+
+  container.querySelectorAll('.unmark-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const typeId = parseInt(btn.dataset.typeId);
+      unmarkMaterialAcquired(typeId);
+    });
+  });
+
+  container.querySelectorAll('.edit-acquisition-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const typeId = parseInt(btn.dataset.typeId);
+      const materialName = btn.dataset.materialName;
+      const quantityNeeded = parseInt(btn.dataset.quantityNeeded);
+      const alreadyAcquired = parseInt(btn.dataset.alreadyAcquired);
+      const manualQuantity = parseInt(btn.dataset.manualQuantity);
+      const stillNeeded = parseInt(btn.dataset.stillNeeded);
+      showAcquireMaterialModal(typeId, materialName, quantityNeeded, alreadyAcquired, stillNeeded, manualQuantity);
+    });
+  });
+
+  container.querySelectorAll('.edit-price-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const typeId = parseInt(btn.dataset.typeId);
+      const price = parseFloat(btn.dataset.price);
+      editMaterialPrice(typeId, price);
+    });
+  });
+}
+
+// Show acquire material modal
+window.showAcquireMaterialModal = function(typeId, materialName, quantityNeeded = 0, alreadyAcquired = 0, stillNeeded = 0, currentManualQuantity = 0) {
+  const modal = document.getElementById('acquire-material-modal');
+  if (!modal) {
+    createAcquireMaterialModal();
+    return showAcquireMaterialModal(typeId, materialName, quantityNeeded, alreadyAcquired, stillNeeded, currentManualQuantity);
+  }
+
+  document.getElementById('acquire-material-name').textContent = materialName;
+  document.getElementById('acquire-type-id').value = typeId;
+
+  // Pre-fill with current manual quantity if editing, otherwise use stillNeeded
+  document.getElementById('acquisition-quantity').value = currentManualQuantity > 0 ? currentManualQuantity : stillNeeded;
+
+  document.getElementById('acquire-total-needed').textContent = formatNumber(quantityNeeded);
+  document.getElementById('acquire-already-acquired').textContent = formatNumber(alreadyAcquired);
+  document.getElementById('acquire-still-needed').textContent = formatNumber(stillNeeded);
+  document.getElementById('acquisition-method').value = 'owned';
+  document.getElementById('custom-price-input').value = '';
+  document.getElementById('acquisition-note-input').value = '';
+
+  // Update modal title based on mode
+  const title = currentManualQuantity > 0 ? 'Edit Manual Acquisition' : 'Mark Material as Acquired';
+  document.querySelector('#acquire-material-modal .modal-header h2').textContent = title;
+
+  modal.style.display = 'flex';
+};
+
+// Hide acquire material modal
+function hideAcquireMaterialModal() {
+  document.getElementById('acquire-material-modal').style.display = 'none';
+}
+
+// Create acquire material modal dynamically
+function createAcquireMaterialModal() {
+  const modalHTML = `
+    <div id="acquire-material-modal" class="modal" style="display: none;">
+      <div class="modal-content large">
+        <div class="modal-header">
+          <h2>Mark Material as Acquired</h2>
+          <button class="close-btn" id="close-acquire-modal">&times;</button>
+        </div>
+        <div class="modal-body">
+          <input type="hidden" id="acquire-type-id">
+
+          <div style="margin-bottom: 24px; padding: 12px; background: rgba(88, 101, 242, 0.1); border-radius: 4px;">
+            <div style="font-size: 13px; color: #b9bbbe; margin-bottom: 4px;">Material</div>
+            <div style="font-size: 16px; font-weight: 600;" id="acquire-material-name"></div>
+          </div>
+
+          <div style="margin-bottom: 20px;">
+            <label for="acquisition-quantity">Quantity Acquired</label>
+            <input type="number" id="acquisition-quantity" class="input-field" min="1" step="1" required>
+            <div style="font-size: 12px; color: #72767d; margin-top: 4px;">
+              Total needed: <span id="acquire-total-needed">0</span> |
+              Already acquired: <span id="acquire-already-acquired">0</span> |
+              Still needed: <span id="acquire-still-needed">0</span>
+            </div>
+          </div>
+
+          <div style="margin-bottom: 20px;">
+            <label for="acquisition-method">How was this material acquired?</label>
+            <select id="acquisition-method" class="input-field">
+              <option value="owned">Already Owned (Assets)</option>
+              <option value="manufactured">Manufactured by Me</option>
+              <option value="gift">Gift/Donation</option>
+              <option value="contract">Contract/Trade</option>
+              <option value="other">Other</option>
+            </select>
+          </div>
+
+          <div style="margin-bottom: 20px;">
+            <label for="custom-price-input">Custom Price per Unit (ISK)</label>
+            <input type="number" id="custom-price-input" class="input-field" min="0" step="0.01" placeholder="Leave empty to use market price">
+            <div style="font-size: 12px; color: #72767d; margin-top: 4px;">Enter a custom price if the actual cost differs from market estimate</div>
+          </div>
+
+          <div style="margin-bottom: 20px;">
+            <label for="acquisition-note-input">Note (Optional)</label>
+            <textarea id="acquisition-note-input" class="textarea-field" rows="3" placeholder="Add any notes about this acquisition..."></textarea>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="secondary-button" id="cancel-acquire-btn">Cancel</button>
+          <button class="primary-button" id="confirm-acquire-btn">Confirm</button>
+        </div>
+      </div>
+    </div>
+  `;
+
+  document.body.insertAdjacentHTML('beforeend', modalHTML);
+
+  // Attach event listeners (CSP-compliant)
+  document.getElementById('close-acquire-modal').addEventListener('click', hideAcquireMaterialModal);
+  document.getElementById('cancel-acquire-btn').addEventListener('click', hideAcquireMaterialModal);
+  document.getElementById('confirm-acquire-btn').addEventListener('click', confirmAcquireMaterial);
+}
+
+// Confirm acquire material
+window.confirmAcquireMaterial = async function() {
+  const typeId = parseInt(document.getElementById('acquire-type-id').value);
+  const quantity = parseInt(document.getElementById('acquisition-quantity').value);
+  const acquisitionMethod = document.getElementById('acquisition-method').value;
+  const customPriceInput = document.getElementById('custom-price-input').value;
+  const acquisitionNote = document.getElementById('acquisition-note-input').value.trim();
+
+  // Validate quantity
+  if (!quantity || quantity <= 0) {
+    showToast('Please enter a valid quantity', 'error');
+    return;
+  }
+
+  const customPrice = customPriceInput ? parseFloat(customPriceInput) : null;
+
+  try {
+    showLoading('Marking material as acquired...');
+    await window.electronAPI.plans.markMaterialAcquired(selectedPlanId, typeId, {
+      quantity,
+      acquisitionMethod,
+      customPrice,
+      acquisitionNote: acquisitionNote || null
+    });
+
+    hideAcquireMaterialModal();
+    await loadMaterials();
+    await loadOverview(); // Update cost calculations
+    showToast('Material marked as acquired', 'success');
+  } catch (error) {
+    showToast('Failed to mark material: ' + error.message, 'error');
+  } finally {
+    hideLoading();
+  }
+};
+
+// Unmark material as acquired
+window.unmarkMaterialAcquired = async function(typeId) {
+  try {
+    showLoading('Unmarking material...');
+    await window.electronAPI.plans.unmarkMaterialAcquired(selectedPlanId, typeId);
+    await loadMaterials();
+    await loadOverview();
+    showToast('Material unmarked', 'success');
+  } catch (error) {
+    showToast('Failed to unmark material: ' + error.message, 'error');
+  } finally {
+    hideLoading();
+  }
+};
+
+// Edit material price
+window.editMaterialPrice = async function(typeId, currentPrice) {
+  const newPrice = prompt('Enter new price per unit (ISK):', currentPrice);
+
+  if (newPrice === null) return; // User cancelled
+
+  const price = parseFloat(newPrice);
+  if (isNaN(price) || price < 0) {
+    showToast('Invalid price entered', 'error');
+    return;
+  }
+
+  try {
+    showLoading('Updating price...');
+    await window.electronAPI.plans.updateMaterialCustomPrice(selectedPlanId, typeId, price);
+    await loadMaterials();
+    await loadOverview();
+    showToast('Price updated', 'success');
+  } catch (error) {
+    showToast('Failed to update price: ' + error.message, 'error');
+  } finally {
+    hideLoading();
+  }
+};
+
+// Load products tab
+async function loadProducts() {
+  const products = await window.electronAPI.plans.getProducts(selectedPlanId);
+  const container = document.getElementById('products-list-tab');
+
+  if (products.length === 0) {
+    container.innerHTML = '<div class="loading">No products calculated. Add blueprints to this plan.</div>';
+    return;
+  }
+
+  // Separate intermediate and final products
+  const intermediateProducts = products.filter(p => p.isIntermediate);
+  const finalProducts = products.filter(p => !p.isIntermediate);
+
+  // Get product names
+  const typeIds = products.map(p => p.typeId);
+  const names = await window.electronAPI.sde.getTypeNames(typeIds);
+
+  let html = '';
+
+  // Intermediate Products Section
+  if (intermediateProducts.length > 0) {
+    html += `
+      <div class="products-section">
+        <h3 class="section-header">Intermediate Products</h3>
+        <p class="section-description">Components that will be manufactured as intermediate steps before producing the final products.</p>
+        <table>
+          <thead>
+            <tr>
+              <th>Product</th>
+              <th>Quantity</th>
+              <th>Price</th>
+              <th>Total Value</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${intermediateProducts.map(p => {
+              const name = names[p.typeId] || `Type ${p.typeId}`;
+              const price = p.basePrice ? formatISK(p.basePrice) : 'N/A';
+              const total = p.basePrice ? formatISK(p.basePrice * p.quantity) : 'N/A';
+
+              return `
+                <tr>
+                  <td>${escapeHtml(name)}</td>
+                  <td>${formatNumber(p.quantity)}</td>
+                  <td>${price}</td>
+                  <td>${total}</td>
+                </tr>
+              `;
+            }).join('')}
+          </tbody>
+        </table>
+      </div>
+    `;
+  }
+
+  // Final Products Section
+  if (finalProducts.length > 0) {
+    html += `
+      <div class="products-section">
+        <h3 class="section-header">Final Products</h3>
+        <table>
+          <thead>
+            <tr>
+              <th>Product</th>
+              <th>Quantity</th>
+              <th>Price</th>
+              <th>Total Value</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${finalProducts.map(p => {
+              const name = names[p.typeId] || `Type ${p.typeId}`;
+              const price = p.basePrice ? formatISK(p.basePrice) : 'N/A';
+              const total = p.basePrice ? formatISK(p.basePrice * p.quantity) : 'N/A';
+
+              return `
+                <tr>
+                  <td>${escapeHtml(name)}</td>
+                  <td>${formatNumber(p.quantity)}</td>
+                  <td>${price}</td>
+                  <td>${total}</td>
+                </tr>
+              `;
+            }).join('')}
+          </tbody>
+        </table>
+      </div>
+    `;
+  }
+
+  container.innerHTML = html;
+}
+
+// Show create plan modal
+function showCreatePlanModal() {
+  document.getElementById('new-plan-name').value = '';
+  document.getElementById('new-plan-description').value = '';
+  document.getElementById('create-plan-modal').style.display = 'flex';
+}
+
+// Hide create plan modal
+function hideCreatePlanModal() {
+  document.getElementById('create-plan-modal').style.display = 'none';
+}
+
+// Create plan
+async function createPlan() {
+  if (!currentCharacterId) {
+    showToast('Please select a character', 'warning');
+    return;
+  }
+
+  const planName = document.getElementById('new-plan-name').value.trim();
+  const description = document.getElementById('new-plan-description').value.trim();
+
+  try {
+    showLoading('Creating plan...');
+    const plan = await window.electronAPI.plans.create(
+      currentCharacterId,
+      planName || null,
+      description || null
+    );
+
+    hideCreatePlanModal();
+    await loadPlans();
+    await selectPlan(plan.planId);
+    showToast('Manufacturing plan created successfully', 'success');
+  } catch (error) {
+    showToast('Failed to create plan: ' + error.message, 'error');
+  } finally {
+    hideLoading();
+  }
+}
+
+// Delete plan
+async function deletePlan() {
+  if (!selectedPlanId) return;
+
+  const confirmed = await showConfirmDialog(
+    'Are you sure you want to delete this plan? This cannot be undone.',
+    'Delete Plan',
+    'Delete',
+    'Cancel'
+  );
+
+  if (!confirmed) return;
+
+  try {
+    showLoading('Deleting plan...');
+    await window.electronAPI.plans.delete(selectedPlanId);
+    await loadPlans();
+    showEmptyState();
+    showToast('Plan deleted successfully', 'success');
+  } catch (error) {
+    showToast('Failed to delete plan: ' + error.message, 'error');
+  } finally {
+    hideLoading();
+  }
+}
+
+// Complete plan
+async function completePlan() {
+  if (!selectedPlanId) return;
+
+  const confirmed = await showConfirmDialog(
+    'Mark this plan as completed? You can still view it later.',
+    'Complete Plan',
+    'Mark Complete',
+    'Cancel'
+  );
+
+  if (!confirmed) return;
+
+  try {
+    showLoading('Updating plan status...');
+    await window.electronAPI.plans.update(selectedPlanId, {
+      status: 'completed',
+      completedAt: Date.now(),
+    });
+    await loadPlans();
+    await loadPlanDetails();
+    showToast('Plan marked as completed', 'success');
+  } catch (error) {
+    showToast('Failed to complete plan: ' + error.message, 'error');
+  } finally {
+    hideLoading();
+  }
+}
+
+// Update plan name
+async function updatePlanName() {
+  if (!selectedPlanId) return;
+
+  const newName = document.getElementById('plan-name').textContent.trim();
+  if (!newName) {
+    await loadPlanDetails();
+    return;
+  }
+
+  try {
+    await window.electronAPI.plans.update(selectedPlanId, { planName: newName });
+    await loadPlans();
+  } catch (error) {
+    console.error('Failed to update plan name:', error);
+    await loadPlanDetails();
+  }
+}
+
+// Update plan description
+async function updatePlanDescription() {
+  if (!selectedPlanId) return;
+
+  const description = document.getElementById('plan-description').value.trim();
+
+  try {
+    await window.electronAPI.plans.update(selectedPlanId, { description: description || null });
+  } catch (error) {
+    console.error('Failed to update plan description:', error);
+  }
+}
+
+// Show add blueprint modal
+function showAddBlueprintModal() {
+  document.getElementById('blueprint-search-modal').value = '';
+  document.getElementById('blueprint-search-results').innerHTML = '<div class="loading">Search for blueprints...</div>';
+  document.getElementById('add-blueprint-modal').style.display = 'flex';
+}
+
+// Hide add blueprint modal
+function hideAddBlueprintModal() {
+  document.getElementById('add-blueprint-modal').style.display = 'none';
+}
+
+// Search blueprints
+let searchTimeout;
+async function searchBlueprints(e) {
+  clearTimeout(searchTimeout);
+
+  const query = e.target.value.trim();
+  if (query.length < 2) {
+    document.getElementById('blueprint-search-results').innerHTML = '<div class="loading">Search for blueprints...</div>';
+    return;
+  }
+
+  searchTimeout = setTimeout(async () => {
+    const results = await window.electronAPI.sde.searchBlueprints(query);
+    const container = document.getElementById('blueprint-search-results');
+
+    if (results.length === 0) {
+      container.innerHTML = '<div class="loading">No blueprints found</div>';
+      return;
+    }
+
+    container.innerHTML = results.slice(0, 20).map(bp => `
+      <div class="search-result-item" data-type-id="${bp.typeID}">
+        <strong>${escapeHtml(bp.typeName)}</strong>
+      </div>
+    `).join('');
+
+    // Add click handlers
+    container.querySelectorAll('.search-result-item').forEach(item => {
+      item.addEventListener('click', () => {
+        selectedBlueprintTypeId = parseInt(item.dataset.typeId);
+        showConfigureBlueprintModal(item.querySelector('strong').textContent);
+      });
+    });
+  }, 300);
+}
+
+// Show configure blueprint modal
+async function showConfigureBlueprintModal(blueprintName) {
+  hideAddBlueprintModal();
+
+  document.getElementById('config-blueprint-name').textContent = blueprintName;
+  document.getElementById('config-runs').value = 1;
+  document.getElementById('config-lines').value = 1;
+
+  // Get character's owned blueprints to pre-fill ME/TE
+  let meLevel = 0;
+  let teLevel = 0;
+
+  if (currentCharacterId && selectedBlueprintTypeId) {
+    try {
+      const blueprints = await window.electronAPI.blueprints.getAll(currentCharacterId);
+      if (blueprints && blueprints.length > 0) {
+        const ownedBlueprint = blueprints.find(bp => bp.typeId === selectedBlueprintTypeId);
+        if (ownedBlueprint) {
+          meLevel = ownedBlueprint.materialEfficiency || 0;
+          teLevel = ownedBlueprint.timeEfficiency || 0;
+        }
+      }
+    } catch (error) {
+      console.warn('Could not fetch character blueprints:', error);
+    }
+  }
+
+  document.getElementById('config-me').value = meLevel;
+  document.getElementById('config-te').value = teLevel;
+
+  // Populate facilities dropdown and select default
+  const facilitySelect = document.getElementById('config-facility');
+  facilitySelect.innerHTML = '<option value="">No facility</option>';
+
+  let defaultFacilityId = null;
+  facilities.forEach(facility => {
+    const option = document.createElement('option');
+    option.value = facility.id;
+    option.textContent = facility.name;
+    facilitySelect.appendChild(option);
+
+    // Track default facility (usage === 'default')
+    if (facility.usage === 'default') {
+      defaultFacilityId = facility.id;
+    }
+  });
+
+  // Select default facility if one exists
+  if (defaultFacilityId) {
+    facilitySelect.value = defaultFacilityId;
+  }
+
+  document.getElementById('configure-blueprint-modal').style.display = 'flex';
+}
+
+// Hide configure blueprint modal
+function hideConfigureBlueprintModal() {
+  document.getElementById('configure-blueprint-modal').style.display = 'none';
+}
+
+// Confirm add blueprint
+async function confirmAddBlueprint() {
+  if (!selectedBlueprintTypeId || !selectedPlanId) return;
+
+  const runs = parseInt(document.getElementById('config-runs').value);
+  const lines = parseInt(document.getElementById('config-lines').value);
+  const meLevel = parseInt(document.getElementById('config-me').value);
+  const teLevel = parseInt(document.getElementById('config-te').value);
+  const facilityId = document.getElementById('config-facility').value;
+
+  // Get facility snapshot
+  let facilitySnapshot = null;
+  if (facilityId) {
+    const facility = facilities.find(f => f.id === facilityId);
+    if (facility) {
+      facilitySnapshot = facility;
+    }
+  }
+
+  const blueprintConfig = {
+    blueprintTypeId: selectedBlueprintTypeId,
+    runs,
+    lines,
+    meLevel,
+    teLevel,
+    facilityId: facilityId || null,
+    facilitySnapshot,
+  };
+
+  try {
+    hideConfigureBlueprintModal();
+    showLoading('Adding blueprint to plan...');
+    await window.electronAPI.plans.addBlueprint(selectedPlanId, blueprintConfig);
+    await loadTabContent(activeTab);
+    if (activeTab !== 'overview') {
+      await loadOverview(); // Update overview stats
+    }
+    showToast('Blueprint added to plan successfully', 'success');
+  } catch (error) {
+    showToast('Failed to add blueprint: ' + error.message, 'error');
+  } finally {
+    hideLoading();
+  }
+}
+
+// Edit blueprint - enable editing mode
+window.editBlueprint = function(planBlueprintId) {
+  const row = document.querySelector(`tr[data-blueprint-id="${planBlueprintId}"]`);
+  if (!row) return;
+
+  row.dataset.editing = 'true';
+
+  // Show inputs, hide values
+  row.querySelectorAll('.editable-cell').forEach(cell => {
+    cell.querySelector('.cell-value').style.display = 'none';
+    cell.querySelector('.cell-input').style.display = 'block';
+  });
+
+  // Show save/cancel buttons, hide edit/remove buttons
+  row.querySelector('.edit-btn').style.display = 'none';
+  row.querySelector('.remove-btn').style.display = 'none';
+  row.querySelector('.save-btn').style.display = 'inline-flex';
+  row.querySelector('.cancel-btn').style.display = 'inline-flex';
+};
+
+// Save blueprint edits
+window.saveBlueprintEdit = async function(planBlueprintId) {
+  const row = document.querySelector(`tr[data-blueprint-id="${planBlueprintId}"]`);
+  if (!row) return;
+
+  try {
+    // Collect updated values
+    const updates = {};
+
+    row.querySelectorAll('.editable-cell').forEach(cell => {
+      const field = cell.dataset.field;
+      const input = cell.querySelector('.cell-input');
+
+      if (field === 'facilityId') {
+        const facilityId = input.value || null;
+        updates.facilityId = facilityId;
+
+        // Get facility snapshot if facility is selected
+        if (facilityId) {
+          const facility = facilities.find(f => f.id === facilityId);
+          if (facility) {
+            updates.facilitySnapshot = facility;
+          }
+        } else {
+          updates.facilitySnapshot = null;
+        }
+      } else if (field === 'useIntermediates') {
+        // Keep as string for build plan strategy
+        updates[field] = input.value;
+      } else {
+        updates[field] = parseInt(input.value);
+      }
+    });
+
+    showLoading('Updating blueprint...');
+    await window.electronAPI.plans.updateBlueprint(planBlueprintId, updates);
+
+    // Recalculate materials after blueprint update
+    await window.electronAPI.plans.recalculateMaterials(selectedPlanId, false);
+
+    await loadBlueprints();
+    await loadOverview(); // Update overview stats
+    showToast('Blueprint updated successfully', 'success');
+  } catch (error) {
+    showToast('Failed to update blueprint: ' + error.message, 'error');
+  } finally {
+    hideLoading();
+  }
+};
+
+// Cancel blueprint edit - revert to view mode
+window.cancelBlueprintEdit = function(planBlueprintId) {
+  const row = document.querySelector(`tr[data-blueprint-id="${planBlueprintId}"]`);
+  if (!row) return;
+
+  row.dataset.editing = 'false';
+
+  // Show values, hide inputs (reset to original values)
+  row.querySelectorAll('.editable-cell').forEach(cell => {
+    const value = cell.querySelector('.cell-value');
+    const input = cell.querySelector('.cell-input');
+
+    // Reset input to original value
+    if (input.tagName === 'SELECT') {
+      const originalValue = input.querySelector('option[selected]')?.value || '';
+      input.value = originalValue;
+    } else {
+      const originalValue = value.textContent;
+      input.value = originalValue;
+    }
+
+    value.style.display = 'block';
+    input.style.display = 'none';
+  });
+
+  // Show edit/remove buttons, hide save/cancel buttons
+  row.querySelector('.edit-btn').style.display = 'inline-flex';
+  row.querySelector('.remove-btn').style.display = 'inline-flex';
+  row.querySelector('.save-btn').style.display = 'none';
+  row.querySelector('.cancel-btn').style.display = 'none';
+};
+
+// Remove blueprint
+window.removeBlueprint = async function(planBlueprintId) {
+  const confirmed = await showConfirmDialog(
+    'Remove this blueprint from the plan?',
+    'Remove Blueprint',
+    'Remove',
+    'Cancel'
+  );
+
+  if (!confirmed) return;
+
+  try {
+    showLoading('Removing blueprint...');
+    await window.electronAPI.plans.removeBlueprint(planBlueprintId);
+
+    // Recalculate materials after blueprint removal
+    await window.electronAPI.plans.recalculateMaterials(selectedPlanId, false);
+
+    await loadTabContent(activeTab);
+    if (activeTab !== 'overview') {
+      await loadOverview(); // Update overview stats
+    }
+    showToast('Blueprint removed from plan', 'success');
+  } catch (error) {
+    showToast('Failed to remove blueprint: ' + error.message, 'error');
+  } finally {
+    hideLoading();
+  }
+};
+
+// Refresh prices
+async function refreshPrices() {
+  if (!selectedPlanId) return;
+
+  const confirmed = await showConfirmDialog(
+    'Refresh all material and product prices from the market? This will overwrite frozen prices.',
+    'Refresh Prices',
+    'Refresh',
+    'Cancel'
+  );
+
+  if (!confirmed) return;
+
+  try {
+    showLoading('Refreshing prices from market...');
+    await window.electronAPI.plans.recalculateMaterials(selectedPlanId, true);
+    await loadMaterials();
+    await loadProducts();
+    await loadOverview();
+    showToast('Prices refreshed successfully', 'success');
+  } catch (error) {
+    showToast('Failed to refresh prices: ' + error.message, 'error');
+  } finally {
+    hideLoading();
+  }
+}
+
+// Filter plans
+function filterPlans() {
+  renderPlansList();
+}
+
+// Load jobs tab
+async function loadJobs() {
+  const container = document.getElementById('jobs-list-tab');
+
+  try {
+    const pendingMatches = await window.electronAPI.plans.getPendingMatches(selectedPlanId);
+    const pendingJobMatches = pendingMatches.jobMatches || [];
+
+    const confirmedJobMatches = await window.electronAPI.plans.getConfirmedJobMatches(selectedPlanId);
+
+    // Get all blueprint names
+    const allMatches = [...pendingJobMatches, ...confirmedJobMatches];
+    const blueprintTypeIds = [...new Set(allMatches.map(m => m.planBlueprint?.blueprintTypeId).filter(Boolean))];
+    const names = blueprintTypeIds.length > 0 ? await window.electronAPI.sde.getBlueprintNames(blueprintTypeIds) : {};
+
+    let html = '';
+
+    // Pending Matches Section
+    html += '<div class="jobs-section">';
+    if (pendingJobMatches.length > 0) {
+      html += `
+        <h3 class="section-header">Pending Job Matches</h3>
+        <table>
+          <thead>
+            <tr>
+              <th>Blueprint</th>
+              <th>Job ID</th>
+              <th>Runs</th>
+              <th>Status</th>
+              <th>Facility</th>
+              <th>Confidence</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${pendingJobMatches.map(match => {
+              const blueprintName = match.planBlueprint?.blueprintTypeId
+                ? (names[match.planBlueprint.blueprintTypeId] || `Type ${match.planBlueprint.blueprintTypeId}`)
+                : 'Unknown';
+              const confidence = (match.confidence * 100).toFixed(0);
+              const confidenceClass = match.confidence >= 0.8 ? 'high' : match.confidence >= 0.5 ? 'medium' : 'low';
+              const facilityName = match.job?.facilityId || 'Unknown';
+              const jobStatus = match.job?.status || 'unknown';
+
+              return `
+                <tr data-match-id="${match.matchId}">
+                  <td>${escapeHtml(blueprintName)}</td>
+                  <td>${match.job?.jobId || 'N/A'}</td>
+                  <td>${match.job?.runs || 'N/A'}</td>
+                  <td>${jobStatus}</td>
+                  <td>${facilityName}</td>
+                  <td><span class="confidence-badge ${confidenceClass}">${confidence}%</span></td>
+                  <td>
+                    <button class="secondary-button small" data-action="confirm-job">Confirm</button>
+                    <button class="secondary-button small" data-action="reject-job">Reject</button>
+                  </td>
+                </tr>
+              `;
+            }).join('')}
+          </tbody>
+        </table>
+      `;
+    } else {
+      html += '<div class="loading">No pending job matches found. Click "Match Jobs" to find matches from ESI.</div>';
+    }
+    html += '</div>';
+
+    // Linked Jobs Section
+    if (confirmedJobMatches.length > 0) {
+      html += `
+        <div class="jobs-section">
+          <h3 class="section-header">Linked Jobs</h3>
+          <table>
+            <thead>
+              <tr>
+                <th>Blueprint</th>
+                <th>Job ID</th>
+                <th>Runs</th>
+                <th>Status</th>
+                <th>Facility</th>
+                <th>Linked At</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${confirmedJobMatches.map(match => {
+                const blueprintName = match.planBlueprint?.blueprintTypeId
+                  ? (names[match.planBlueprint.blueprintTypeId] || `Type ${match.planBlueprint.blueprintTypeId}`)
+                  : 'Unknown';
+                const facilityName = match.job?.facilityId || 'Unknown';
+                const jobStatus = match.job?.status || 'unknown';
+                const linkedDate = match.confirmedAt ? new Date(match.confirmedAt).toLocaleString() : 'Unknown';
+
+                return `
+                  <tr data-match-id="${match.matchId}">
+                    <td>${escapeHtml(blueprintName)}</td>
+                    <td>${match.job?.jobId || 'N/A'}</td>
+                    <td>${match.job?.runs || 'N/A'}</td>
+                    <td>${jobStatus}</td>
+                    <td>${facilityName}</td>
+                    <td>${linkedDate}</td>
+                    <td>
+                      <button class="secondary-button small" data-action="unlink-job">Unlink</button>
+                    </td>
+                  </tr>
+                `;
+              }).join('')}
+            </tbody>
+          </table>
+        </div>
+      `;
+    }
+
+    container.innerHTML = html;
+
+    // Add event listeners for pending job match actions
+    container.querySelectorAll('tr[data-match-id] [data-action="confirm-job"]').forEach(btn => {
+      const matchId = btn.closest('tr').dataset.matchId;
+      btn.addEventListener('click', () => confirmJobMatch(matchId));
+    });
+
+    container.querySelectorAll('tr[data-match-id] [data-action="reject-job"]').forEach(btn => {
+      const matchId = btn.closest('tr').dataset.matchId;
+      btn.addEventListener('click', () => rejectJobMatch(matchId));
+    });
+
+    // Add event listeners for unlink actions
+    container.querySelectorAll('tr[data-match-id] [data-action="unlink-job"]').forEach(btn => {
+      const matchId = btn.closest('tr').dataset.matchId;
+      btn.addEventListener('click', () => unlinkJobMatch(matchId));
+    });
+  } catch (error) {
+    console.error('Failed to load job matches:', error);
+    container.innerHTML = '<div class="loading">Failed to load job matches</div>';
+  }
+}
+
+// Load transactions tab
+async function loadTransactions() {
+  const container = document.getElementById('transactions-list-tab');
+
+  try {
+    const pendingMatches = await window.electronAPI.plans.getPendingMatches(selectedPlanId);
+    const pendingTransactionMatches = pendingMatches.transactionMatches || [];
+
+    const confirmedTransactionMatches = await window.electronAPI.plans.getConfirmedTransactionMatches(selectedPlanId);
+
+    // Get all type names
+    const allMatches = [...pendingTransactionMatches, ...confirmedTransactionMatches];
+    const typeIds = [...new Set(allMatches.map(m => m.transaction?.typeId).filter(Boolean))];
+    const names = typeIds.length > 0 ? await window.electronAPI.sde.getTypeNames(typeIds) : {};
+
+    let html = '';
+
+    // Pending Matches Section
+    html += '<div class="jobs-section">';
+    if (pendingTransactionMatches.length > 0) {
+      html += `
+        <h3 class="section-header">Pending Transaction Matches</h3>
+        <table>
+          <thead>
+            <tr>
+              <th>Item</th>
+              <th>Transaction ID</th>
+              <th>Quantity</th>
+              <th>Price</th>
+              <th>Total</th>
+              <th>Type</th>
+              <th>Confidence</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${pendingTransactionMatches.map(match => {
+              const typeName = match.transaction?.typeId
+                ? (names[match.transaction.typeId] || `Type ${match.transaction.typeId}`)
+                : 'Unknown';
+              const confidence = (match.confidence * 100).toFixed(0);
+              const confidenceClass = match.confidence >= 0.8 ? 'high' : match.confidence >= 0.5 ? 'medium' : 'low';
+              const quantity = match.transaction?.quantity || 0;
+              const price = match.transaction?.unitPrice || 0;
+              const total = quantity * price;
+              const matchType = match.matchType === 'material_buy' ? 'Purchase' : 'Sale';
+
+              return `
+                <tr data-match-id="${match.matchId}">
+                  <td>${escapeHtml(typeName)}</td>
+                  <td>${match.transaction?.transactionId || 'N/A'}</td>
+                  <td>${formatNumber(quantity)}</td>
+                  <td>${formatISK(price)}</td>
+                  <td>${formatISK(total)}</td>
+                  <td>${matchType}</td>
+                  <td><span class="confidence-badge ${confidenceClass}">${confidence}%</span></td>
+                  <td>
+                    <button class="secondary-button small" data-action="confirm-transaction">Confirm</button>
+                    <button class="secondary-button small" data-action="reject-transaction">Reject</button>
+                  </td>
+                </tr>
+              `;
+            }).join('')}
+          </tbody>
+        </table>
+      `;
+    } else {
+      html += '<div class="loading">No pending transaction matches found. Click "Match Transactions" to find matches from ESI.</div>';
+    }
+    html += '</div>';
+
+    // Linked Transactions Section
+    if (confirmedTransactionMatches.length > 0) {
+      html += `
+        <div class="jobs-section">
+          <h3 class="section-header">Linked Transactions</h3>
+          <table>
+            <thead>
+              <tr>
+                <th>Item</th>
+                <th>Transaction ID</th>
+                <th>Quantity</th>
+                <th>Price</th>
+                <th>Total</th>
+                <th>Type</th>
+                <th>Linked At</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${confirmedTransactionMatches.map(match => {
+                const typeName = match.transaction?.typeId
+                  ? (names[match.transaction.typeId] || `Type ${match.transaction.typeId}`)
+                  : 'Unknown';
+                const quantity = match.transaction?.quantity || 0;
+                const price = match.transaction?.unitPrice || 0;
+                const total = quantity * price;
+                const matchType = match.matchType === 'material_buy' ? 'Purchase' : 'Sale';
+                const linkedDate = match.confirmedAt ? new Date(match.confirmedAt).toLocaleString() : 'Unknown';
+
+                return `
+                  <tr data-match-id="${match.matchId}">
+                    <td>${escapeHtml(typeName)}</td>
+                    <td>${match.transaction?.transactionId || 'N/A'}</td>
+                    <td>${formatNumber(quantity)}</td>
+                    <td>${formatISK(price)}</td>
+                    <td>${formatISK(total)}</td>
+                    <td>${matchType}</td>
+                    <td>${linkedDate}</td>
+                    <td>
+                      <button class="secondary-button small" data-action="unlink-transaction">Unlink</button>
+                    </td>
+                  </tr>
+                `;
+              }).join('')}
+            </tbody>
+          </table>
+        </div>
+      `;
+    }
+
+    container.innerHTML = html;
+
+    // Add event listeners for pending transaction match actions
+    container.querySelectorAll('tr[data-match-id] [data-action="confirm-transaction"]').forEach(btn => {
+      const matchId = btn.closest('tr').dataset.matchId;
+      btn.addEventListener('click', () => confirmTransactionMatch(matchId));
+    });
+
+    container.querySelectorAll('tr[data-match-id] [data-action="reject-transaction"]').forEach(btn => {
+      const matchId = btn.closest('tr').dataset.matchId;
+      btn.addEventListener('click', () => rejectTransactionMatch(matchId));
+    });
+
+    // Add event listeners for unlink actions
+    container.querySelectorAll('tr[data-match-id] [data-action="unlink-transaction"]').forEach(btn => {
+      const matchId = btn.closest('tr').dataset.matchId;
+      btn.addEventListener('click', () => unlinkTransactionMatch(matchId));
+    });
+  } catch (error) {
+    console.error('Failed to load transaction matches:', error);
+    container.innerHTML = '<div class="loading">Failed to load transaction matches</div>';
+  }
+}
+
+// Match jobs
+async function matchJobs() {
+  if (!selectedPlanId) return;
+
+  try {
+    showLoading('Matching industry jobs...');
+    const matches = await window.electronAPI.plans.matchJobs(selectedPlanId, { characterId: currentCharacterId, minConfidence: 0.3 });
+
+    if (matches.length === 0) {
+      showToast('No job matches found. Make sure you have industry jobs running and blueprints in the plan.', 'info');
+      return;
+    }
+
+    await window.electronAPI.plans.saveJobMatches(matches);
+    await loadJobs();
+    showToast(`Found ${matches.length} potential job match${matches.length > 1 ? 'es' : ''}`, 'success');
+  } catch (error) {
+    showToast('Failed to match jobs: ' + error.message, 'error');
+  } finally {
+    hideLoading();
+  }
+}
+
+// Match transactions
+async function matchTransactions() {
+  if (!selectedPlanId) return;
+
+  try {
+    showLoading('Matching wallet transactions...');
+    const matches = await window.electronAPI.plans.matchTransactions(selectedPlanId, { characterId: currentCharacterId, minConfidence: 0.3 });
+
+    if (matches.length === 0) {
+      showToast('No transaction matches found. Make sure you have wallet transactions and materials/products in the plan.', 'info');
+      return;
+    }
+
+    await window.electronAPI.plans.saveTransactionMatches(matches);
+    await loadTransactions();
+    showToast(`Found ${matches.length} potential transaction match${matches.length > 1 ? 'es' : ''}`, 'success');
+  } catch (error) {
+    showToast('Failed to match transactions: ' + error.message, 'error');
+  } finally {
+    hideLoading();
+  }
+}
+
+// Confirm job match
+window.confirmJobMatch = async function(matchId) {
+  try {
+    await window.electronAPI.plans.confirmJobMatch(matchId);
+    await loadJobs();
+    await loadOverview(); // Update stats
+    showToast('Job match confirmed', 'success');
+  } catch (error) {
+    showToast('Failed to confirm job match: ' + error.message, 'error');
+  }
+};
+
+// Reject job match
+window.rejectJobMatch = async function(matchId) {
+  try {
+    await window.electronAPI.plans.rejectJobMatch(matchId);
+    await loadJobs();
+    showToast('Job match rejected', 'info');
+  } catch (error) {
+    showToast('Failed to reject job match: ' + error.message, 'error');
+  }
+};
+
+// Unlink job match
+window.unlinkJobMatch = async function(matchId) {
+  try {
+    await window.electronAPI.plans.unlinkJobMatch(matchId);
+    await loadJobs();
+    await loadOverview(); // Update stats
+    showToast('Job unlinked successfully', 'info');
+  } catch (error) {
+    showToast('Failed to unlink job: ' + error.message, 'error');
+  }
+};
+
+// Confirm transaction match
+window.confirmTransactionMatch = async function(matchId) {
+  try {
+    await window.electronAPI.plans.confirmTransactionMatch(matchId);
+    await loadTransactions();
+    await loadOverview(); // Update stats
+    showToast('Transaction match confirmed', 'success');
+  } catch (error) {
+    showToast('Failed to confirm transaction match: ' + error.message, 'error');
+  }
+};
+
+// Reject transaction match
+window.rejectTransactionMatch = async function(matchId) {
+  try {
+    await window.electronAPI.plans.rejectTransactionMatch(matchId);
+    await loadTransactions();
+    showToast('Transaction match rejected', 'info');
+  } catch (error) {
+    showToast('Failed to reject transaction match: ' + error.message, 'error');
+  }
+};
+
+// Unlink transaction match
+window.unlinkTransactionMatch = async function(matchId) {
+  try {
+    await window.electronAPI.plans.unlinkTransactionMatch(matchId);
+    await loadTransactions();
+    await loadOverview(); // Update stats
+    showToast('Transaction unlinked successfully', 'info');
+  } catch (error) {
+    showToast('Failed to unlink transaction: ' + error.message, 'error');
+  }
+};
+
+// Load analytics tab
+async function loadAnalytics() {
+  try {
+    const analytics = await window.electronAPI.plans.getAnalytics(selectedPlanId);
+
+    // Update progress bars
+    updateProgressBar('jobs', analytics.progress.jobs.completed, analytics.progress.jobs.total, analytics.progress.jobs.percent);
+    updateProgressBar('materials', analytics.progress.materials.purchased, analytics.progress.materials.total, analytics.progress.materials.percent);
+    updateProgressBar('products', analytics.progress.products.sold, analytics.progress.products.total, analytics.progress.products.percent);
+    updateProgressBar('overall', 0, 0, analytics.progress.overall);
+
+    // Update material costs comparison
+    document.getElementById('planned-material-cost').textContent = formatISK(analytics.materialCosts.planned);
+    document.getElementById('actual-material-cost').textContent = formatISK(analytics.materialCosts.actual);
+    const materialDeltaEl = document.getElementById('material-cost-delta');
+    materialDeltaEl.textContent = `${formatISK(analytics.materialCosts.delta)} (${analytics.materialCosts.deltaPercent.toFixed(1)}%)`;
+    materialDeltaEl.style.color = analytics.materialCosts.delta < 0 ? '#57f287' : '#ed4245';
+
+    // Update product value comparison
+    document.getElementById('planned-product-value').textContent = formatISK(analytics.productValue.planned);
+    document.getElementById('actual-product-value').textContent = formatISK(analytics.productValue.actual);
+    const productDeltaEl = document.getElementById('product-value-delta');
+    productDeltaEl.textContent = `${formatISK(analytics.productValue.delta)} (${analytics.productValue.deltaPercent.toFixed(1)}%)`;
+    productDeltaEl.style.color = analytics.productValue.delta > 0 ? '#57f287' : '#ed4245';
+
+    // Update profit comparison
+    document.getElementById('planned-profit').textContent = formatISK(analytics.profit.planned);
+    document.getElementById('actual-profit').textContent = formatISK(analytics.profit.actual);
+    const profitDeltaEl = document.getElementById('profit-delta');
+    profitDeltaEl.textContent = `${formatISK(analytics.profit.delta)} (${analytics.profit.deltaPercent.toFixed(1)}%)`;
+    profitDeltaEl.style.color = analytics.profit.delta > 0 ? '#57f287' : '#ed4245';
+
+    // Update ROI comparison
+    document.getElementById('planned-roi').textContent = `${analytics.summary.plannedROI.toFixed(1)}%`;
+    document.getElementById('actual-roi').textContent = `${analytics.summary.actualROI.toFixed(1)}%`;
+    const roiDelta = analytics.summary.actualROI - analytics.summary.plannedROI;
+    const roiDeltaEl = document.getElementById('roi-delta');
+    roiDeltaEl.textContent = `${roiDelta > 0 ? '+' : ''}${roiDelta.toFixed(1)}%`;
+    roiDeltaEl.style.color = roiDelta > 0 ? '#57f287' : '#ed4245';
+
+  } catch (error) {
+    console.error('Failed to load analytics:', error);
+  }
+}
+
+// Update progress bar
+function updateProgressBar(type, completed, total, percent) {
+  const barEl = document.getElementById(`${type}-progress-bar`);
+  const textEl = document.getElementById(`${type}-progress-text`);
+
+  // Handle undefined/null percent
+  const safePercent = percent || 0;
+  barEl.style.width = `${Math.min(safePercent, 100)}%`;
+
+  if (type === 'overall') {
+    textEl.textContent = `${safePercent.toFixed(1)}%`;
+  } else {
+    textEl.textContent = `${completed || 0} / ${total || 0} (${safePercent.toFixed(1)}%)`;
+  }
+}
+
+// Refresh ESI data
+async function refreshESIData() {
+  if (!currentCharacterId) {
+    showToast('No character selected', 'warning');
+    return;
+  }
+
+  try {
+    showLoading('Refreshing ESI data...');
+    const result = await window.electronAPI.plans.refreshESIData(currentCharacterId);
+
+    if (result.success) {
+      showToast(result.message || 'ESI data refreshed successfully', 'success');
+      // Reload current tab to show updated data
+      await loadTabContent(activeTab);
+    } else {
+      showToast('Failed to refresh ESI data: ' + (result.error || 'Unknown error'), 'error');
+    }
+  } catch (error) {
+    showToast('Failed to refresh ESI data: ' + error.message, 'error');
+  } finally {
+    hideLoading();
+  }
+}
+
+// Start auto-refresh for active plans (every 15 minutes)
+function startAutoRefresh() {
+  // Clear any existing interval
+  if (autoRefreshInterval) {
+    clearInterval(autoRefreshInterval);
+  }
+
+  // Refresh every 15 minutes (900000 ms)
+  const REFRESH_INTERVAL = 15 * 60 * 1000;
+
+  autoRefreshInterval = setInterval(async () => {
+    if (currentCharacterId) {
+      try {
+        console.log('Auto-refreshing ESI data for active plans...');
+        const result = await window.electronAPI.plans.refreshESIData(currentCharacterId);
+
+        if (result.success && result.plansRefreshed > 0) {
+          console.log(`Auto-refresh: ${result.message}`);
+
+          // If we're viewing an active plan, reload the current tab
+          if (selectedPlanId) {
+            const plan = await window.electronAPI.plans.get(selectedPlanId);
+            if (plan && plan.status === 'active') {
+              await loadTabContent(activeTab);
+            }
+          }
+        }
+      } catch (error) {
+        console.error('Auto-refresh failed:', error);
+      }
+    }
+  }, REFRESH_INTERVAL);
+}
+
+// Stop auto-refresh (called when window is closed)
+function stopAutoRefresh() {
+  if (autoRefreshInterval) {
+    clearInterval(autoRefreshInterval);
+    autoRefreshInterval = null;
+  }
+}
+
+// Cleanup on page unload
+window.addEventListener('beforeunload', () => {
+  stopAutoRefresh();
+});
+
+// Utility functions
+function formatISK(value) {
+  if (value === null || value === undefined) return 'N/A';
+  return new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(value).replace('$', '') + ' ISK';
+}
+
+function formatNumber(value) {
+  if (value === null || value === undefined) return '0';
+  return new Intl.NumberFormat('en-US').format(value);
+}
+
+function escapeHtml(text) {
+  const div = document.createElement('div');
+  div.textContent = text;
+  return div.innerHTML;
+}
+
+// Loading overlay functions
+function showLoading(message = 'Loading...') {
+  const overlay = document.getElementById('loading-overlay');
+  const textEl = overlay.querySelector('.loading-text');
+  textEl.textContent = message;
+  overlay.style.display = 'flex';
+}
+
+function hideLoading() {
+  const overlay = document.getElementById('loading-overlay');
+  overlay.style.display = 'none';
+}
+
+// Toast notification system
+function showToast(message, type = 'info', title = null, duration = 5000) {
+  const container = document.getElementById('toast-container');
+  const toast = document.createElement('div');
+  toast.className = `toast toast-${type}`;
+
+  const icons = {
+    success: '✓',
+    error: '✕',
+    warning: '⚠',
+    info: 'ℹ'
+  };
+
+  const titles = {
+    success: title || 'Success',
+    error: title || 'Error',
+    warning: title || 'Warning',
+    info: title || 'Info'
+  };
+
+  toast.innerHTML = `
+    <div class="toast-icon ${type}">${icons[type]}</div>
+    <div class="toast-content">
+      <div class="toast-title">${titles[type]}</div>
+      <div class="toast-message">${escapeHtml(message)}</div>
+    </div>
+    <button class="toast-close">&times;</button>
+  `;
+
+  container.appendChild(toast);
+
+  // Close button
+  toast.querySelector('.toast-close').addEventListener('click', () => {
+    toast.style.animation = 'slideIn 0.3s ease-out reverse';
+    setTimeout(() => toast.remove(), 300);
+  });
+
+  // Auto-remove after duration
+  if (duration > 0) {
+    setTimeout(() => {
+      if (toast.parentElement) {
+        toast.style.animation = 'slideIn 0.3s ease-out reverse';
+        setTimeout(() => toast.remove(), 300);
+      }
+    }, duration);
+  }
+
+  return toast;
+}
+
+// Confirmation dialog
+function showConfirmDialog(message, title = 'Confirm Action', confirmText = 'Confirm', cancelText = 'Cancel') {
+  return new Promise((resolve) => {
+    const dialog = document.createElement('div');
+    dialog.className = 'confirm-dialog';
+    dialog.innerHTML = `
+      <div class="confirm-dialog-content">
+        <div class="confirm-dialog-header">
+          <h3>${escapeHtml(title)}</h3>
+        </div>
+        <div class="confirm-dialog-body">
+          ${escapeHtml(message)}
+        </div>
+        <div class="confirm-dialog-footer">
+          <button class="secondary-button" data-action="cancel">${escapeHtml(cancelText)}</button>
+          <button class="primary-button" data-action="confirm">${escapeHtml(confirmText)}</button>
+        </div>
+      </div>
+    `;
+
+    document.body.appendChild(dialog);
+
+    const handleClick = (confirmed) => {
+      dialog.remove();
+      resolve(confirmed);
+    };
+
+    dialog.querySelector('[data-action="confirm"]').addEventListener('click', () => handleClick(true));
+    dialog.querySelector('[data-action="cancel"]').addEventListener('click', () => handleClick(false));
+    dialog.addEventListener('click', (e) => {
+      if (e.target === dialog) handleClick(false);
+    });
+  });
+}

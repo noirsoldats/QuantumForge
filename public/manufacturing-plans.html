@@ -1,0 +1,391 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://images.evetech.net">
+  <title>Manufacturing Plans - Quantum Forge</title>
+  <link rel="stylesheet" href="manufacturing-plans.css">
+</head>
+<body>
+  <div id="plans-app">
+    <div class="plans-container">
+      <!-- Left Panel - Plans List -->
+      <div class="plans-sidebar">
+        <div class="sidebar-header">
+          <select id="character-selector" class="character-selector">
+            <option value="">Loading characters...</option>
+          </select>
+          <button class="primary-button" id="create-plan-btn">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+            New Plan
+          </button>
+        </div>
+
+        <input type="text" id="plan-search" class="search-input" placeholder="Search plans...">
+
+        <div class="filter-section">
+          <label><input type="radio" name="status-filter" value="all" checked> All</label>
+          <label><input type="radio" name="status-filter" value="active"> Active</label>
+          <label><input type="radio" name="status-filter" value="completed"> Completed</label>
+          <label><input type="radio" name="status-filter" value="archived"> Archived</label>
+        </div>
+
+        <div id="plans-list" class="plans-list">
+          <!-- Plans will be loaded here -->
+        </div>
+      </div>
+
+      <!-- Right Panel - Plan Details -->
+      <div class="plans-content">
+        <div id="empty-state" class="empty-state">
+          <svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+            <path d="M9 11l3 3L22 4"></path>
+            <path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"></path>
+          </svg>
+          <h2>No Plan Selected</h2>
+          <p>Select a plan from the list or create a new one</p>
+        </div>
+
+        <div id="plan-detail" class="plan-detail" style="display: none;">
+          <!-- Plan Header -->
+          <div class="plan-header">
+            <div class="plan-info">
+              <h2 id="plan-name" contenteditable="true">Plan Name</h2>
+              <div class="plan-meta">
+                <span id="plan-status" class="status-badge">Active</span>
+                <span id="plan-created">Created: ...</span>
+              </div>
+            </div>
+            <div class="plan-actions">
+              <button class="secondary-button" id="delete-plan-btn">Delete</button>
+              <button class="secondary-button" id="complete-plan-btn">Mark Complete</button>
+            </div>
+          </div>
+
+          <!-- Tabs -->
+          <div class="tabs">
+            <button class="tab-button active" data-tab="overview">Overview</button>
+            <button class="tab-button" data-tab="blueprints">Blueprints</button>
+            <button class="tab-button" data-tab="materials">Materials</button>
+            <button class="tab-button" data-tab="products">Products</button>
+            <button class="tab-button" data-tab="jobs">Jobs</button>
+            <button class="tab-button" data-tab="transactions">Transactions</button>
+            <button class="tab-button" data-tab="analytics">Analytics</button>
+          </div>
+
+          <!-- Tab Content -->
+          <div class="tab-content">
+            <!-- Overview Tab -->
+            <div id="overview-tab" class="tab-panel active">
+              <div class="overview-grid">
+                <div class="stat-card">
+                  <h3>Material Cost</h3>
+                  <div class="stat-value" id="overview-material-cost">0 ISK</div>
+                  <div class="stat-meta" id="overview-material-meta">0/0 priced</div>
+                </div>
+                <div class="stat-card">
+                  <h3>Product Value</h3>
+                  <div class="stat-value" id="overview-product-value">0 ISK</div>
+                  <div class="stat-meta" id="overview-product-meta">0/0 priced</div>
+                </div>
+                <div class="stat-card">
+                  <h3>Estimated Profit</h3>
+                  <div class="stat-value" id="overview-profit">0 ISK</div>
+                  <div class="stat-meta" id="overview-roi">0% ROI</div>
+                </div>
+              </div>
+
+              <div class="description-section">
+                <h3>Description</h3>
+                <textarea id="plan-description" class="description-input" placeholder="Add a description for this plan..."></textarea>
+              </div>
+            </div>
+
+            <!-- Blueprints Tab -->
+            <div id="blueprints-tab" class="tab-panel">
+              <div class="tab-header">
+                <h3>Blueprints in Plan</h3>
+                <button class="primary-button" id="add-blueprint-btn">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+                  Add Blueprint
+                </button>
+              </div>
+
+              <div id="blueprints-list-tab" class="blueprints-table-container">
+                <!-- Blueprints table will be loaded here -->
+              </div>
+            </div>
+
+            <!-- Materials Tab -->
+            <div id="materials-tab" class="tab-panel">
+              <div class="tab-header">
+                <h3>Shopping List</h3>
+                <div class="tab-actions">
+                  <label><input type="checkbox" id="include-assets-checkbox"> Show Owned</label>
+                  <button class="secondary-button" id="refresh-prices-btn">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 2v6h-6M3 12a9 9 0 0 1 15-6.7L21 8M3 22v-6h6M21 12a9 9 0 0 1-15 6.7L3 16"/></svg>
+                    Refresh Prices
+                  </button>
+                </div>
+              </div>
+
+              <div id="materials-list-tab" class="materials-table-container">
+                <!-- Materials table will be loaded here -->
+              </div>
+            </div>
+
+            <!-- Products Tab -->
+            <div id="products-tab" class="tab-panel">
+              <div class="tab-header">
+                <h3>Expected Products</h3>
+              </div>
+
+              <div id="products-list-tab" class="products-table-container">
+                <!-- Products table will be loaded here -->
+              </div>
+            </div>
+
+            <!-- Jobs Tab -->
+            <div id="jobs-tab" class="tab-panel">
+              <div class="tab-header">
+                <h3>Industry Jobs</h3>
+                <div class="tab-actions">
+                  <button class="primary-button tooltip" id="match-jobs-btn">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 2v6h-6M3 12a9 9 0 0 1 15-6.7L21 8M3 22v-6h6M21 12a9 9 0 0 1-15 6.7L3 16"/></svg>
+                    Match Jobs
+                    <span class="tooltip-text">Find industry jobs from ESI that match blueprints in this plan</span>
+                  </button>
+                </div>
+              </div>
+
+              <div id="jobs-list-tab" class="jobs-table-container">
+                <!-- Jobs matches will be loaded here -->
+              </div>
+            </div>
+
+            <!-- Transactions Tab -->
+            <div id="transactions-tab" class="tab-panel">
+              <div class="tab-header">
+                <h3>Wallet Transactions</h3>
+                <div class="tab-actions">
+                  <button class="primary-button tooltip" id="match-transactions-btn">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 2v6h-6M3 12a9 9 0 0 1 15-6.7L21 8M3 22v-6h6M21 12a9 9 0 0 1-15 6.7L3 16"/></svg>
+                    Match Transactions
+                    <span class="tooltip-text">Find wallet transactions from ESI that match materials and products</span>
+                  </button>
+                </div>
+              </div>
+
+              <div id="transactions-list-tab" class="transactions-table-container">
+                <!-- Transaction matches will be loaded here -->
+              </div>
+            </div>
+
+            <!-- Analytics Tab -->
+            <div id="analytics-tab" class="tab-panel">
+              <div class="tab-header">
+                <h3>Plan Analytics</h3>
+                <div class="tab-actions">
+                  <button class="secondary-button tooltip" id="refresh-esi-data-btn">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 2v6h-6M3 12a9 9 0 0 1 15-6.7L21 8M3 22v-6h6M21 12a9 9 0 0 1-15 6.7L3 16"/></svg>
+                    Refresh ESI Data
+                    <span class="tooltip-text">Manually fetch latest industry jobs and wallet transactions from ESI</span>
+                  </button>
+                </div>
+              </div>
+
+              <!-- Progress Section -->
+              <div class="analytics-section">
+                <h4>Progress</h4>
+                <div class="progress-grid">
+                  <div class="progress-card">
+                    <div class="progress-label">Manufacturing Jobs</div>
+                    <div class="progress-bar-container">
+                      <div class="progress-bar" id="jobs-progress-bar"></div>
+                    </div>
+                    <div class="progress-text" id="jobs-progress-text">0 / 0 (0%)</div>
+                  </div>
+                  <div class="progress-card">
+                    <div class="progress-label">Material Purchases</div>
+                    <div class="progress-bar-container">
+                      <div class="progress-bar" id="materials-progress-bar"></div>
+                    </div>
+                    <div class="progress-text" id="materials-progress-text">0 / 0 (0%)</div>
+                  </div>
+                  <div class="progress-card">
+                    <div class="progress-label">Product Sales</div>
+                    <div class="progress-bar-container">
+                      <div class="progress-bar" id="products-progress-bar"></div>
+                    </div>
+                    <div class="progress-text" id="products-progress-text">0 / 0 (0%)</div>
+                  </div>
+                  <div class="progress-card">
+                    <div class="progress-label">Overall Completion</div>
+                    <div class="progress-bar-container">
+                      <div class="progress-bar" id="overall-progress-bar"></div>
+                    </div>
+                    <div class="progress-text" id="overall-progress-text">0%</div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Planned vs Actual Section -->
+              <div class="analytics-section">
+                <h4>Planned vs Actual</h4>
+                <div class="comparison-grid">
+                  <div class="comparison-card">
+                    <h5>Material Costs</h5>
+                    <div class="comparison-row">
+                      <span class="comparison-label">Planned:</span>
+                      <span class="comparison-value" id="planned-material-cost">0 ISK</span>
+                    </div>
+                    <div class="comparison-row">
+                      <span class="comparison-label">Actual:</span>
+                      <span class="comparison-value" id="actual-material-cost">0 ISK</span>
+                    </div>
+                    <div class="comparison-row comparison-delta">
+                      <span class="comparison-label">Difference:</span>
+                      <span class="comparison-value" id="material-cost-delta">0 ISK (0%)</span>
+                    </div>
+                  </div>
+
+                  <div class="comparison-card">
+                    <h5>Product Value</h5>
+                    <div class="comparison-row">
+                      <span class="comparison-label">Planned:</span>
+                      <span class="comparison-value" id="planned-product-value">0 ISK</span>
+                    </div>
+                    <div class="comparison-row">
+                      <span class="comparison-label">Actual:</span>
+                      <span class="comparison-value" id="actual-product-value">0 ISK</span>
+                    </div>
+                    <div class="comparison-row comparison-delta">
+                      <span class="comparison-label">Difference:</span>
+                      <span class="comparison-value" id="product-value-delta">0 ISK (0%)</span>
+                    </div>
+                  </div>
+
+                  <div class="comparison-card">
+                    <h5>Profit</h5>
+                    <div class="comparison-row">
+                      <span class="comparison-label">Planned:</span>
+                      <span class="comparison-value" id="planned-profit">0 ISK</span>
+                    </div>
+                    <div class="comparison-row">
+                      <span class="comparison-label">Actual:</span>
+                      <span class="comparison-value" id="actual-profit">0 ISK</span>
+                    </div>
+                    <div class="comparison-row comparison-delta">
+                      <span class="comparison-label">Difference:</span>
+                      <span class="comparison-value" id="profit-delta">0 ISK (0%)</span>
+                    </div>
+                  </div>
+
+                  <div class="comparison-card">
+                    <h5>ROI</h5>
+                    <div class="comparison-row">
+                      <span class="comparison-label">Planned:</span>
+                      <span class="comparison-value" id="planned-roi">0%</span>
+                    </div>
+                    <div class="comparison-row">
+                      <span class="comparison-label">Actual:</span>
+                      <span class="comparison-value" id="actual-roi">0%</span>
+                    </div>
+                    <div class="comparison-row comparison-delta">
+                      <span class="comparison-label">Difference:</span>
+                      <span class="comparison-value" id="roi-delta">0%</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Create Plan Modal -->
+  <div id="create-plan-modal" class="modal" style="display: none;">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2>Create Manufacturing Plan</h2>
+        <button class="close-btn" id="close-create-modal-btn">&times;</button>
+      </div>
+      <div class="modal-body">
+        <label for="new-plan-name">Plan Name</label>
+        <input type="text" id="new-plan-name" class="input-field" placeholder="Leave empty for auto-generated name">
+
+        <label for="new-plan-description">Description (Optional)</label>
+        <textarea id="new-plan-description" class="textarea-field" placeholder="Describe this manufacturing plan..."></textarea>
+      </div>
+      <div class="modal-footer">
+        <button class="secondary-button" id="cancel-create-btn">Cancel</button>
+        <button class="primary-button" id="confirm-create-btn">Create Plan</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Add Blueprint Modal -->
+  <div id="add-blueprint-modal" class="modal" style="display: none;">
+    <div class="modal-content large">
+      <div class="modal-header">
+        <h2>Add Blueprint to Plan</h2>
+        <button class="close-btn" id="close-blueprint-modal-btn">&times;</button>
+      </div>
+      <div class="modal-body">
+        <input type="text" id="blueprint-search-modal" class="search-input" placeholder="Search blueprints from SDE...">
+        <div id="blueprint-search-results" class="search-results">
+          <!-- Search results will appear here -->
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Configure Blueprint Modal -->
+  <div id="configure-blueprint-modal" class="modal" style="display: none;">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2>Configure Blueprint</h2>
+        <button class="close-btn" id="close-configure-modal-btn">&times;</button>
+      </div>
+      <div class="modal-body">
+        <h3 id="config-blueprint-name">Blueprint Name</h3>
+
+        <label for="config-runs">Runs</label>
+        <input type="number" id="config-runs" class="input-field" value="1" min="1">
+
+        <label for="config-lines">Production Lines</label>
+        <input type="number" id="config-lines" class="input-field" value="1" min="1">
+
+        <label for="config-me">Material Efficiency (ME)</label>
+        <input type="number" id="config-me" class="input-field" value="0" min="0" max="10">
+
+        <label for="config-te">Time Efficiency (TE)</label>
+        <input type="number" id="config-te" class="input-field" value="0" min="0" max="20">
+
+        <label for="config-facility">Facility</label>
+        <select id="config-facility" class="input-field">
+          <option value="">No facility</option>
+        </select>
+      </div>
+      <div class="modal-footer">
+        <button class="secondary-button" id="cancel-configure-btn">Cancel</button>
+        <button class="primary-button" id="confirm-configure-btn">Add to Plan</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Loading Overlay -->
+  <div id="loading-overlay" class="loading-overlay" style="display: none;">
+    <div class="loading-spinner"></div>
+    <div class="loading-text">Loading...</div>
+  </div>
+
+  <!-- Toast Notifications -->
+  <div id="toast-container" class="toast-container"></div>
+
+  <script src="../src/renderer/manufacturing-plans-renderer.js"></script>
+</body>
+</html>
