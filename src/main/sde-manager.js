@@ -145,12 +145,12 @@ async function fetchGitHubRelease() {
 /**
  * Extract version from GitHub release tag
  * @param {Object} release - GitHub release object
- * @returns {string} Version string (e.g., "3118350")
+ * @returns {string} Version string (e.g., "3118350" or "3123381.01")
  */
 function extractVersionFromRelease(release) {
-  // Tag format: "sde-3118350" -> extract "3118350"
+  // Tag format: "sde-3118350" or "sde-3123381.01" -> extract version with optional patch
   const tagName = release.tag_name;
-  const match = tagName.match(/sde-(\d+)/);
+  const match = tagName.match(/sde-(\d+(?:\.\d{2})?)/);
   if (match && match[1]) {
     return match[1];
   }
@@ -191,7 +191,7 @@ async function getLatestVersion() {
 /**
  * Detect version format
  * @param {string} version - Version string
- * @returns {string} 'date' for YYYYMMDD format, 'numeric' for GitHub format, 'unknown' otherwise
+ * @returns {string} 'date' for YYYYMMDD format, 'numeric' for GitHub format, 'numeric-patch' for version with patch, 'unknown' otherwise
  */
 function detectVersionFormat(version) {
   if (!version) return 'unknown';
@@ -199,6 +199,11 @@ function detectVersionFormat(version) {
   // Check if it's a date format (YYYYMMDD - 8 digits starting with 20)
   if (/^20\d{6}$/.test(version)) {
     return 'date';
+  }
+
+  // Check if it's numeric with patch (e.g., 3123381.01)
+  if (/^\d+\.\d{2}$/.test(version)) {
+    return 'numeric-patch';
   }
 
   // Check if it's numeric (GitHub format - typically 7 digits)
@@ -210,7 +215,7 @@ function detectVersionFormat(version) {
 }
 
 /**
- * Compare two version strings (handles mixed date/numeric formats)
+ * Compare two version strings (handles mixed date/numeric/numeric-patch formats)
  * @param {string} v1 - First version
  * @param {string} v2 - Second version
  * @returns {number} -1 if v1 < v2, 0 if equal, 1 if v1 > v2
@@ -221,23 +226,43 @@ function compareVersions(v1, v2) {
 
   // If comparing different formats (old date vs new GitHub),
   // always consider the date format as older
-  if (format1 === 'date' && format2 === 'numeric') {
+  if (format1 === 'date' && (format2 === 'numeric' || format2 === 'numeric-patch')) {
     return -1; // date format is older, needs update
   }
-  if (format1 === 'numeric' && format2 === 'date') {
+  if ((format1 === 'numeric' || format1 === 'numeric-patch') && format2 === 'date') {
     return 1; // numeric is newer
   }
 
-  // Same format or both unknown - compare numerically
-  const num1 = parseInt(v1, 10);
-  const num2 = parseInt(v2, 10);
+  // Parse versions with optional patch component
+  // Split on '.' to get [base, patch] or [base]
+  const parts1 = v1.split('.');
+  const parts2 = v2.split('.');
 
-  if (isNaN(num1) || isNaN(num2)) {
+  const base1 = parseInt(parts1[0], 10);
+  const base2 = parseInt(parts2[0], 10);
+  const patch1 = parts1[1] ? parseInt(parts1[1], 10) : null;
+  const patch2 = parts2[1] ? parseInt(parts2[1], 10) : null;
+
+  // Validate parsing
+  if (isNaN(base1) || isNaN(base2)) {
     // Fall back to string comparison if parsing fails
     return v1 === v2 ? 0 : (v1 < v2 ? -1 : 1);
   }
 
-  return num1 < num2 ? -1 : (num1 > num2 ? 1 : 0);
+  // Compare base versions first
+  if (base1 < base2) return -1;
+  if (base1 > base2) return 1;
+
+  // Base versions equal - compare patches
+  // null (no patch) is considered older than any patch version
+  if (patch1 === null && patch2 === null) return 0;
+  if (patch1 === null) return -1; // no patch < with patch
+  if (patch2 === null) return 1;  // with patch > no patch
+
+  // Both have patches - compare numerically
+  if (patch1 < patch2) return -1;
+  if (patch1 > patch2) return 1;
+  return 0;
 }
 
 /**
