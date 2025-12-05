@@ -1062,6 +1062,11 @@ tr:hover {
   cursor: pointer;
 }
 
+/* Ensure number inputs (ME/TE) have enough width to display values and spin buttons */
+.editable-cell input[type="number"].cell-input {
+  min-width: 45px;
+}
+
 .blueprint-actions {
   white-space: nowrap;
 }
@@ -1155,4 +1160,28 @@ tr[data-editing="true"] {
 
 .products-section table {
   margin: 0;
+}
+
+/* Intermediate blueprint styling */
+.intermediate-blueprint {
+  background-color: rgba(255, 255, 255, 0.02);
+}
+
+.intermediate-blueprint td {
+  border-left: 3px solid rgba(88, 101, 242, 0.3);
+}
+
+.status-badge.built {
+  background-color: rgba(87, 242, 135, 0.2);
+  color: #57f287;
+  border: 1px solid rgba(87, 242, 135, 0.3);
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  margin-left: 8px;
+}
+
+.toggle-built-btn {
+  min-width: 100px;
 }

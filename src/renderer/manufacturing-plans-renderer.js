@@ -274,94 +274,195 @@ async function loadOverview() {
 // Load blueprints tab
 async function loadBlueprints() {
   const blueprints = await window.electronAPI.plans.getBlueprints(selectedPlanId);
+  const allIntermediates = await window.electronAPI.plans.getAllIntermediates(selectedPlanId);
   const container = document.getElementById('blueprints-list-tab');
 
-  if (blueprints.length === 0) {
+  // Filter out intermediate blueprints - only use top-level blueprints for hierarchy
+  // Intermediate blueprints are already fetched separately and will be rendered as sub-rows
+  const topLevelBlueprints = blueprints.filter(bp =>
+    !allIntermediates.some(ib => ib.planBlueprintId === bp.planBlueprintId)
+  );
+
+  if (topLevelBlueprints.length === 0) {
     container.innerHTML = '<div class="loading">No blueprints in this plan. Click "Add Blueprint" to get started.</div>';
     return;
   }
 
-  // Get blueprint names
-  const typeIds = blueprints.map(bp => bp.blueprintTypeId);
-  const names = await window.electronAPI.sde.getBlueprintNames(typeIds);
+  // Get blueprint names for top-level and intermediates
+  const allTypeIds = [
+    ...topLevelBlueprints.map(bp => bp.blueprintTypeId),
+    ...allIntermediates.map(ib => ib.blueprintTypeId)
+  ];
+  const names = await window.electronAPI.sde.getBlueprintNames(allTypeIds);
 
-  container.innerHTML = `
-    <table>
-      <thead>
-        <tr>
-          <th>Blueprint</th>
-          <th>Runs</th>
-          <th>Lines</th>
-          <th>ME</th>
-          <th>TE</th>
-          <th>Facility</th>
-          <th>
-            Build Plan
-            <span class="info-icon" title="Raw Materials: Build all components from blueprints&#10;Components: Buy all components from market&#10;Build/Buy: Optimize between building and buying (coming soon)">ⓘ</span>
-          </th>
-          <th>Actions</th>
-        </tr>
-      </thead>
-      <tbody>
-        ${blueprints.map(bp => {
-          const name = names[bp.blueprintTypeId] || `Type ${bp.blueprintTypeId}`;
-          const facilityName = bp.facilitySnapshot ? (bp.facilitySnapshot.name || 'Unknown') : 'None';
-          const facilityId = bp.facilityId || '';
-          return `
-            <tr data-blueprint-id="${bp.planBlueprintId}" data-editing="false">
-              <td>${escapeHtml(name)}</td>
-              <td class="editable-cell" data-field="runs">
-                <span class="cell-value">${bp.runs}</span>
-                <input type="number" class="cell-input" value="${bp.runs}" min="1" style="display: none;">
-              </td>
-              <td class="editable-cell" data-field="lines">
-                <span class="cell-value">${bp.lines}</span>
-                <input type="number" class="cell-input" value="${bp.lines}" min="1" style="display: none;">
-              </td>
-              <td class="editable-cell" data-field="meLevel">
-                <span class="cell-value">${bp.meLevel}</span>
-                <input type="number" class="cell-input" value="${bp.meLevel}" min="0" max="10" style="display: none;">
-              </td>
-              <td class="editable-cell" data-field="teLevel">
-                <span class="cell-value">${bp.teLevel || 0}</span>
-                <input type="number" class="cell-input" value="${bp.teLevel || 0}" min="0" max="20" style="display: none;">
-              </td>
-              <td class="editable-cell" data-field="facilityId">
-                <span class="cell-value">${escapeHtml(facilityName)}</span>
-                <select class="cell-input" style="display: none;">
-                  <option value="">No facility</option>
-                  ${facilities.map(f => `<option value="${f.id}" ${f.id === facilityId ? 'selected' : ''}>${escapeHtml(f.name)}</option>`).join('')}
-                </select>
-              </td>
-              <td class="editable-cell" data-field="useIntermediates">
-                <span class="cell-value">${bp.useIntermediates === 'raw_materials' ? 'Raw Materials' : bp.useIntermediates === 'components' ? 'Components' : bp.useIntermediates === 'build_buy' ? 'Build/Buy' : (bp.useIntermediates ? 'Raw Materials' : 'Components')}</span>
-                <select class="cell-input" style="display: none;">
-                  <option value="raw_materials" ${bp.useIntermediates === 'raw_materials' || bp.useIntermediates === 1 || bp.useIntermediates === true ? 'selected' : ''}>Raw Materials</option>
-                  <option value="components" ${bp.useIntermediates === 'components' || bp.useIntermediates === 0 || bp.useIntermediates === false ? 'selected' : ''}>Components</option>
-                  <option value="build_buy" ${bp.useIntermediates === 'build_buy' ? 'selected' : ''} disabled>Build/Buy (Coming Soon)</option>
-                </select>
-              </td>
-              <td class="blueprint-actions">
-                <button class="secondary-button small edit-btn" data-action="edit">Edit</button>
-                <button class="primary-button small save-btn" data-action="save" style="display: none;">Save</button>
-                <button class="secondary-button small cancel-btn" data-action="cancel" style="display: none;">Cancel</button>
-                <button class="secondary-button small remove-btn" data-action="remove">Remove</button>
-              </td>
-            </tr>
-          `;
-        }).join('')}
-      </tbody>
-    </table>
-  `;
+  // Get product names for intermediates
+  const productTypeIds = allIntermediates.map(ib => ib.intermediateProductTypeId).filter(Boolean);
+  const productNames = productTypeIds.length > 0
+    ? await window.electronAPI.sde.getTypeNames(productTypeIds)
+    : {};
 
-  // Add event listeners for blueprint actions
-  container.querySelectorAll('tr[data-blueprint-id]').forEach(row => {
+  // Build hierarchical structure with recursive intermediate nesting
+  function buildIntermediateTree(parentId, depth = 1) {
+    const children = allIntermediates.filter(ib => ib.parentBlueprintId === parentId);
+    return children.map(child => ({
+      intermediate: child,
+      depth: depth,
+      children: buildIntermediateTree(child.planBlueprintId, depth + 1)
+    }));
+  }
+
+  const hierarchy = topLevelBlueprints.map(bp => ({
+    blueprint: bp,
+    intermediates: buildIntermediateTree(bp.planBlueprintId, 1)
+  }));
+
+  let html = '<table><thead><tr>';
+  html += '<th>Blueprint</th><th>Runs</th><th>Lines</th><th>ME</th><th>TE</th>';
+  html += '<th>Facility</th><th>';
+  html += 'Build Plan';
+  html += '<span class="info-icon" title="Raw Materials: Build all components from blueprints&#10;Components: Buy all components from market&#10;Build/Buy: Optimize between building and buying (coming soon)">ⓘ</span>';
+  html += '</th><th>Actions</th>';
+  html += '</tr></thead><tbody>';
+
+  for (const { blueprint, intermediates } of hierarchy) {
+    const name = names[blueprint.blueprintTypeId] || `Type ${blueprint.blueprintTypeId}`;
+    const facilityName = blueprint.facilitySnapshot ? (blueprint.facilitySnapshot.name || 'Unknown') : 'None';
+    const facilityId = blueprint.facilityId || '';
+
+    // Top-level blueprint row
+    html += `
+      <tr data-blueprint-id="${blueprint.planBlueprintId}" data-editing="false" class="top-level-blueprint">
+        <td><strong>${escapeHtml(name)}</strong></td>
+        <td class="editable-cell" data-field="runs">
+          <span class="cell-value">${blueprint.runs}</span>
+          <input type="number" class="cell-input" value="${blueprint.runs}" min="1" style="display: none;">
+        </td>
+        <td class="editable-cell" data-field="lines">
+          <span class="cell-value">${blueprint.lines}</span>
+          <input type="number" class="cell-input" value="${blueprint.lines}" min="1" style="display: none;">
+        </td>
+        <td class="editable-cell" data-field="meLevel">
+          <span class="cell-value">${blueprint.meLevel}</span>
+          <input type="number" class="cell-input" value="${blueprint.meLevel}" min="0" max="10" style="display: none;">
+        </td>
+        <td class="editable-cell" data-field="teLevel">
+          <span class="cell-value">${blueprint.teLevel || 0}</span>
+          <input type="number" class="cell-input" value="${blueprint.teLevel || 0}" min="0" max="20" style="display: none;">
+        </td>
+        <td class="editable-cell" data-field="facilityId">
+          <span class="cell-value">${escapeHtml(facilityName)}</span>
+          <select class="cell-input" style="display: none;">
+            <option value="">No facility</option>
+            ${facilities.map(f => `<option value="${f.id}" ${f.id === facilityId ? 'selected' : ''}>${escapeHtml(f.name)}</option>`).join('')}
+          </select>
+        </td>
+        <td class="editable-cell" data-field="useIntermediates">
+          <span class="cell-value">${blueprint.useIntermediates === 'raw_materials' ? 'Raw Materials' : blueprint.useIntermediates === 'components' ? 'Components' : 'Build/Buy'}</span>
+          <select class="cell-input" style="display: none;">
+            <option value="raw_materials" ${blueprint.useIntermediates === 'raw_materials' ? 'selected' : ''}>Raw Materials</option>
+            <option value="components" ${blueprint.useIntermediates === 'components' ? 'selected' : ''}>Components</option>
+            <option value="build_buy" ${blueprint.useIntermediates === 'build_buy' ? 'selected' : ''} disabled>Build/Buy (Coming Soon)</option>
+          </select>
+        </td>
+        <td class="blueprint-actions">
+          <button class="secondary-button small edit-btn" data-action="edit">Edit</button>
+          <button class="primary-button small save-btn" data-action="save" style="display: none;">Save</button>
+          <button class="secondary-button small cancel-btn" data-action="cancel" style="display: none;">Cancel</button>
+          <button class="secondary-button small remove-btn" data-action="remove">Remove</button>
+        </td>
+      </tr>
+    `;
+
+    // Recursive function to render intermediate blueprint rows with proper depth indentation
+    function renderIntermediates(intermediateTree) {
+      for (const node of intermediateTree) {
+        const intermediate = node.intermediate;
+        const depth = node.depth;
+        const indentPx = 16 + (depth * 20); // Base 16px + 20px per depth level
+
+        const intName = names[intermediate.blueprintTypeId] || `Type ${intermediate.blueprintTypeId}`;
+        const intProductName = productNames[intermediate.intermediateProductTypeId] || `Type ${intermediate.intermediateProductTypeId}`;
+        const intFacilityName = intermediate.facilitySnapshot ? (intermediate.facilitySnapshot.name || 'Unknown') : 'None';
+        const intFacilityId = intermediate.facilityId || '';
+        const builtBadge = intermediate.isBuilt
+          ? '<span class="status-badge built" title="Marked as built">Built ✓</span>'
+          : '';
+
+        // intermediate.runs already contains the correct number of runs needed
+        const runsNeeded = intermediate.runs;
+
+        // Calculate total products that will be produced
+        const productsPerRun = intermediate.productQuantityPerRun || 1;
+        const totalProductsProduced = runsNeeded * productsPerRun;
+
+        // Create indent arrow based on depth
+        const arrow = '↳' + '\u00A0'.repeat(depth - 1); // Arrow + non-breaking spaces for nested levels
+
+        html += `
+          <tr data-blueprint-id="${intermediate.planBlueprintId}" data-editing="false" class="intermediate-blueprint" data-depth="${depth}">
+            <td style="padding-left: ${indentPx}px;">
+              ${arrow} ${escapeHtml(intName)} ${builtBadge}
+              <div style="font-size: 11px; color: #72767d;">Product: ${totalProductsProduced.toLocaleString()}x ${escapeHtml(intProductName)}</div>
+            </td>
+            <td>${runsNeeded.toLocaleString()}</td>
+            <td><span style="color: #72767d;">-</span></td>
+            <td class="editable-cell" data-field="meLevel">
+              <span class="cell-value">${intermediate.meLevel}</span>
+              <input type="number" class="cell-input" value="${intermediate.meLevel}" min="0" max="10" style="display: none;">
+            </td>
+            <td class="editable-cell" data-field="teLevel">
+              <span class="cell-value">${intermediate.teLevel || 0}</span>
+              <input type="number" class="cell-input" value="${intermediate.teLevel || 0}" min="0" max="20" style="display: none;">
+            </td>
+            <td class="editable-cell" data-field="facilityId">
+              <span class="cell-value">${escapeHtml(intFacilityName)}</span>
+              <select class="cell-input" style="display: none;">
+                <option value="">No facility</option>
+                ${facilities.map(f => `<option value="${f.id}" ${f.id === intFacilityId ? 'selected' : ''}>${escapeHtml(f.name)}</option>`).join('')}
+              </select>
+            </td>
+            <td><span style="color: #72767d;">Raw Materials</span></td>
+            <td class="blueprint-actions">
+              <button class="secondary-button small toggle-built-btn" data-action="toggle-built" data-is-built="${intermediate.isBuilt ? '1' : '0'}">
+                ${intermediate.isBuilt ? 'Mark Unbuilt' : 'Mark Built'}
+              </button>
+              <button class="secondary-button small edit-btn" data-action="edit">Edit</button>
+              <button class="primary-button small save-btn" data-action="save" style="display: none;">Save</button>
+              <button class="secondary-button small cancel-btn" data-action="cancel" style="display: none;">Cancel</button>
+            </td>
+          </tr>
+        `;
+
+        // Recursively render children
+        if (node.children && node.children.length > 0) {
+          renderIntermediates(node.children);
+        }
+      }
+    }
+
+    // Render all intermediates recursively
+    renderIntermediates(intermediates);
+  }
+
+  html += '</tbody></table>';
+  container.innerHTML = html;
+
+  // Add event listeners for top-level blueprint actions
+  container.querySelectorAll('.top-level-blueprint').forEach(row => {
     const blueprintId = row.dataset.blueprintId;
-
     row.querySelector('[data-action="edit"]')?.addEventListener('click', () => editBlueprint(blueprintId));
     row.querySelector('[data-action="save"]')?.addEventListener('click', () => saveBlueprintEdit(blueprintId));
     row.querySelector('[data-action="cancel"]')?.addEventListener('click', () => cancelBlueprintEdit(blueprintId));
     row.querySelector('[data-action="remove"]')?.addEventListener('click', () => removeBlueprint(blueprintId));
+  });
+
+  // Add event listeners for intermediate blueprint actions
+  container.querySelectorAll('.intermediate-blueprint').forEach(row => {
+    const blueprintId = row.dataset.blueprintId;
+    row.querySelector('[data-action="toggle-built"]')?.addEventListener('click', (e) => toggleIntermediateBuilt(blueprintId, e.target.dataset.isBuilt === '1'));
+    row.querySelector('[data-action="edit"]')?.addEventListener('click', () => editIntermediateBlueprint(blueprintId));
+    row.querySelector('[data-action="save"]')?.addEventListener('click', () => saveIntermediateBlueprintEdit(blueprintId));
+    row.querySelector('[data-action="cancel"]')?.addEventListener('click', () => cancelIntermediateBlueprintEdit(blueprintId));
   });
 }
 
@@ -376,9 +477,17 @@ async function loadMaterials() {
     return;
   }
 
-  // Get material names
+  // Get material names and volumes
   const typeIds = materials.map(m => m.typeId);
   const names = await window.electronAPI.sde.getTypeNames(typeIds);
+  const volumes = await window.electronAPI.sde.getItemVolumes(typeIds);
+
+  // Calculate total volume
+  let totalVolume = 0;
+  materials.forEach(m => {
+    const volume = volumes[m.typeId] || 0;
+    totalVolume += volume * m.quantity;
+  });
 
   container.innerHTML = `
     <table>
@@ -387,6 +496,8 @@ async function loadMaterials() {
           <th>Material</th>
           <th>Needed</th>
           ${includeAssets ? '<th>Owned (Personal)</th><th>Owned (Corp)</th><th>Still Needed</th>' : ''}
+          <th>M³</th>
+          <th>Total M³</th>
           <th>Price</th>
           <th>Total Cost</th>
           <th>Acquisition</th>
@@ -397,6 +508,8 @@ async function loadMaterials() {
         ${materials.map(m => {
           const name = names[m.typeId] || `Type ${m.typeId}`;
           const stillNeeded = includeAssets ? Math.max(0, m.quantity - m.ownedPersonal - m.ownedCorp) : m.quantity;
+          const volume = volumes[m.typeId] || 0;
+          const totalM3 = volume * m.quantity;
 
           // Use custom price if set, otherwise base price
           const effectivePrice = m.customPrice !== null ? m.customPrice : m.basePrice;
@@ -445,6 +558,8 @@ async function loadMaterials() {
                 <td>${formatNumber(m.ownedCorp)}</td>
                 <td>${formatNumber(stillNeeded)}</td>
               ` : ''}
+              <td>${formatNumber(volume, 2)}</td>
+              <td>${formatNumber(totalM3, 2)}</td>
               <td>
                 ${m.customPrice !== null ? '<span class="custom-price-indicator" title="Custom price set">⚙️</span> ' : ''}
                 ${price}
@@ -474,6 +589,13 @@ async function loadMaterials() {
           `;
         }).join('')}
       </tbody>
+      <tfoot>
+        <tr>
+          <td colspan="${includeAssets ? '6' : '3'}" style="text-align: right; font-weight: bold;">Total Volume:</td>
+          <td style="font-weight: bold;">${formatNumber(totalVolume, 2)} m³</td>
+          <td colspan="3"></td>
+        </tr>
+      </tfoot>
     </table>
   `;
 
@@ -701,9 +823,13 @@ async function loadProducts() {
     return;
   }
 
-  // Separate intermediate and final products
-  const intermediateProducts = products.filter(p => p.isIntermediate);
-  const finalProducts = products.filter(p => !p.isIntermediate);
+  // Group products by depth
+  const productsByDepth = {};
+  for (const product of products) {
+    const depth = product.intermediateDepth || 0;
+    if (!productsByDepth[depth]) productsByDepth[depth] = [];
+    productsByDepth[depth].push(product);
+  }
 
   // Get product names
   const typeIds = products.map(p => p.typeId);
@@ -711,12 +837,11 @@ async function loadProducts() {
 
   let html = '';
 
-  // Intermediate Products Section
-  if (intermediateProducts.length > 0) {
+  // Final Products (depth 0)
+  if (productsByDepth[0] && productsByDepth[0].length > 0) {
     html += `
       <div class="products-section">
-        <h3 class="section-header">Intermediate Products</h3>
-        <p class="section-description">Components that will be manufactured as intermediate steps before producing the final products.</p>
+        <h3 class="section-header">Final Products</h3>
         <table>
           <thead>
             <tr>
@@ -727,7 +852,7 @@ async function loadProducts() {
             </tr>
           </thead>
           <tbody>
-            ${intermediateProducts.map(p => {
+            ${productsByDepth[0].map(p => {
               const name = names[p.typeId] || `Type ${p.typeId}`;
               const price = p.basePrice ? formatISK(p.basePrice) : 'N/A';
               const total = p.basePrice ? formatISK(p.basePrice * p.quantity) : 'N/A';
@@ -747,11 +872,22 @@ async function loadProducts() {
     `;
   }
 
-  // Final Products Section
-  if (finalProducts.length > 0) {
+  // Intermediate Products (depth > 0)
+  const maxDepth = Math.max(...Object.keys(productsByDepth).map(d => parseInt(d)));
+  if (maxDepth > 0) {
     html += `
       <div class="products-section">
-        <h3 class="section-header">Final Products</h3>
+        <h3 class="section-header">Intermediate Components</h3>
+        <p class="section-description">Components that will be manufactured as intermediate steps before producing the final products.</p>
+    `;
+
+    for (let depth = 1; depth <= maxDepth; depth++) {
+      const depthProducts = productsByDepth[depth] || [];
+      if (depthProducts.length === 0) continue;
+
+      const indent = depth * 15;
+      html += `
+        <h4 style="margin-left: ${indent}px; color: #72767d; margin-top: 20px; margin-bottom: 10px;">Level ${depth} Intermediates</h4>
         <table>
           <thead>
             <tr>
@@ -762,14 +898,15 @@ async function loadProducts() {
             </tr>
           </thead>
           <tbody>
-            ${finalProducts.map(p => {
+            ${depthProducts.map(p => {
               const name = names[p.typeId] || `Type ${p.typeId}`;
               const price = p.basePrice ? formatISK(p.basePrice) : 'N/A';
               const total = p.basePrice ? formatISK(p.basePrice * p.quantity) : 'N/A';
+              const rowIndent = depth * 20;
 
               return `
                 <tr>
-                  <td>${escapeHtml(name)}</td>
+                  <td style="padding-left: ${rowIndent}px;">${escapeHtml(name)}</td>
                   <td>${formatNumber(p.quantity)}</td>
                   <td>${price}</td>
                   <td>${total}</td>
@@ -778,8 +915,10 @@ async function loadProducts() {
             }).join('')}
           </tbody>
         </table>
-      </div>
-    `;
+      `;
+    }
+
+    html += '</div>';
   }
 
   container.innerHTML = html;
@@ -1196,6 +1335,137 @@ window.removeBlueprint = async function(planBlueprintId) {
   } finally {
     hideLoading();
   }
+};
+
+// Toggle intermediate built status
+window.toggleIntermediateBuilt = async function(intermediateBlueprintId, currentlyBuilt) {
+  const newStatus = !currentlyBuilt;
+  const action = newStatus ? 'built' : 'unbuilt';
+
+  const confirmed = await showConfirmDialog(
+    `Mark this intermediate blueprint as ${action}?${newStatus ? ' This will exclude its raw materials from the plan materials list.' : ' This will include its raw materials back in the plan materials list.'}`,
+    `Mark as ${action}`,
+    'Confirm',
+    'Cancel'
+  );
+
+  if (!confirmed) return;
+
+  try {
+    showLoading(`Marking intermediate as ${action}...`);
+    const result = await window.electronAPI.plans.markIntermediateBuilt(intermediateBlueprintId, newStatus);
+
+    if (result.warnings && result.warnings.length > 0) {
+      for (const warning of result.warnings) {
+        showToast(warning, 'warning');
+      }
+    }
+
+    await loadBlueprints();
+    await loadMaterials();
+    await loadOverview();
+    showToast(`Intermediate marked as ${action}`, 'success');
+  } catch (error) {
+    showToast('Failed to update intermediate: ' + error.message, 'error');
+  } finally {
+    hideLoading();
+  }
+};
+
+// Edit intermediate blueprint
+window.editIntermediateBlueprint = function(intermediateBlueprintId) {
+  const row = document.querySelector(`tr.intermediate-blueprint[data-blueprint-id="${intermediateBlueprintId}"]`);
+  if (!row) return;
+
+  row.dataset.editing = 'true';
+
+  // Show inputs for editable fields only (ME, TE, Facility)
+  row.querySelectorAll('.editable-cell').forEach(cell => {
+    cell.querySelector('.cell-value').style.display = 'none';
+    cell.querySelector('.cell-input').style.display = 'block';
+  });
+
+  // Show save/cancel buttons, hide edit/toggle buttons
+  row.querySelector('.edit-btn').style.display = 'none';
+  row.querySelector('.toggle-built-btn').style.display = 'none';
+  row.querySelector('.save-btn').style.display = 'inline-flex';
+  row.querySelector('.cancel-btn').style.display = 'inline-flex';
+};
+
+// Save intermediate blueprint edits
+window.saveIntermediateBlueprintEdit = async function(intermediateBlueprintId) {
+  const row = document.querySelector(`tr.intermediate-blueprint[data-blueprint-id="${intermediateBlueprintId}"]`);
+  if (!row) return;
+
+  try {
+    // Collect updated values (only ME, TE, Facility)
+    const updates = {};
+
+    row.querySelectorAll('.editable-cell').forEach(cell => {
+      const field = cell.dataset.field;
+      const input = cell.querySelector('.cell-input');
+
+      if (field === 'facilityId') {
+        const facilityId = input.value || null;
+        updates.facilityId = facilityId;
+
+        if (facilityId) {
+          const facility = facilities.find(f => f.id === facilityId);
+          if (facility) {
+            updates.facilitySnapshot = facility;
+          }
+        } else {
+          updates.facilitySnapshot = null;
+        }
+      } else {
+        updates[field] = parseInt(input.value);
+      }
+    });
+
+    showLoading('Updating intermediate blueprint...');
+    await window.electronAPI.plans.updateIntermediateBlueprint(intermediateBlueprintId, updates);
+
+    await loadBlueprints();
+    await loadMaterials();
+    await loadOverview();
+    showToast('Intermediate blueprint updated successfully', 'success');
+  } catch (error) {
+    showToast('Failed to update intermediate blueprint: ' + error.message, 'error');
+  } finally {
+    hideLoading();
+  }
+};
+
+// Cancel intermediate blueprint edits
+window.cancelIntermediateBlueprintEdit = function(intermediateBlueprintId) {
+  const row = document.querySelector(`tr.intermediate-blueprint[data-blueprint-id="${intermediateBlueprintId}"]`);
+  if (!row) return;
+
+  row.dataset.editing = 'false';
+
+  // Show values, hide inputs (reset to original values)
+  row.querySelectorAll('.editable-cell').forEach(cell => {
+    const value = cell.querySelector('.cell-value');
+    const input = cell.querySelector('.cell-input');
+
+    // Reset input to original value
+    if (input.tagName === 'SELECT') {
+      const originalValue = input.querySelector('option[selected]')?.value || '';
+      input.value = originalValue;
+    } else {
+      const originalValue = value.textContent;
+      input.value = originalValue;
+    }
+
+    value.style.display = 'block';
+    input.style.display = 'none';
+  });
+
+  // Show edit/built buttons, hide save/cancel buttons
+  row.querySelector('.edit-btn').style.display = 'inline-flex';
+  row.querySelector('.toggle-built-btn').style.display = 'inline-flex';
+  row.querySelector('.save-btn').style.display = 'none';
+  row.querySelector('.cancel-btn').style.display = 'none';
 };
 
 // Refresh prices
@@ -1772,9 +2042,12 @@ function formatISK(value) {
   }).format(value).replace('$', '') + ' ISK';
 }
 
-function formatNumber(value) {
+function formatNumber(value, decimals = 0) {
   if (value === null || value === undefined) return '0';
-  return new Intl.NumberFormat('en-US').format(value);
+  return new Intl.NumberFormat('en-US', {
+    minimumFractionDigits: decimals,
+    maximumFractionDigits: decimals
+  }).format(value);
 }
 
 function escapeHtml(text) {

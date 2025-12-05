@@ -328,6 +328,60 @@ function initializeCharacterDatabase() {
     console.error('[Character Database] Migration error:', error);
   }
 
+  // Migration: Add intermediate blueprint support to plan_blueprints
+  try {
+    const columns = database.pragma('table_info(plan_blueprints)');
+    const hasParentBlueprintId = columns.some(col => col.name === 'parent_blueprint_id');
+    const hasIsIntermediate = columns.some(col => col.name === 'is_intermediate');
+    const hasIsBuilt = columns.some(col => col.name === 'is_built');
+    const hasIntermediateProductTypeId = columns.some(col => col.name === 'intermediate_product_type_id');
+
+    if (!hasParentBlueprintId) {
+      console.log('[Character Database] Adding parent_blueprint_id column to plan_blueprints table');
+      database.exec(`ALTER TABLE plan_blueprints ADD COLUMN parent_blueprint_id TEXT`);
+    }
+
+    if (!hasIsIntermediate) {
+      console.log('[Character Database] Adding is_intermediate column to plan_blueprints table');
+      database.exec(`ALTER TABLE plan_blueprints ADD COLUMN is_intermediate INTEGER DEFAULT 0`);
+    }
+
+    if (!hasIsBuilt) {
+      console.log('[Character Database] Adding is_built column to plan_blueprints table');
+      database.exec(`ALTER TABLE plan_blueprints ADD COLUMN is_built INTEGER DEFAULT 0`);
+    }
+
+    if (!hasIntermediateProductTypeId) {
+      console.log('[Character Database] Adding intermediate_product_type_id column to plan_blueprints table');
+      database.exec(`ALTER TABLE plan_blueprints ADD COLUMN intermediate_product_type_id INTEGER`);
+    }
+
+    // Create indexes for intermediate blueprint columns (only if columns exist)
+    if (hasParentBlueprintId || hasIsIntermediate) {
+      console.log('[Character Database] Creating indexes for intermediate blueprint columns');
+      database.exec(`
+        CREATE INDEX IF NOT EXISTS idx_plan_blueprints_parent ON plan_blueprints(parent_blueprint_id);
+        CREATE INDEX IF NOT EXISTS idx_plan_blueprints_intermediate ON plan_blueprints(is_intermediate);
+      `);
+    }
+  } catch (error) {
+    console.error('[Character Database] Intermediate blueprint migration error:', error);
+  }
+
+  // Migration: Add intermediate_depth column to plan_products
+  // This column tracks the depth level of intermediates (0=final, 1=level 1 intermediate, 2=level 2, etc.)
+  try {
+    const columns = database.pragma('table_info(plan_products)');
+    const hasIntermediateDepth = columns.some(col => col.name === 'intermediate_depth');
+
+    if (!hasIntermediateDepth) {
+      console.log('[Character Database] Adding intermediate_depth column to plan_products table');
+      database.exec(`ALTER TABLE plan_products ADD COLUMN intermediate_depth INTEGER DEFAULT 0`);
+    }
+  } catch (error) {
+    console.error('[Character Database] Migration error:', error);
+  }
+
   console.log('[Character Database] Schema initialized successfully');
   return database;
 }

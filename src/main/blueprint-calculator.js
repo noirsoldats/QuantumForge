@@ -400,15 +400,22 @@ async function calculateBlueprintMaterials(blueprintTypeId, runs = 1, meLevel = 
                 adjustedMaterials[typeId] = (adjustedMaterials[typeId] || 0) + qty;
             }
 
+            // Get product info to determine products-per-run
+            const subProduct = getBlueprintProduct(subBlueprintId, db);
+            const productQuantityPerRun = subProduct ? subProduct.quantity : 1;
+
             // Track this as an intermediate component
             intermediateComponents.push({
                 typeID:          material.typeID,
                 typeName:        getTypeName(material.typeID, db),
                 quantity:        adjustedQty,
+                productQuantityPerRun: productQuantityPerRun,  // Products per run from SDE
                 blueprintTypeID: subBlueprintId,
                 blueprintName:   getTypeName(subBlueprintId, db),
                 meLevel:         subME,
-                subMaterials:    subCalculation.materials
+                depth:           depth,  // Current recursion depth for this intermediate
+                subMaterials:    subCalculation.materials,
+                nestedIntermediates: subCalculation.breakdown?.[0]?.intermediateComponents || []  // Nested intermediates from recursive call
             });
         } else {
             // This is a raw material (or intermediates are disabled)
