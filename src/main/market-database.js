@@ -2,7 +2,7 @@ const Database = require('better-sqlite3');
 const path = require('path');
 const { app } = require('electron');
 const fs = require('fs');
-const { getMarketDbPath } = require('./config-migration');
+const { getMarketDbPath, getConfigDir } = require('./config-migration');
 
 let db = null;
 
@@ -18,6 +18,13 @@ function getMarketDatabasePath() {
  */
 function initializeMarketDatabase() {
   try {
+    // Ensure config directory exists
+    const configDir = getConfigDir();
+    if (!fs.existsSync(configDir)) {
+      fs.mkdirSync(configDir, { recursive: true });
+      console.log('[Market Database] Created config directory:', configDir);
+    }
+
     const dbPath = getMarketDatabasePath();
     console.log('Opening market database:', dbPath);
 

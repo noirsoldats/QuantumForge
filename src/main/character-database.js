@@ -1,5 +1,6 @@
 const Database = require('better-sqlite3');
 const path = require('path');
+const fs = require('fs');
 const { getConfigDir } = require('./config-migration');
 
 let db = null;
@@ -11,7 +12,15 @@ let db = null;
 function getCharacterDatabase() {
   if (db) return db;
 
-  const dbPath = path.join(getConfigDir(), 'character-data.db');
+  const configDir = getConfigDir();
+
+  // Ensure config directory exists
+  if (!fs.existsSync(configDir)) {
+    fs.mkdirSync(configDir, { recursive: true });
+    console.log('[Character Database] Created config directory:', configDir);
+  }
+
+  const dbPath = path.join(configDir, 'character-data.db');
   db = new Database(dbPath);
   db.pragma('journal_mode = WAL');
 
