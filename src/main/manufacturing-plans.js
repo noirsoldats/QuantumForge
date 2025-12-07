@@ -731,6 +731,43 @@ async function updateIntermediateBlueprint(intermediateBlueprintId, updates) {
 }
 
 /**
+ * Mark an intermediate blueprint as built or unbuilt (internal recursive function)
+ * @param {string} intermediateBlueprintId - Intermediate blueprint ID
+ * @param {boolean} isBuilt - Built status
+ * @param {Database} db - Database instance
+ * @param {boolean} isTopLevel - Whether this is the top-level call
+ * @returns {Promise<string>} Plan ID
+ */
+async function markIntermediateBuiltRecursive(intermediateBlueprintId, isBuilt, db, isTopLevel = false) {
+  // Get the intermediate blueprint
+  const intermediate = db.prepare('SELECT * FROM plan_blueprints WHERE plan_blueprint_id = ?').get(intermediateBlueprintId);
+  if (!intermediate || intermediate.is_intermediate !== 1) {
+    throw new Error('Intermediate blueprint not found');
+  }
+
+  // Update built status for this intermediate
+  db.prepare('UPDATE plan_blueprints SET is_built = ? WHERE plan_blueprint_id = ?').run(isBuilt ? 1 : 0, intermediateBlueprintId);
+
+  console.log(`${isTopLevel ? '' : '  '}Marked intermediate blueprint ${intermediateBlueprintId} as ${isBuilt ? 'built' : 'unbuilt'}`);
+
+  // Recursively mark all child intermediates (sub-intermediates) with the same status
+  const childIntermediates = db.prepare(`
+    SELECT plan_blueprint_id FROM plan_blueprints
+    WHERE parent_blueprint_id = ? AND is_intermediate = 1
+  `).all(intermediateBlueprintId);
+
+  if (childIntermediates.length > 0) {
+    console.log(`  Cascading built status to ${childIntermediates.length} child intermediate(s)`);
+    for (const child of childIntermediates) {
+      // Recursively mark children (this will cascade down all levels)
+      await markIntermediateBuiltRecursive(child.plan_blueprint_id, isBuilt, db, false);
+    }
+  }
+
+  return intermediate.plan_id;
+}
+
+/**
  * Mark an intermediate blueprint as built or unbuilt
  * @param {string} intermediateBlueprintId - Intermediate blueprint ID
  * @param {boolean} isBuilt - Built status
@@ -740,23 +777,35 @@ async function markIntermediateBuilt(intermediateBlueprintId, isBuilt) {
   try {
     const db = getCharacterDatabase();
 
-    // Get the intermediate blueprint
-    const intermediate = db.prepare('SELECT * FROM plan_blueprints WHERE plan_blueprint_id = ?').get(intermediateBlueprintId);
-    if (!intermediate || intermediate.is_intermediate !== 1) {
+    // Get plan and character info before marking
+    const blueprintInfo = db.prepare(`
+      SELECT pb.plan_id, mp.character_id
+      FROM plan_blueprints pb
+      JOIN manufacturing_plans mp ON pb.plan_id = mp.plan_id
+      WHERE pb.plan_blueprint_id = ?
+    `).get(intermediateBlueprintId);
+
+    if (!blueprintInfo) {
       throw new Error('Intermediate blueprint not found');
     }
 
-    // Update built status
-    db.prepare('UPDATE plan_blueprints SET is_built = ? WHERE plan_blueprint_id = ?').run(isBuilt ? 1 : 0, intermediateBlueprintId);
+    // Recursively mark this intermediate and all children
+    const planId = await markIntermediateBuiltRecursive(intermediateBlueprintId, isBuilt, db, true);
 
-    console.log(`Marked intermediate blueprint ${intermediateBlueprintId} as ${isBuilt ? 'built' : 'unbuilt'}`);
+    // Instead of excluding materials, mark them as acquired/unacquired
+    if (isBuilt) {
+      await markIntermediateMaterialsAsAcquired(intermediateBlueprintId, planId, blueprintInfo.character_id);
+    } else {
+      await unmarkIntermediateMaterialsAsAcquired(intermediateBlueprintId, planId);
+    }
 
-    // Trigger material recalculation (this will exclude/include materials based on built status)
-    await recalculatePlanMaterials(intermediate.plan_id, false);
+    // NOTE: We still call recalculatePlanMaterials to ensure consistency,
+    // but the exclusion logic has been removed (materials remain in the list)
+    await recalculatePlanMaterials(planId, false);
 
     // Update plan's updated_at
     const now = Date.now();
-    db.prepare('UPDATE manufacturing_plans SET updated_at = ? WHERE plan_id = ?').run(now, intermediate.plan_id);
+    db.prepare('UPDATE manufacturing_plans SET updated_at = ? WHERE plan_id = ?').run(now, planId);
 
     return {
       success: true,
@@ -764,6 +813,167 @@ async function markIntermediateBuilt(intermediateBlueprintId, isBuilt) {
     };
   } catch (error) {
     console.error('Error marking intermediate as built:', error);
+    throw error;
+  }
+}
+
+/**
+ * Mark all materials needed for a built intermediate as acquired (manufactured)
+ * @param {string} intermediateBlueprintId - Intermediate blueprint ID
+ * @param {string} planId - Plan ID
+ * @param {number} characterId - Character ID
+ */
+async function markIntermediateMaterialsAsAcquired(intermediateBlueprintId, planId, characterId) {
+  try {
+    const db = getCharacterDatabase();
+
+    // Get the intermediate blueprint details
+    const intermediate = db.prepare('SELECT * FROM plan_blueprints WHERE plan_blueprint_id = ?').get(intermediateBlueprintId);
+    if (!intermediate || intermediate.is_intermediate !== 1) {
+      throw new Error('Intermediate blueprint not found');
+    }
+
+    // Calculate raw materials for this built intermediate
+    const facilitySnapshot = intermediate.facility_snapshot ? JSON.parse(intermediate.facility_snapshot) : null;
+
+    const calculation = await calculateBlueprintMaterials(
+      intermediate.blueprint_type_id,
+      intermediate.runs,
+      intermediate.me_level,
+      characterId,
+      facilitySnapshot,
+      false  // Don't break down further - we want raw materials
+    );
+
+    console.log(`[Plans] Marking ${Object.keys(calculation.materials).length} materials as acquired (manufactured) for intermediate ${intermediate.blueprint_type_id}`);
+
+    // Mark each material as acquired with method 'manufactured'
+    for (const [typeId, quantity] of Object.entries(calculation.materials)) {
+      const typeIdInt = parseInt(typeId);
+
+      // Check if this material already exists in plan_materials
+      const existingMaterial = db.prepare(`
+        SELECT manually_acquired_quantity FROM plan_materials
+        WHERE plan_id = ? AND type_id = ?
+      `).get(planId, typeIdInt);
+
+      if (existingMaterial) {
+        // Material exists - add to existing acquisition quantity
+        const currentAcquired = existingMaterial.manually_acquired_quantity || 0;
+        const newTotal = currentAcquired + quantity;
+
+        db.prepare(`
+          UPDATE plan_materials
+          SET manually_acquired = 1,
+              manually_acquired_quantity = ?,
+              acquisition_method = 'manufactured'
+          WHERE plan_id = ? AND type_id = ?
+        `).run(newTotal, planId, typeIdInt);
+
+        console.log(`  - Material ${typeId}: added ${quantity} to existing ${currentAcquired} (total: ${newTotal})`);
+      } else {
+        // Material doesn't exist yet - this shouldn't normally happen since
+        // recalculatePlanMaterials should have already created the entry,
+        // but we'll handle it gracefully
+        console.warn(`  - Material ${typeId} not found in plan_materials - this is unexpected`);
+      }
+    }
+
+    // Recursively mark materials for child intermediates
+    const childIntermediates = db.prepare(`
+      SELECT plan_blueprint_id FROM plan_blueprints
+      WHERE parent_blueprint_id = ? AND is_intermediate = 1
+    `).all(intermediateBlueprintId);
+
+    for (const child of childIntermediates) {
+      await markIntermediateMaterialsAsAcquired(child.plan_blueprint_id, planId, characterId);
+    }
+
+  } catch (error) {
+    console.error('Error marking intermediate materials as acquired:', error);
+    throw error;
+  }
+}
+
+/**
+ * Unmark materials that were acquired through a built intermediate
+ * @param {string} intermediateBlueprintId - Intermediate blueprint ID
+ * @param {string} planId - Plan ID
+ */
+async function unmarkIntermediateMaterialsAsAcquired(intermediateBlueprintId, planId) {
+  try {
+    const db = getCharacterDatabase();
+
+    // Get the intermediate blueprint details
+    const intermediate = db.prepare('SELECT * FROM plan_blueprints WHERE plan_blueprint_id = ?').get(intermediateBlueprintId);
+    if (!intermediate || intermediate.is_intermediate !== 1) {
+      throw new Error('Intermediate blueprint not found');
+    }
+
+    // Calculate raw materials for this intermediate (same as when marking)
+    const facilitySnapshot = intermediate.facility_snapshot ? JSON.parse(intermediate.facility_snapshot) : null;
+
+    // We need character_id but it's not in the intermediate record, get from plan
+    const plan = db.prepare('SELECT character_id FROM manufacturing_plans WHERE plan_id = ?').get(planId);
+
+    const calculation = await calculateBlueprintMaterials(
+      intermediate.blueprint_type_id,
+      intermediate.runs,
+      intermediate.me_level,
+      plan.character_id,
+      facilitySnapshot,
+      false
+    );
+
+    console.log(`[Plans] Unmarking ${Object.keys(calculation.materials).length} materials from intermediate ${intermediate.blueprint_type_id}`);
+
+    // Unmark each material
+    for (const [typeId, quantity] of Object.entries(calculation.materials)) {
+      const typeIdInt = parseInt(typeId);
+
+      const existingMaterial = db.prepare(`
+        SELECT manually_acquired_quantity FROM plan_materials
+        WHERE plan_id = ? AND type_id = ?
+      `).get(planId, typeIdInt);
+
+      if (existingMaterial && existingMaterial.manually_acquired_quantity > 0) {
+        const currentAcquired = existingMaterial.manually_acquired_quantity;
+        const newTotal = Math.max(0, currentAcquired - quantity);
+
+        if (newTotal === 0) {
+          // No more manual acquisitions - clear the flags
+          db.prepare(`
+            UPDATE plan_materials
+            SET manually_acquired = 0,
+                manually_acquired_quantity = 0,
+                acquisition_method = NULL
+            WHERE plan_id = ? AND type_id = ?
+          `).run(planId, typeIdInt);
+        } else {
+          // Still have some manual acquisitions remaining
+          db.prepare(`
+            UPDATE plan_materials
+            SET manually_acquired_quantity = ?
+            WHERE plan_id = ? AND type_id = ?
+          `).run(newTotal, planId, typeIdInt);
+        }
+
+        console.log(`  - Material ${typeId}: removed ${quantity} from ${currentAcquired} (remaining: ${newTotal})`);
+      }
+    }
+
+    // Recursively unmark materials for child intermediates
+    const childIntermediates = db.prepare(`
+      SELECT plan_blueprint_id FROM plan_blueprints
+      WHERE parent_blueprint_id = ? AND is_intermediate = 1
+    `).all(intermediateBlueprintId);
+
+    for (const child of childIntermediates) {
+      await unmarkIntermediateMaterialsAsAcquired(child.plan_blueprint_id, planId);
+    }
+
+  } catch (error) {
+    console.error('Error unmarking intermediate materials:', error);
     throw error;
   }
 }
@@ -858,46 +1068,9 @@ async function recalculatePlanMaterials(planId, refreshPrices = false) {
     const aggregatedIntermediateProducts = new Map(); // Map<typeId, {quantity, depth}>
     const blueprintCalculations = new Map(); // Store calculations to identify final products later
 
-    // Get all intermediates for this plan to check built status
-    const allIntermediates = getAllPlanIntermediates(planId);
-    const builtIntermediates = allIntermediates.filter(i => i.isBuilt);
-
-    // Calculate raw materials for each built intermediate
-    // These materials should be excluded from the shopping list
-    const builtIntermediateMaterials = new Map(); // Map<typeId, quantity>
-
-    for (const builtIntermediate of builtIntermediates) {
-      try {
-        // Get facility snapshot for this intermediate (already parsed by getAllPlanIntermediates)
-        const intermediateFacility = builtIntermediate.facilitySnapshot || null;
-
-        // Calculate materials for this built intermediate
-        // useIntermediates = false because we want raw materials only, not nested intermediates
-        const intermediateCalc = await calculateBlueprintMaterials(
-          builtIntermediate.blueprintTypeId,
-          builtIntermediate.runs,
-          builtIntermediate.meLevel,
-          plan.character_id,
-          intermediateFacility,
-          false  // Don't break down further - we want the raw materials
-        );
-
-        // Add these materials to the exclusion set
-        for (const [typeId, quantity] of Object.entries(intermediateCalc.materials)) {
-          const currentQty = builtIntermediateMaterials.get(parseInt(typeId)) || 0;
-          builtIntermediateMaterials.set(parseInt(typeId), currentQty + quantity);
-        }
-
-        console.log(`[Plans] Built intermediate ${builtIntermediate.blueprintTypeId} requires ${Object.keys(intermediateCalc.materials).length} raw materials that will be excluded`);
-      } catch (error) {
-        console.error(`[Plans] Failed to calculate materials for built intermediate ${builtIntermediate.planBlueprintId}:`, error);
-      }
-    }
-
-    // Also track intermediate products for filtering (keep existing logic)
-    const builtIntermediateProducts = new Set(
-      builtIntermediates.map(i => i.intermediateProductTypeId)
-    );
+    // NOTE: Built intermediate exclusion logic has been removed.
+    // Instead, materials for built intermediates are marked as acquired
+    // via the acquisition tracking system (see markIntermediateMaterialsAsAcquired)
 
     // Get market settings for pricing
     const marketSettings = getMarketSettings();
@@ -941,35 +1114,11 @@ async function recalculatePlanMaterials(planId, refreshPrices = false) {
       blueprintCalculations.set(blueprint.planBlueprintId, calculation);
 
       // Aggregate materials (multiply by lines if > 1)
-      // SKIP materials in two cases:
-      // 1. The material itself is a product of a built intermediate (we have it already)
-      // 2. The material is a raw material needed to BUILD a built intermediate (we already built it)
+      // NOTE: Materials are aggregated regardless of built status
+      // Built intermediates have their materials marked as acquired via the acquisition system
       for (const [typeId, quantity] of Object.entries(calculation.materials)) {
         const totalQty = quantity * blueprint.lines;
-        const typeIdInt = parseInt(typeId);
-
-        // Case 1: Check if this material is itself a product of a built intermediate
-        if (builtIntermediateProducts.has(typeIdInt)) {
-          console.log(`[Plans] Skipping material ${typeId} - it's a product of a built intermediate`);
-          continue;
-        }
-
-        // Case 2: Check if this material is needed to build a built intermediate
-        // If so, reduce the quantity needed by the amount already used by the built intermediate
-        const usedByBuiltIntermediates = builtIntermediateMaterials.get(typeIdInt) || 0;
-        const netQuantityNeeded = totalQty - usedByBuiltIntermediates;
-
-        if (netQuantityNeeded > 0) {
-          // Still need some of this material (more than what the built intermediates used)
-          aggregatedMaterials[typeId] = (aggregatedMaterials[typeId] || 0) + netQuantityNeeded;
-        } else if (netQuantityNeeded < 0) {
-          // Built intermediates used MORE than we need - this shouldn't happen normally
-          // but we'll log it for debugging
-          console.log(`[Plans] Warning: Built intermediates used more ${typeId} (${usedByBuiltIntermediates}) than needed (${totalQty})`);
-        } else {
-          // Exactly covered by built intermediates
-          console.log(`[Plans] Skipping material ${typeId} - fully covered by built intermediates (${usedByBuiltIntermediates} units)`);
-        }
+        aggregatedMaterials[typeId] = (aggregatedMaterials[typeId] || 0) + totalQty;
       }
 
       // Extract intermediate products from breakdown using flattening (if building from raw materials)
@@ -1016,6 +1165,7 @@ async function recalculatePlanMaterials(planId, refreshPrices = false) {
     try {
       // Get existing prices before clearing (to preserve them when not refreshing)
       const existingMaterialPrices = {};
+      const existingMaterialAcquisition = {};
       const existingProductPrices = {};
 
       if (!refreshPrices) {
@@ -1036,6 +1186,24 @@ async function recalculatePlanMaterials(planId, refreshPrices = false) {
         }
       }
 
+      // Always capture acquisition data (regardless of refreshPrices)
+      const acquisitionRecords = db.prepare(`
+        SELECT type_id, manually_acquired, manually_acquired_quantity, acquisition_method, acquisition_note
+        FROM plan_materials
+        WHERE plan_id = ?
+      `).all(planId);
+
+      for (const rec of acquisitionRecords) {
+        if (rec.manually_acquired) {  // Only preserve if actually acquired
+          existingMaterialAcquisition[rec.type_id] = {
+            manually_acquired: rec.manually_acquired,
+            manually_acquired_quantity: rec.manually_acquired_quantity,
+            acquisition_method: rec.acquisition_method,
+            acquisition_note: rec.acquisition_note
+          };
+        }
+      }
+
       // Clear existing materials and products
       db.prepare('DELETE FROM plan_materials WHERE plan_id = ?').run(planId);
       db.prepare('DELETE FROM plan_products WHERE plan_id = ?').run(planId);
@@ -1044,8 +1212,11 @@ async function recalculatePlanMaterials(planId, refreshPrices = false) {
 
       // Insert materials with prices
       const insertMaterial = db.prepare(`
-        INSERT INTO plan_materials (plan_id, type_id, quantity, base_price, price_frozen_at)
-        VALUES (?, ?, ?, ?, ?)
+        INSERT INTO plan_materials (
+          plan_id, type_id, quantity, base_price, price_frozen_at,
+          manually_acquired, manually_acquired_quantity, acquisition_method, acquisition_note
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
       `);
 
       for (const [typeId, quantity] of Object.entries(aggregatedMaterials)) {
@@ -1075,7 +1246,20 @@ async function recalculatePlanMaterials(planId, refreshPrices = false) {
           }
         }
 
-        insertMaterial.run(planId, parseInt(typeId), quantity, price, priceFrozenAt);
+        // Apply preserved acquisition data (if any)
+        const acqData = existingMaterialAcquisition[parseInt(typeId)] || {};
+
+        insertMaterial.run(
+          planId,
+          parseInt(typeId),
+          quantity,
+          price,
+          priceFrozenAt,
+          acqData.manually_acquired || 0,
+          acqData.manually_acquired_quantity || 0,
+          acqData.acquisition_method || null,
+          acqData.acquisition_note || null
+        );
       }
 
       // Determine what is TRULY a final product

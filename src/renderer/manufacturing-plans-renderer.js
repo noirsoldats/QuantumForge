@@ -495,7 +495,8 @@ async function loadMaterials() {
         <tr>
           <th>Material</th>
           <th>Needed</th>
-          ${includeAssets ? '<th>Owned (Personal)</th><th>Owned (Corp)</th><th>Still Needed</th>' : ''}
+          <th>Still Needed</th>
+          ${includeAssets ? '<th>Owned (Personal)</th><th>Owned (Corp)</th>' : ''}
           <th>M³</th>
           <th>Total M³</th>
           <th>Price</th>
@@ -507,7 +508,6 @@ async function loadMaterials() {
       <tbody>
         ${materials.map(m => {
           const name = names[m.typeId] || `Type ${m.typeId}`;
-          const stillNeeded = includeAssets ? Math.max(0, m.quantity - m.ownedPersonal - m.ownedCorp) : m.quantity;
           const volume = volumes[m.typeId] || 0;
           const totalM3 = volume * m.quantity;
 
@@ -545,18 +545,19 @@ async function loadMaterials() {
             ? badges.join(' ')
             : '<span class="status-badge">Not Acquired</span>';
 
-          // Calculate completion for visual feedback
+          // Calculate total acquired and still needed (based on acquired, not assets)
           const totalAcquired = (m.manuallyAcquiredQuantity || 0) + (m.purchasedQuantity || 0) + (m.manufacturedQuantity || 0);
+          const stillNeeded = Math.max(0, m.quantity - totalAcquired);
           const isFullyAcquired = totalAcquired >= m.quantity;
 
           return `
             <tr data-type-id="${m.typeId}" ${isFullyAcquired ? 'data-fully-acquired="true"' : ''}>
               <td>${escapeHtml(name)}</td>
               <td>${formatNumber(m.quantity)}</td>
+              <td>${formatNumber(stillNeeded)}</td>
               ${includeAssets ? `
                 <td>${formatNumber(m.ownedPersonal)}</td>
                 <td>${formatNumber(m.ownedCorp)}</td>
-                <td>${formatNumber(stillNeeded)}</td>
               ` : ''}
               <td>${formatNumber(volume, 2)}</td>
               <td>${formatNumber(totalM3, 2)}</td>
@@ -591,7 +592,7 @@ async function loadMaterials() {
       </tbody>
       <tfoot>
         <tr>
-          <td colspan="${includeAssets ? '6' : '3'}" style="text-align: right; font-weight: bold;">Total Volume:</td>
+          <td colspan="${includeAssets ? '6' : '4'}" style="text-align: right; font-weight: bold;">Total Volume:</td>
           <td style="font-weight: bold;">${formatNumber(totalVolume, 2)} m³</td>
           <td colspan="3"></td>
         </tr>
@@ -1343,7 +1344,7 @@ window.toggleIntermediateBuilt = async function(intermediateBlueprintId, current
   const action = newStatus ? 'built' : 'unbuilt';
 
   const confirmed = await showConfirmDialog(
-    `Mark this intermediate blueprint as ${action}?${newStatus ? ' This will exclude its raw materials from the plan materials list.' : ' This will include its raw materials back in the plan materials list.'}`,
+    `Mark this intermediate blueprint as ${action}?${newStatus ? ' This will mark its raw materials as acquired (manufactured).' : ' This will unmark its raw materials as acquired.'}`,
     `Mark as ${action}`,
     'Confirm',
     'Cancel'
