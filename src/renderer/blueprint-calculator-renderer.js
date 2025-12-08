@@ -1202,10 +1202,10 @@ async function displayPricingInformation(pricing) {
       html += '</div>';
 
       // Structure Cost Bonus (if applicable)
-      if (jcb.structureCostBonus > 0) {
+      if (jcb.structureRollBonus > 0) {
         html += '<div class="pricing-row">';
         html += `<span class="indent-1">Structure Cost Bonus:</span>`;
-        html += `<span class="pricing-value">-${jcb.structureCostBonus.toFixed(2)}%</span>`;
+        html += `<span class="pricing-value">-${jcb.structureRollBonus.toFixed(2)}%</span>`;
         html += '</div>';
       }
 

@@ -264,7 +264,7 @@ describe('Blueprint Pricing Calculations', () => {
       const resultNoBonus = await calculateManufacturingJobCost(810, 1, 30000142, null);
       const resultWithBonus = await calculateManufacturingJobCost(810, 1, 30000142, facility);
 
-      expect(resultWithBonus.structureCostBonus).toBe(3.0);
+      expect(resultWithBonus.structureRollBonus).toBe(3.0);
       expect(resultWithBonus.jobBaseCost).toBeLessThan(resultNoBonus.jobBaseCost);
     });
 

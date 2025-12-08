@@ -189,7 +189,7 @@ function addCharacter(characterData) {
     const settings = loadSettings();
 
     // Check if character already exists
-    const existing = db.prepare('SELECT character_id FROM characters WHERE character_id = ?').get(characterData.character.characterId);
+    const existing = db.prepare('SELECT character_id, added_at FROM characters WHERE character_id = ?').get(characterData.character.characterId);
 
     const now = Date.now();
 

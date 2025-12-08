@@ -163,7 +163,7 @@ async function calculateManufacturingJobCost(blueprintTypeId, runs, systemId, fa
   const manufacturingIndex = costIndices.find(idx => idx.activity === MANUFACTURING_ACTIVITY);
   const jobCostObj = {
       estimatedItemValue: 0,
-      systemCostIndex: manufacturingIndex.costIndex,
+      systemCostIndex: 0,
       jobGrossCost: 0,
       structureRollBonus: 0,
       jobBaseCost: 0,

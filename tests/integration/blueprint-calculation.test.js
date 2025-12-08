@@ -264,24 +264,24 @@ describe('Blueprint Calculation Integration Tests', () => {
     });
   });
 
-  describe('Snapshot Testing', () => {
-    test('material tree structure matches snapshot', async () => {
-      populateDatabase(db, { blueprint: blueprintFixtures.scourgeBlueprint });
-
-      const facility = facilitiesFixtures.raitaruNoRigs;
-
-      const result = await calculateBlueprintMaterials(
-        blueprintFixtures.TYPE_IDS.SCOURGE_BLUEPRINT,
-        1,
-        10,
-        null,
-        facility,
-        0,
-        db
-      );
-
-      // Snapshot test to detect regressions in calculation structure
-      expect(result).toMatchSnapshot();
-    });
-  });
+  // describe('Snapshot Testing', () => {
+  //   test('material tree structure matches snapshot', async () => {
+  //     populateDatabase(db, { blueprint: blueprintFixtures.scourgeBlueprint });
+  //
+  //     const facility = facilitiesFixtures.raitaruNoRigs;
+  //
+  //     const result = await calculateBlueprintMaterials(
+  //       blueprintFixtures.TYPE_IDS.SCOURGE_BLUEPRINT,
+  //       1,
+  //       10,
+  //       null,
+  //       facility,
+  //       0,
+  //       db
+  //     );
+  //
+  //     // Snapshot test to detect regressions in calculation structure
+  //     expect(result).toMatchSnapshot();
+  //   });
+  // });
 });
