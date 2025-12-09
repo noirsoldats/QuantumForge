@@ -110,6 +110,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
     onCharacterId: (callback) => ipcRenderer.on('assets:set-character-id', (event, id) => callback(id)),
   },
 
+  // Division Settings API
+  divisions: {
+    getSettings: (characterId) => ipcRenderer.invoke('divisions:getSettings', characterId),
+    updateEnabled: (characterId, enabledDivisions) => ipcRenderer.invoke('divisions:updateEnabled', characterId, enabledDivisions),
+    fetchNames: (characterId) => ipcRenderer.invoke('divisions:fetchNames', characterId),
+    getCacheStatus: (characterId) => ipcRenderer.invoke('divisions:getCacheStatus', characterId),
+    getGenericName: (divisionId) => ipcRenderer.invoke('divisions:getGenericName', divisionId),
+  },
+
   // Industry Jobs API
   industryJobs: {
     fetch: (characterId, includeCompleted) => ipcRenderer.invoke('industryJobs:fetch', characterId, includeCompleted),
@@ -259,6 +268,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // App API (updates, version, etc.)
   app: {
     getVersion: () => ipcRenderer.invoke('app:getVersion'),
+    getElectronVersion: () => ipcRenderer.invoke('app:getElectronVersion'),
     checkForUpdates: () => ipcRenderer.invoke('app:checkForUpdates'),
     onUpdateAvailable: (callback) => ipcRenderer.on('update-available', (event, info) => callback(info)),
     onUpdateNotAvailable: (callback) => ipcRenderer.on('update-not-available', () => callback()),
@@ -286,5 +296,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     saveProgress: (step, data) => ipcRenderer.invoke('wizard:saveProgress', step, data),
     getProgress: () => ipcRenderer.invoke('wizard:getProgress'),
     complete: () => ipcRenderer.invoke('wizard:complete'),
+  },
+
+  // Shell API (for opening external links)
+  shell: {
+    openExternal: (url) => ipcRenderer.invoke('shell:openExternal', url),
   },
 });

@@ -11,8 +11,6 @@ const settingsFilePath = getConfigPath();
 // Default settings
 const defaultSettings = {
   general: {
-    launchOnStartup: false,
-    minimizeToTray: false,
     theme: 'dark',
     desktopNotifications: true,
     updatesNotification: true,
@@ -58,6 +56,10 @@ const defaultSettings = {
     lastUpdateCheck: null, // ISO date string
     updateAvailable: false,
     latestAvailableVersion: null,
+  },
+  industry: {
+    enabledDivisions: [],  // Array of division IDs (1-7) - empty by default, user selects which divisions to use
+    calculateReactionsAsIntermediates: false,  // Global toggle for reaction intermediate calculation
   },
 };
 
@@ -188,44 +190,79 @@ function addCharacter(characterData) {
     const db = getCharacterDatabase();
     const settings = loadSettings();
 
-    // Check if character already exists
+    // Check if character already exists BEFORE any destructive operations
     const existing = db.prepare('SELECT character_id, added_at FROM characters WHERE character_id = ?').get(characterData.character.characterId);
 
     const now = Date.now();
 
-    db.prepare(`
-      INSERT OR REPLACE INTO characters (
-        character_id, character_name, corporation_id, alliance_id,
-        portrait, access_token, refresh_token, expires_at,
-        token_type, scopes, added_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      characterData.character.characterId,
-      characterData.character.characterName,
-      characterData.character.corporationId || null,
-      characterData.character.allianceId || null,
-      characterData.character.portrait || null,
-      characterData.access_token,
-      characterData.refresh_token,
-      characterData.expires_at,
-      characterData.token_type || 'Bearer',
-      JSON.stringify(characterData.character.scopes || []),
-      existing ? existing.added_at : now,
-      now
-    );
-
     if (existing) {
-      console.log('Updated existing character:', characterData.character.characterName);
+      // ✅ SAFE: UPDATE only authentication fields for existing characters
+      // This does NOT trigger CASCADE DELETE
+      console.log('[Settings] Re-authenticating existing character:', characterData.character.characterName);
+
+      db.prepare(`
+        UPDATE characters SET
+          character_name = ?,
+          corporation_id = ?,
+          alliance_id = ?,
+          portrait = ?,
+          access_token = ?,
+          refresh_token = ?,
+          expires_at = ?,
+          token_type = ?,
+          scopes = ?,
+          updated_at = ?
+        WHERE character_id = ?
+      `).run(
+        characterData.character.characterName,
+        characterData.character.corporationId || null,
+        characterData.character.allianceId || null,
+        characterData.character.portrait || null,
+        characterData.access_token,
+        characterData.refresh_token,
+        characterData.expires_at,
+        characterData.token_type || 'Bearer',
+        JSON.stringify(characterData.character.scopes || []),
+        now,
+        characterData.character.characterId
+      );
+
+      console.log('[Settings] Character tokens updated successfully. All existing data preserved.');
+
     } else {
-      console.log('Added new character:', characterData.character.characterName);
+      // ✅ SAFE: INSERT only for genuinely new characters
+      console.log('[Settings] Adding new character:', characterData.character.characterName);
+
+      db.prepare(`
+        INSERT INTO characters (
+          character_id, character_name, corporation_id, alliance_id,
+          portrait, access_token, refresh_token, expires_at,
+          token_type, scopes, added_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        characterData.character.characterId,
+        characterData.character.characterName,
+        characterData.character.corporationId || null,
+        characterData.character.allianceId || null,
+        characterData.character.portrait || null,
+        characterData.access_token,
+        characterData.refresh_token,
+        characterData.expires_at,
+        characterData.token_type || 'Bearer',
+        JSON.stringify(characterData.character.scopes || []),
+        now,
+        now
+      );
 
       // Automatically set as default if this is the first character
       const characterCount = db.prepare('SELECT COUNT(*) as count FROM characters').get().count;
       if (characterCount === 1) {
         settings.accounts.defaultCharacterId = characterData.character.characterId;
         saveSettings(settings);
-        console.log('Automatically set first character as default:', characterData.character.characterName);
+        console.log('[Settings] Automatically set first character as default:', characterData.character.characterName);
       }
+
+      console.log('[Settings] New character added successfully.');
     }
 
     return true;
@@ -1134,6 +1171,241 @@ function getManufacturingFacility(id) {
   return settings.manufacturing_facilities.find(f => f.id === id) || null;
 }
 
+/**
+ * Get character-specific division settings
+ * @param {number} characterId - Character ID
+ * @returns {Object} Division settings { enabledDivisions: [], divisionNames: {}, hasCustomNames: boolean }
+ */
+function getCharacterDivisionSettings(characterId) {
+  try {
+    const db = getCharacterDatabase();
+
+    // Get character to verify it exists and get corporation ID
+    const character = getCharacter(characterId);
+    if (!character) {
+      console.error('[Division Settings] Character not found:', characterId);
+      return {
+        enabledDivisions: [],
+        divisionNames: {},
+        hasCustomNames: false,
+      };
+    }
+
+    // Get settings from character_settings table
+    const settings = db.prepare(`
+      SELECT enabled_divisions, division_names, division_names_cache_expires_at
+      FROM character_settings
+      WHERE character_id = ?
+    `).get(characterId);
+
+    if (!settings) {
+      // No settings yet, return defaults
+      return {
+        enabledDivisions: [],
+        divisionNames: {},
+        hasCustomNames: false,
+      };
+    }
+
+    const enabledDivisions = JSON.parse(settings.enabled_divisions || '[]');
+    const divisionNames = settings.division_names ? JSON.parse(settings.division_names) : {};
+
+    // Check if cache is still valid
+    const now = Date.now();
+    const cacheValid = settings.division_names_cache_expires_at &&
+                      settings.division_names_cache_expires_at > now;
+
+    return {
+      enabledDivisions: enabledDivisions,
+      divisionNames: divisionNames,
+      hasCustomNames: Object.keys(divisionNames).length > 0 && cacheValid,
+    };
+  } catch (error) {
+    console.error('[Division Settings] Error getting character division settings:', error);
+    return {
+      enabledDivisions: [],
+      divisionNames: {},
+      hasCustomNames: false,
+    };
+  }
+}
+
+/**
+ * Update character-specific enabled divisions
+ * @param {number} characterId - Character ID
+ * @param {Array<number>} enabledDivisions - Array of enabled division IDs (1-7)
+ * @returns {boolean} Success status
+ */
+function updateCharacterEnabledDivisions(characterId, enabledDivisions) {
+  try {
+    const db = getCharacterDatabase();
+
+    // Verify character exists
+    const character = db.prepare('SELECT character_id FROM characters WHERE character_id = ?').get(characterId);
+    if (!character) {
+      console.error('[Division Settings] Character not found:', characterId);
+      return false;
+    }
+
+    // Validate divisions array
+    if (!Array.isArray(enabledDivisions)) {
+      console.error('[Division Settings] enabledDivisions must be an array');
+      return false;
+    }
+
+    // Validate division IDs are 1-7
+    const validDivisions = enabledDivisions.filter(id => id >= 1 && id <= 7);
+    if (validDivisions.length !== enabledDivisions.length) {
+      console.warn('[Division Settings] Some invalid division IDs were filtered out');
+    }
+
+    // Sort for consistency
+    validDivisions.sort((a, b) => a - b);
+
+    // Insert or update
+    db.prepare(`
+      INSERT INTO character_settings (character_id, enabled_divisions)
+      VALUES (?, ?)
+      ON CONFLICT(character_id) DO UPDATE SET
+        enabled_divisions = excluded.enabled_divisions
+    `).run(characterId, JSON.stringify(validDivisions));
+
+    console.log(`[Division Settings] Updated enabled divisions for character ${characterId}:`, validDivisions);
+    return true;
+  } catch (error) {
+    console.error('[Division Settings] Error updating character enabled divisions:', error);
+    return false;
+  }
+}
+
+/**
+ * Update character division names from ESI
+ * @param {number} characterId - Character ID
+ * @param {Object} divisionData - Division data from ESI
+ * @returns {boolean} Success status
+ */
+function updateCharacterDivisionNames(characterId, divisionData) {
+  try {
+    const db = getCharacterDatabase();
+
+    // Verify character exists
+    const character = db.prepare('SELECT character_id FROM characters WHERE character_id = ?').get(characterId);
+    if (!character) {
+      console.error('[Division Settings] Character not found:', characterId);
+      return false;
+    }
+
+    const now = Date.now();
+
+    // Insert or update
+    db.prepare(`
+      INSERT INTO character_settings (
+        character_id, division_names, division_names_fetched_at,
+        division_names_cache_expires_at, enabled_divisions
+      )
+      VALUES (?, ?, ?, ?, '[]')
+      ON CONFLICT(character_id) DO UPDATE SET
+        division_names = excluded.division_names,
+        division_names_fetched_at = excluded.division_names_fetched_at,
+        division_names_cache_expires_at = excluded.division_names_cache_expires_at
+    `).run(
+      characterId,
+      JSON.stringify(divisionData.divisions),
+      divisionData.lastUpdated,
+      divisionData.cacheExpiresAt
+    );
+
+    console.log(`[Division Settings] Updated division names for character ${characterId}`);
+    return true;
+  } catch (error) {
+    console.error('[Division Settings] Error updating character division names:', error);
+    return false;
+  }
+}
+
+/**
+ * Get division names cache status
+ * @param {number} characterId - Character ID
+ * @returns {Object} Cache status { isCached, expiresAt, remainingSeconds }
+ */
+function getDivisionNamesCacheStatus(characterId) {
+  try {
+    const db = getCharacterDatabase();
+    const settings = db.prepare(`
+      SELECT division_names_cache_expires_at
+      FROM character_settings
+      WHERE character_id = ?
+    `).get(characterId);
+
+    if (!settings || !settings.division_names_cache_expires_at) {
+      return { isCached: false, expiresAt: null, remainingSeconds: 0 };
+    }
+
+    const now = Date.now();
+    const expiresAt = settings.division_names_cache_expires_at;
+    const remainingMs = expiresAt - now;
+    const remainingSeconds = Math.max(0, Math.floor(remainingMs / 1000));
+
+    return {
+      isCached: remainingMs > 0,
+      expiresAt: expiresAt,
+      remainingSeconds: remainingSeconds,
+    };
+  } catch (error) {
+    console.error('[Division Settings] Error getting division names cache status:', error);
+    return { isCached: false, expiresAt: null, remainingSeconds: 0 };
+  }
+}
+
+/**
+ * Migrate global industry.enabledDivisions to per-character settings
+ * This is a one-time migration that runs on app startup
+ * @returns {boolean} Success status
+ */
+function migrateGlobalDivisionsToCharacters() {
+  try {
+    const db = getCharacterDatabase();
+    const settings = loadSettings();
+
+    // Check if migration is needed
+    const globalDivisions = settings.industry?.enabledDivisions || [];
+
+    if (globalDivisions.length === 0) {
+      console.log('[Settings Migration] No global divisions to migrate');
+      return true;
+    }
+
+    // Get all characters
+    const characters = db.prepare('SELECT character_id FROM characters').all();
+
+    if (characters.length === 0) {
+      console.log('[Settings Migration] No characters to migrate divisions to');
+      return true;
+    }
+
+    // Migrate global divisions to each character
+    const insertStmt = db.prepare(`
+      INSERT OR REPLACE INTO character_settings (character_id, enabled_divisions)
+      VALUES (?, ?)
+    `);
+
+    for (const char of characters) {
+      insertStmt.run(char.character_id, JSON.stringify(globalDivisions));
+      console.log(`[Settings Migration] Migrated divisions to character ${char.character_id}`);
+    }
+
+    // Clear global divisions (mark as migrated by setting to empty array)
+    settings.industry.enabledDivisions = [];
+    saveSettings(settings);
+
+    console.log('[Settings Migration] Global divisions migration complete');
+    return true;
+  } catch (error) {
+    console.error('[Settings Migration] Error migrating global divisions:', error);
+    return false;
+  }
+}
+
 module.exports = {
   loadSettings,
   saveSettings,
@@ -1169,4 +1441,9 @@ module.exports = {
   updateManufacturingFacility,
   removeManufacturingFacility,
   getManufacturingFacility,
+  getCharacterDivisionSettings,
+  updateCharacterEnabledDivisions,
+  updateCharacterDivisionNames,
+  getDivisionNamesCacheStatus,
+  migrateGlobalDivisionsToCharacters,
 };

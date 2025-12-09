@@ -18,16 +18,6 @@ async function loadSettings() {
 // Populate UI with loaded settings
 function populateSettings() {
   // General settings
-  const launchStartup = document.getElementById('launch-startup');
-  if (launchStartup) {
-    launchStartup.checked = currentSettings.general?.launchOnStartup || false;
-  }
-
-  const minimizeTray = document.getElementById('minimize-tray');
-  if (minimizeTray) {
-    minimizeTray.checked = currentSettings.general?.minimizeToTray || false;
-  }
-
   const autoUpdateCharacterData = document.getElementById('auto-update-character-data');
   if (autoUpdateCharacterData) {
     autoUpdateCharacterData.checked = currentSettings.general?.autoUpdateCharacterData !== false;
@@ -46,6 +36,12 @@ function populateSettings() {
   const updatesNotification = document.getElementById('updates-notification');
   if (updatesNotification) {
     updatesNotification.checked = currentSettings.general?.updatesNotification !== false;
+  }
+
+  // Industry settings - reactions toggle only
+  const reactionsToggle = document.getElementById('reactions-as-intermediates');
+  if (reactionsToggle) {
+    reactionsToggle.checked = currentSettings.industry?.calculateReactionsAsIntermediates || false;
   }
 }
 
@@ -84,7 +80,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Also display Electron version
     const electronVersionEl = document.getElementById('electron-version');
     if (electronVersionEl) {
-      electronVersionEl.textContent = process.versions.electron;
+      const electronVersion = await window.electronAPI.app.getElectronVersion();
+      electronVersionEl.textContent = electronVersion;
     }
   } catch (error) {
     console.error('Error loading version:', error);
@@ -110,28 +107,15 @@ document.addEventListener('DOMContentLoaded', async () => {
       if (targetContent) {
         targetContent.classList.add('active');
       }
+
+      // Load division settings when Industry tab is activated
+      if (targetTab === 'industry') {
+        loadIndustryDivisions();
+      }
     });
   });
 
   // Settings handlers - Auto-save on change
-
-  // Launch on startup
-  const launchStartup = document.getElementById('launch-startup');
-  if (launchStartup) {
-    launchStartup.addEventListener('change', (e) => {
-      console.log('Launch on startup:', e.target.checked);
-      saveSetting('general', 'launchOnStartup', e.target.checked);
-    });
-  }
-
-  // Minimize to tray
-  const minimizeTray = document.getElementById('minimize-tray');
-  if (minimizeTray) {
-    minimizeTray.addEventListener('change', (e) => {
-      console.log('Minimize to tray:', e.target.checked);
-      saveSetting('general', 'minimizeToTray', e.target.checked);
-    });
-  }
 
   // Auto-update character data
   const autoUpdateCharacterData = document.getElementById('auto-update-character-data');
@@ -166,6 +150,17 @@ document.addEventListener('DOMContentLoaded', async () => {
     updatesNotification.addEventListener('change', (e) => {
       console.log('Updates notification:', e.target.checked);
       saveSetting('general', 'updatesNotification', e.target.checked);
+    });
+  }
+
+  // Industry Settings - Reactions toggle only
+
+  // Reactions toggle
+  const reactionsToggle = document.getElementById('reactions-as-intermediates');
+  if (reactionsToggle) {
+    reactionsToggle.addEventListener('change', async (e) => {
+      console.log('Calculate reactions as intermediates:', e.target.checked);
+      await saveSetting('industry', 'calculateReactionsAsIntermediates', e.target.checked);
     });
   }
 
@@ -391,6 +386,321 @@ async function clearDefaultCharacter() {
   }
 }
 
+// Industry Tab - Division Settings Functions
+
+/**
+ * Load all characters and render division sections on Industry tab
+ */
+async function loadIndustryDivisions() {
+  const containerEl = document.getElementById('character-divisions-container');
+  if (!containerEl) return;
+
+  try {
+    // Show loading
+    containerEl.innerHTML = '<div class="divisions-loading"><div class="spinner"></div><span>Loading division settings...</span></div>';
+
+    // Get all characters (same method as Accounts tab)
+    const characters = await window.electronAPI.esi.getCharacters();
+
+    if (characters.length === 0) {
+      containerEl.innerHTML = '<p class="no-data">No characters authenticated. Go to Accounts tab to add characters.</p>';
+      return;
+    }
+
+    // Render a section for each character
+    containerEl.innerHTML = '';
+    for (const character of characters) {
+      await renderCharacterDivisionSection(character);
+    }
+
+  } catch (error) {
+    console.error('Error loading industry divisions:', error);
+    containerEl.innerHTML = '<p class="error-text">Failed to load division settings</p>';
+  }
+}
+
+/**
+ * Render a collapsible section for one character showing selected divisions in header
+ */
+async function renderCharacterDivisionSection(character) {
+  const containerEl = document.getElementById('character-divisions-container');
+  if (!containerEl) return;
+
+  const characterId = character.characterId;
+
+  try {
+    // Fetch division settings
+    const settings = await window.electronAPI.divisions.getSettings(characterId);
+    const { enabledDivisions, divisionNames, hasCustomNames } = settings;
+
+    // Build selected divisions summary for header
+    let selectedSummary = 'None selected';
+    if (enabledDivisions.length > 0) {
+      const divisionLabels = enabledDivisions.map(divId => {
+        return divisionNames[divId] || `Division ${divId}`;
+      });
+      selectedSummary = divisionLabels.join(', ');
+    }
+
+    // Create section HTML
+    const sectionHTML = `
+      <div class="character-division-section">
+        <div class="character-division-header" id="division-header-${characterId}">
+          <div class="character-division-header-left">
+            <span class="expand-toggle" id="expand-toggle-${characterId}">
+              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="6 9 12 15 18 9"></polyline>
+              </svg>
+            </span>
+            <span class="character-name">${character.characterName}</span>
+          </div>
+          <div class="character-division-summary" id="division-summary-${characterId}">
+            <span class="summary-label">Selected:</span>
+            <span class="summary-value">${selectedSummary}</span>
+          </div>
+        </div>
+        <div class="character-division-content" id="division-content-${characterId}" style="display: none;">
+          ${!hasCustomNames ? `
+            <div class="info-banner">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="12" cy="12" r="10"></circle>
+                <line x1="12" y1="16" x2="12" y2="12"></line>
+                <line x1="12" y1="8" x2="12.01" y2="8"></line>
+              </svg>
+              <span>Using generic division names. Click "Refresh Names" to fetch custom names from your corporation.</span>
+            </div>
+          ` : ''}
+          <div class="divisions-grid" id="divisions-grid-${characterId}">
+            ${renderDivisionCheckboxes(characterId, enabledDivisions, divisionNames)}
+          </div>
+          <div class="division-actions">
+            <button class="secondary-button" id="fetch-divisions-${characterId}">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="23 4 23 10 17 10"></polyline>
+                <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
+              </svg>
+              Refresh Division Names
+            </button>
+          </div>
+        </div>
+      </div>
+    `;
+
+    containerEl.insertAdjacentHTML('beforeend', sectionHTML);
+
+    // Set up event listeners
+    setupCharacterDivisionListeners(characterId);
+
+    // Add click listener to header for expand/collapse
+    const headerEl = document.getElementById(`division-header-${characterId}`);
+    if (headerEl) {
+      headerEl.addEventListener('click', () => toggleCharacterDivisions(characterId));
+    }
+
+  } catch (error) {
+    console.error(`Error rendering division section for character ${characterId}:`, error);
+  }
+}
+
+/**
+ * Render division checkboxes HTML (returns HTML string)
+ */
+function renderDivisionCheckboxes(characterId, enabledDivisions, divisionNames) {
+  let html = '';
+  for (let divId = 1; divId <= 7; divId++) {
+    const isChecked = enabledDivisions.includes(divId);
+    const divName = divisionNames[divId] || `Division ${divId}`;
+
+    html += `
+      <div class="division-item">
+        <label class="division-label">
+          <input
+            type="checkbox"
+            class="division-checkbox"
+            data-character="${characterId}"
+            data-division="${divId}"
+            ${isChecked ? 'checked' : ''}
+          />
+          <span class="division-name">${divName}</span>
+          ${divisionNames[divId] ? '<span class="custom-name-badge">Custom</span>' : ''}
+        </label>
+      </div>
+    `;
+  }
+  return html;
+}
+
+/**
+ * Set up checkbox and fetch button listeners for a character
+ */
+function setupCharacterDivisionListeners(characterId) {
+  // Division checkbox listeners
+  const checkboxes = document.querySelectorAll(`#divisions-grid-${characterId} .division-checkbox`);
+  checkboxes.forEach(checkbox => {
+    checkbox.addEventListener('change', handleDivisionToggle);
+  });
+
+  // Fetch button listener
+  const fetchBtn = document.getElementById(`fetch-divisions-${characterId}`);
+  if (fetchBtn) {
+    fetchBtn.onclick = () => fetchCharacterDivisionNames(characterId);
+  }
+}
+
+/**
+ * Toggle expand/collapse of character division section
+ */
+function toggleCharacterDivisions(characterId) {
+  const contentEl = document.getElementById(`division-content-${characterId}`);
+  const toggleIcon = document.getElementById(`expand-toggle-${characterId}`);
+
+  if (!contentEl || !toggleIcon) return;
+
+  const isExpanded = contentEl.style.display !== 'none';
+
+  if (isExpanded) {
+    // Collapse
+    contentEl.style.display = 'none';
+    toggleIcon.innerHTML = `
+      <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="6 9 12 15 18 9"></polyline>
+      </svg>
+    `;
+  } else {
+    // Expand
+    contentEl.style.display = 'block';
+    toggleIcon.innerHTML = `
+      <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="18 15 12 9 6 15"></polyline>
+      </svg>
+    `;
+  }
+}
+
+/**
+ * Handle division checkbox toggle
+ */
+async function handleDivisionToggle(event) {
+  const checkbox = event.target;
+  const characterId = parseInt(checkbox.getAttribute('data-character'));
+  const divisionId = parseInt(checkbox.getAttribute('data-division'));
+  const isChecked = checkbox.checked;
+
+  try {
+    // Get current settings
+    const settings = await window.electronAPI.divisions.getSettings(characterId);
+    let enabledDivisions = settings.enabledDivisions || [];
+
+    // Update array
+    if (isChecked) {
+      if (!enabledDivisions.includes(divisionId)) {
+        enabledDivisions.push(divisionId);
+      }
+    } else {
+      enabledDivisions = enabledDivisions.filter(id => id !== divisionId);
+    }
+
+    // Sort for consistency
+    enabledDivisions.sort((a, b) => a - b);
+
+    // Save to database
+    const success = await window.electronAPI.divisions.updateEnabled(characterId, enabledDivisions);
+
+    if (!success) {
+      console.error('Failed to update division settings');
+      // Revert checkbox
+      checkbox.checked = !isChecked;
+      alert('Failed to update division settings. Please try again.');
+    } else {
+      console.log(`Updated divisions for character ${characterId}:`, enabledDivisions);
+      // Update header summary
+      await updateCharacterDivisionHeader(characterId);
+    }
+
+  } catch (error) {
+    console.error('Error toggling division:', error);
+    // Revert checkbox
+    checkbox.checked = !isChecked;
+    alert('An error occurred while updating division settings.');
+  }
+}
+
+/**
+ * Update the header summary after division selection changes
+ */
+async function updateCharacterDivisionHeader(characterId) {
+  const summaryEl = document.getElementById(`division-summary-${characterId}`);
+  if (!summaryEl) return;
+
+  try {
+    const settings = await window.electronAPI.divisions.getSettings(characterId);
+    const { enabledDivisions, divisionNames } = settings;
+
+    let selectedSummary = 'None selected';
+    if (enabledDivisions.length > 0) {
+      const divisionLabels = enabledDivisions.map(divId => {
+        return divisionNames[divId] || `Division ${divId}`;
+      });
+      selectedSummary = divisionLabels.join(', ');
+    }
+
+    summaryEl.innerHTML = `
+      <span class="summary-label">Selected:</span>
+      <span class="summary-value">${selectedSummary}</span>
+    `;
+  } catch (error) {
+    console.error('Error updating division header:', error);
+  }
+}
+
+/**
+ * Fetch custom division names from ESI
+ */
+async function fetchCharacterDivisionNames(characterId) {
+  const fetchBtn = document.getElementById(`fetch-divisions-${characterId}`);
+  const originalHTML = fetchBtn.innerHTML;
+
+  try {
+    // Disable button and show loading
+    fetchBtn.disabled = true;
+    fetchBtn.innerHTML = `
+      <div class="spinner small"></div>
+      Fetching...
+    `;
+
+    // Fetch from ESI
+    const result = await window.electronAPI.divisions.fetchNames(characterId);
+
+    if (!result.success) {
+      if (!result.hasScope) {
+        alert('Your character does not have the "esi-corporations.read_divisions.v1" scope. Please re-authenticate to fetch custom division names.');
+      } else {
+        alert(`Failed to fetch division names: ${result.error || 'Unknown error'}`);
+      }
+      return;
+    }
+
+    // Reload all division sections to show new names
+    await loadIndustryDivisions();
+
+    // Show success message
+    const divCount = Object.keys(result.divisions).length;
+    if (divCount > 0) {
+      alert(`Successfully fetched ${divCount} custom division name(s)!`);
+    } else {
+      alert('No custom division names found. Using generic names.');
+    }
+
+  } catch (error) {
+    console.error('Error fetching division names:', error);
+    alert('An error occurred while fetching division names. Please try again.');
+  } finally {
+    // Re-enable button
+    fetchBtn.disabled = false;
+    fetchBtn.innerHTML = originalHTML;
+  }
+}
+
 // SDE Management
 let sdeUpdateStatus = null;
 
@@ -444,7 +754,22 @@ function updateSdeUI(status, validationStatus, hasBackup, backupVersion) {
   if (sourceEl) {
     const source = status.source || 'github';
     if (source === 'github') {
-      sourceEl.innerHTML = '<a href="https://github.com/noirsoldats/eve-sde-converter" target="_blank" style="color: #00d4ff; text-decoration: none;">GitHub (eve-sde-converter)</a>';
+      const sourceUrl = 'https://github.com/noirsoldats/eve-sde-converter';
+      sourceEl.innerHTML = `<a href="#" class="external-link" data-url="${sourceUrl}" style="color: #00d4ff; text-decoration: none;">GitHub (eve-sde-converter)</a>`;
+
+      // Add click handler to open in external browser
+      const link = sourceEl.querySelector('.external-link');
+      if (link) {
+        link.addEventListener('click', async (e) => {
+          e.preventDefault();
+          const url = e.target.getAttribute('data-url');
+          try {
+            await window.electronAPI.shell.openExternal(url);
+          } catch (error) {
+            console.error('Error opening external link:', error);
+          }
+        });
+      }
     } else if (source === 'fuzzwork') {
       sourceEl.textContent = 'Fuzzwork (Legacy)';
     } else {

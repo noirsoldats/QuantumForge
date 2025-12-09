@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
 const path = require('path');
 const { createSettingsWindow } = require('./settings-window');
 const { initAutoUpdater, checkForUpdates } = require('./auto-updater');
@@ -50,8 +50,13 @@ const {
   updateManufacturingFacility,
   removeManufacturingFacility,
   getManufacturingFacility,
+  getCharacterDivisionSettings,
+  updateCharacterEnabledDivisions,
+  updateCharacterDivisionNames,
+  getDivisionNamesCacheStatus,
 } = require('./settings-manager');
 const { authenticateWithESI, refreshAccessToken, isTokenExpired } = require('./esi-auth');
+const { fetchCorporationDivisions, getGenericDivisionName } = require('./esi-divisions');
 const { fetchCharacterSkills } = require('./esi-skills');
 const { fetchCharacterBlueprints } = require('./esi-blueprints');
 const { fetchCharacterAssets, fetchCorporationAssets, saveAssets, getAssets, getAssetsCacheStatus } = require('./esi-assets');
@@ -330,6 +335,11 @@ app.whenReady().then(async () => {
     console.log('[App] Character data migration complete');
   }
 
+  // Migrate global division settings to per-character settings
+  const { migrateGlobalDivisionsToCharacters } = require('./settings-manager');
+  console.log('[App] Running division settings migration...');
+  migrateGlobalDivisionsToCharacters();
+
   // Setup IPC handlers first (needed by both wizard and normal app)
   setupIPCHandlers();
 
@@ -522,6 +532,72 @@ function setupIPCHandlers() {
       mainWindow.webContents.send('default-character-changed');
     }
     return result;
+  });
+
+  // Character Division Settings IPC Handlers
+  ipcMain.handle('divisions:getSettings', async (event, characterId) => {
+    try {
+      return getCharacterDivisionSettings(characterId);
+    } catch (error) {
+      console.error('Error getting character division settings:', error);
+      return { enabledDivisions: [], divisionNames: {}, hasCustomNames: false };
+    }
+  });
+
+  ipcMain.handle('divisions:updateEnabled', async (event, characterId, enabledDivisions) => {
+    try {
+      return updateCharacterEnabledDivisions(characterId, enabledDivisions);
+    } catch (error) {
+      console.error('Error updating character enabled divisions:', error);
+      return false;
+    }
+  });
+
+  ipcMain.handle('divisions:fetchNames', async (event, characterId) => {
+    try {
+      const character = getCharacter(characterId);
+      if (!character || !character.corporationId) {
+        return {
+          success: false,
+          error: 'Character not found or not in corporation'
+        };
+      }
+
+      const divisionData = await fetchCorporationDivisions(characterId, character.corporationId);
+
+      if (divisionData.error) {
+        return {
+          success: false,
+          error: divisionData.error,
+          hasScope: divisionData.hasScope
+        };
+      }
+
+      // Save to database
+      const saved = updateCharacterDivisionNames(characterId, divisionData);
+
+      return {
+        success: saved,
+        hasScope: divisionData.hasScope,
+        divisions: divisionData.divisions,
+      };
+    } catch (error) {
+      console.error('Error fetching division names:', error);
+      return { success: false, error: error.message, hasScope: false };
+    }
+  });
+
+  ipcMain.handle('divisions:getCacheStatus', async (event, characterId) => {
+    try {
+      return getDivisionNamesCacheStatus(characterId);
+    } catch (error) {
+      console.error('Error getting division names cache status:', error);
+      return { isCached: false, expiresAt: null, remainingSeconds: 0 };
+    }
+  });
+
+  ipcMain.handle('divisions:getGenericName', async (event, divisionId) => {
+    return getGenericDivisionName(divisionId);
   });
 
   // Handle IPC for SDE management
@@ -1587,6 +1663,28 @@ function setupIPCHandlers() {
     }
   });
 
+  // Shell IPC handler (for opening external links)
+  ipcMain.handle('shell:openExternal', async (event, url) => {
+    try {
+      // Validate URL to prevent security issues
+      if (!url || typeof url !== 'string') {
+        throw new Error('Invalid URL');
+      }
+
+      // Only allow http and https protocols
+      const urlObj = new URL(url);
+      if (!['http:', 'https:'].includes(urlObj.protocol)) {
+        throw new Error('Invalid URL protocol');
+      }
+
+      await shell.openExternal(url);
+      return { success: true };
+    } catch (error) {
+      console.error('Error opening external URL:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
   // Auto-updater IPC handler
   ipcMain.handle('app:checkForUpdates', async () => {
     checkForUpdates();
@@ -1594,6 +1692,10 @@ function setupIPCHandlers() {
 
   ipcMain.handle('app:getVersion', () => {
     return app.getVersion();
+  });
+
+  ipcMain.handle('app:getElectronVersion', () => {
+    return process.versions.electron;
   });
 }
 

@@ -31,6 +31,14 @@
             </svg>
             <span>Accounts</span>
           </li>
+          <li class="tab-item" data-tab="industry">
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M2 20h20"></path>
+              <path d="M4 20V10l8-6 8 6v10"></path>
+              <path d="M9 20v-8h6v8"></path>
+            </svg>
+            <span>Industry</span>
+          </li>
         </ul>
       </nav>
 
@@ -44,28 +52,6 @@
 
           <div class="settings-section">
             <h3>Application</h3>
-            <div class="setting-item">
-              <div class="setting-info">
-                <label>Launch on Startup</label>
-                <span class="setting-description">Automatically start Quantum Forge when you log in</span>
-              </div>
-              <label class="toggle">
-                <input type="checkbox" id="launch-startup">
-                <span class="toggle-slider"></span>
-              </label>
-            </div>
-
-            <div class="setting-item">
-              <div class="setting-info">
-                <label>Minimize to Tray</label>
-                <span class="setting-description">Keep app running in system tray when closed</span>
-              </div>
-              <label class="toggle">
-                <input type="checkbox" id="minimize-tray">
-                <span class="toggle-slider"></span>
-              </label>
-            </div>
-
             <div class="setting-item">
               <div class="setting-info">
                 <label>Auto-Update Character Data on Launch</label>
@@ -276,6 +262,38 @@
               </svg>
               <p>No characters connected yet</p>
               <small>Click "Connect Character" to add your Eve Online characters</small>
+            </div>
+          </div>
+        </div>
+
+        <!-- Industry Tab -->
+        <div class="tab-content" id="industry-tab">
+          <div class="tab-header">
+            <h2>Industry Settings</h2>
+            <p>Configure corporation divisions and reaction handling for manufacturing</p>
+          </div>
+
+          <!-- Corporation Divisions Section -->
+          <div class="settings-section">
+            <h3>Corporation Divisions</h3>
+            <p class="section-description">Select which corporation divisions to include for each character</p>
+            <div id="character-divisions-container"></div>
+          </div>
+
+          <!-- Reactions Section -->
+          <div class="settings-section">
+            <h3>Reactions</h3>
+            <p class="section-description">Configure how reactions are handled in manufacturing calculations</p>
+
+            <div class="setting-item">
+              <div class="setting-info">
+                <label>Calculate Reactions as Intermediates</label>
+                <span class="setting-description">When enabled, reaction products will be calculated as intermediate materials, when enabled, rather than purchased from market</span>
+              </div>
+              <label class="toggle">
+                <input type="checkbox" id="reactions-as-intermediates">
+                <span class="toggle-slider"></span>
+              </label>
             </div>
           </div>
         </div>

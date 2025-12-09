@@ -382,6 +382,37 @@ function initializeCharacterDatabase() {
     console.error('[Character Database] Migration error:', error);
   }
 
+  // Migration: Create character_settings table for per-character settings
+  try {
+    const tableExists = database.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='character_settings'").all();
+
+    if (!tableExists || tableExists.length === 0) {
+      console.log('[Character Database] Creating character_settings table');
+
+      // Create table
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS character_settings (
+          character_id INTEGER PRIMARY KEY,
+          enabled_divisions TEXT NOT NULL DEFAULT '[]',
+          division_names TEXT,
+          division_names_fetched_at INTEGER,
+          division_names_cache_expires_at INTEGER,
+          FOREIGN KEY (character_id) REFERENCES characters(character_id) ON DELETE CASCADE
+        )
+      `);
+
+      // Create index
+      database.exec(`
+        CREATE INDEX IF NOT EXISTS idx_character_settings_character
+          ON character_settings(character_id)
+      `);
+
+      console.log('[Character Database] Character settings table created successfully');
+    }
+  } catch (error) {
+    console.error('[Character Database] Character settings migration error:', error);
+  }
+
   console.log('[Character Database] Schema initialized successfully');
   return database;
 }

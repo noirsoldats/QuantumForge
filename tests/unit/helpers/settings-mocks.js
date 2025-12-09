@@ -17,8 +17,6 @@ const skillsFixtures = require('../fixtures/skills');
 function createMockSettingsManager(overrides = {}) {
   const defaultSettings = {
     general: {
-      launchOnStartup: false,
-      minimizeToTray: false,
       theme: 'dark',
       desktopNotifications: true,
       updatesNotification: true,
