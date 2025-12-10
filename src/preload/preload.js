@@ -119,6 +119,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getGenericName: (divisionId) => ipcRenderer.invoke('divisions:getGenericName', divisionId),
   },
 
+  // Industry Settings API
+  industry: {
+    getDefaultManufacturingCharacters: () => ipcRenderer.invoke('industry:getDefaultManufacturingCharacters'),
+    setDefaultManufacturingCharacters: (characterIds) => ipcRenderer.invoke('industry:setDefaultManufacturingCharacters', characterIds),
+  },
+
   // Industry Jobs API
   industryJobs: {
     fetch: (characterId, includeCompleted) => ipcRenderer.invoke('industryJobs:fetch', characterId, includeCompleted),
@@ -140,6 +146,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getAll: (characterId, filters) => ipcRenderer.invoke('plans:getAll', characterId, filters),
     update: (planId, updates) => ipcRenderer.invoke('plans:update', planId, updates),
     delete: (planId) => ipcRenderer.invoke('plans:delete', planId),
+    // Industry settings
+    getIndustrySettings: (planId) => ipcRenderer.invoke('plans:getIndustrySettings', planId),
+    updateIndustrySettings: (planId, settings) => ipcRenderer.invoke('plans:updateIndustrySettings', planId, settings),
+    updateCharacterDivisions: (planId, characterId, divisions) => ipcRenderer.invoke('plans:updateCharacterDivisions', planId, characterId, divisions),
     addBlueprint: (planId, blueprintConfig) => ipcRenderer.invoke('plans:addBlueprint', planId, blueprintConfig),
     updateBlueprint: (planBlueprintId, updates) => ipcRenderer.invoke('plans:updateBlueprint', planBlueprintId, updates),
     removeBlueprint: (planBlueprintId) => ipcRenderer.invoke('plans:removeBlueprint', planBlueprintId),
@@ -153,6 +163,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getSummary: (planId) => ipcRenderer.invoke('plans:getSummary', planId),
     recalculateMaterials: (planId, refreshPrices) => ipcRenderer.invoke('plans:recalculateMaterials', planId, refreshPrices),
     refreshESIData: (characterId) => ipcRenderer.invoke('plans:refreshESIData', characterId),
+    refreshPlanESIData: (planId) => ipcRenderer.invoke('plans:refreshPlanESIData', planId),
     openWindow: () => ipcRenderer.invoke('plans:openWindow'),
     // Matching functions
     matchJobs: (planId, options) => ipcRenderer.invoke('plans:matchJobs', planId, options),

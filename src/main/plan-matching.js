@@ -21,7 +21,7 @@ const { getCharacterDatabase } = require('./character-database');
  * @returns {Array} Array of potential matches with confidence scores
  */
 function matchJobsToPlan(planId, options = {}) {
-  const { characterId, maxDaysAgo = 30, minConfidence = 0.5 } = options;
+  const { characterId, characterIds, maxDaysAgo = 30, minConfidence = 0.5 } = options;
 
   const db = getCharacterDatabase();
 
@@ -43,15 +43,27 @@ function matchJobsToPlan(planId, options = {}) {
       return [];
     }
 
-    // Get industry jobs for character within time window
+    // Support multiple characters
+    let charIds = characterIds || [];
+    if (!charIds || charIds.length === 0) {
+      // Fallback to single character for backward compatibility
+      charIds = characterId ? [characterId] : [];
+    }
+
+    if (charIds.length === 0) {
+      return [];
+    }
+
+    // Get industry jobs for ALL characters within time window
     const timeWindow = Date.now() - (maxDaysAgo * 24 * 60 * 60 * 1000);
+    const placeholders = charIds.map(() => '?').join(',');
     const jobs = db.prepare(`
       SELECT * FROM esi_industry_jobs
-      WHERE character_id = ?
+      WHERE character_id IN (${placeholders})
         AND activity_id = 1
         AND start_date >= ?
       ORDER BY start_date DESC
-    `).all(characterId, Math.floor(timeWindow / 1000));
+    `).all(...charIds, Math.floor(timeWindow / 1000));
 
     if (jobs.length === 0) {
       return [];
@@ -215,7 +227,7 @@ function saveJobMatches(matches) {
  * - Price within 20% of frozen price
  */
 function matchTransactionsToPlan(planId, options = {}) {
-  const { characterId, maxDaysAgo = 30, minConfidence = 0.5 } = options;
+  const { characterId, characterIds, maxDaysAgo = 30, minConfidence = 0.5 } = options;
 
   const db = getCharacterDatabase();
 
@@ -234,14 +246,26 @@ function matchTransactionsToPlan(planId, options = {}) {
       return [];
     }
 
-    // Get wallet transactions within time window
+    // Support multiple characters
+    let charIds = characterIds || [];
+    if (!charIds || charIds.length === 0) {
+      // Fallback to single character for backward compatibility
+      charIds = characterId ? [characterId] : [];
+    }
+
+    if (charIds.length === 0) {
+      return [];
+    }
+
+    // Get wallet transactions for ALL characters within time window
     const timeWindow = Date.now() - (maxDaysAgo * 24 * 60 * 60 * 1000);
+    const placeholders = charIds.map(() => '?').join(',');
     const transactions = db.prepare(`
       SELECT * FROM esi_wallet_transactions
-      WHERE character_id = ?
+      WHERE character_id IN (${placeholders})
         AND date >= ?
       ORDER BY date DESC
-    `).all(characterId, Math.floor(timeWindow / 1000));
+    `).all(...charIds, Math.floor(timeWindow / 1000));
 
     if (transactions.length === 0) {
       return [];

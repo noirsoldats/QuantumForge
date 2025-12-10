@@ -54,6 +54,8 @@ const {
   updateCharacterEnabledDivisions,
   updateCharacterDivisionNames,
   getDivisionNamesCacheStatus,
+  getDefaultManufacturingCharacters,
+  setDefaultManufacturingCharacters,
 } = require('./settings-manager');
 const { authenticateWithESI, refreshAccessToken, isTokenExpired } = require('./esi-auth');
 const { fetchCorporationDivisions, getGenericDivisionName } = require('./esi-divisions');
@@ -68,6 +70,9 @@ const {
   getManufacturingPlans,
   updateManufacturingPlan,
   deleteManufacturingPlan,
+  getPlanIndustrySettings,
+  updatePlanIndustrySettings,
+  updatePlanCharacterDivisions,
   addBlueprintToPlan,
   updatePlanBlueprint,
   removeBlueprintFromPlan,
@@ -340,6 +345,11 @@ app.whenReady().then(async () => {
   console.log('[App] Running division settings migration...');
   migrateGlobalDivisionsToCharacters();
 
+  // Migrate existing plans to have industry settings
+  const { migrateExistingPlansToSettings } = require('./character-database');
+  console.log('[App] Running plan industry settings migration...');
+  migrateExistingPlansToSettings();
+
   // Setup IPC handlers first (needed by both wizard and normal app)
   setupIPCHandlers();
 
@@ -598,6 +608,15 @@ function setupIPCHandlers() {
 
   ipcMain.handle('divisions:getGenericName', async (event, divisionId) => {
     return getGenericDivisionName(divisionId);
+  });
+
+  // Default manufacturing characters
+  ipcMain.handle('industry:getDefaultManufacturingCharacters', async () => {
+    return getDefaultManufacturingCharacters();
+  });
+
+  ipcMain.handle('industry:setDefaultManufacturingCharacters', async (event, characterIds) => {
+    return setDefaultManufacturingCharacters(characterIds);
   });
 
   // Handle IPC for SDE management
@@ -920,6 +939,19 @@ function setupIPCHandlers() {
     return deleteManufacturingPlan(planId);
   });
 
+  // Plan industry settings
+  ipcMain.handle('plans:getIndustrySettings', async (event, planId) => {
+    return getPlanIndustrySettings(planId);
+  });
+
+  ipcMain.handle('plans:updateIndustrySettings', async (event, planId, settings) => {
+    return updatePlanIndustrySettings(planId, settings);
+  });
+
+  ipcMain.handle('plans:updateCharacterDivisions', async (event, planId, characterId, divisions) => {
+    return updatePlanCharacterDivisions(planId, characterId, divisions);
+  });
+
   ipcMain.handle('plans:addBlueprint', async (event, planId, blueprintConfig) => {
     return await addBlueprintToPlan(planId, blueprintConfig);
   });
@@ -969,8 +1001,15 @@ function setupIPCHandlers() {
     return await recalculatePlanMaterials(planId, refreshPrices);
   });
 
+  // Legacy: character-based ESI refresh
   ipcMain.handle('plans:refreshESIData', async (event, characterId) => {
     return await refreshActivePlansESIData(characterId);
+  });
+
+  // New: plan-based ESI refresh
+  ipcMain.handle('plans:refreshPlanESIData', async (event, planId) => {
+    const { refreshPlanESIData } = require('./manufacturing-plans');
+    return await refreshPlanESIData(planId);
   });
 
   ipcMain.handle('plans:openWindow', () => {

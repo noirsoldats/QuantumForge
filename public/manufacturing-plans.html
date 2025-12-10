@@ -72,6 +72,7 @@
             <button class="tab-button" data-tab="jobs">Jobs</button>
             <button class="tab-button" data-tab="transactions">Transactions</button>
             <button class="tab-button" data-tab="analytics">Analytics</button>
+            <button class="tab-button" data-tab="settings">Settings</button>
           </div>
 
           <!-- Tab Content -->
@@ -297,6 +298,44 @@
                       <span class="comparison-value" id="roi-delta">0%</span>
                     </div>
                   </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Settings Tab -->
+            <div id="settings-tab" class="tab-panel">
+              <div class="tab-header">
+                <h3>Plan Settings</h3>
+                <p class="tab-description">Configure plan-level overrides for industry settings</p>
+              </div>
+
+              <!-- Corporation Divisions Section -->
+              <div class="settings-section">
+                <h3>Corporation Divisions</h3>
+                <p class="section-description">Select which corporation divisions to include for each character in this plan</p>
+                <div id="plan-character-divisions-container"></div>
+              </div>
+
+              <!-- Default Manufacturing Characters Section -->
+              <div class="settings-section">
+                <h3>Plan Manufacturing Characters</h3>
+                <p class="section-description">Select which characters are prioritized for this plan</p>
+                <div id="plan-default-characters-container"></div>
+              </div>
+
+              <!-- Reactions Section -->
+              <div class="settings-section">
+                <h3>Reactions</h3>
+                <p class="section-description">Configure how reactions are handled in manufacturing calculations for this plan</p>
+                <div class="setting-item">
+                  <div class="setting-info">
+                    <label>Calculate Reactions as Intermediates</label>
+                    <span class="setting-description">When enabled, reaction products will be calculated as intermediate materials rather than purchased from market</span>
+                  </div>
+                  <label class="toggle">
+                    <input type="checkbox" id="plan-reactions-as-intermediates">
+                    <span class="toggle-slider"></span>
+                  </label>
                 </div>
               </div>
             </div>

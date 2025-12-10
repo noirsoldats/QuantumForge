@@ -413,6 +413,37 @@ function initializeCharacterDatabase() {
     console.error('[Character Database] Character settings migration error:', error);
   }
 
+  // Migration: Create plan_industry_settings table for per-plan industry overrides
+  try {
+    const tableExists = database.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='plan_industry_settings'").all();
+
+    if (!tableExists || tableExists.length === 0) {
+      console.log('[Character Database] Creating plan_industry_settings table');
+
+      // Create table
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS plan_industry_settings (
+          plan_id TEXT PRIMARY KEY,
+          enabled_divisions_json TEXT NOT NULL DEFAULT '{}',
+          default_characters_json TEXT NOT NULL DEFAULT '[]',
+          reactions_as_intermediates INTEGER DEFAULT 0,
+          last_updated INTEGER NOT NULL,
+          FOREIGN KEY (plan_id) REFERENCES manufacturing_plans(plan_id) ON DELETE CASCADE
+        )
+      `);
+
+      // Create index
+      database.exec(`
+        CREATE INDEX IF NOT EXISTS idx_plan_industry_settings_plan
+          ON plan_industry_settings(plan_id)
+      `);
+
+      console.log('[Character Database] Plan industry settings table created successfully');
+    }
+  } catch (error) {
+    console.error('[Character Database] Plan industry settings migration error:', error);
+  }
+
   console.log('[Character Database] Schema initialized successfully');
   return database;
 }
@@ -428,8 +459,72 @@ function closeCharacterDatabase() {
   }
 }
 
+/**
+ * Migrate existing manufacturing_plans to have settings
+ * Copy from global industry settings
+ */
+function migrateExistingPlansToSettings() {
+  try {
+    const database = getCharacterDatabase();
+    const { loadSettings } = require('./settings-manager');
+    const settings = loadSettings();
+
+    // Get all existing plans that don't have settings yet
+    const plansWithoutSettings = database.prepare(`
+      SELECT mp.plan_id, mp.character_id
+      FROM manufacturing_plans mp
+      LEFT JOIN plan_industry_settings pis ON mp.plan_id = pis.plan_id
+      WHERE pis.plan_id IS NULL
+    `).all();
+
+    if (plansWithoutSettings.length === 0) {
+      console.log('[Migration] No plans to migrate for industry settings');
+      return;
+    }
+
+    console.log(`[Migration] Migrating ${plansWithoutSettings.length} plans to have industry settings`);
+
+    // Get global industry defaults
+    const defaultCharacters = settings.industry?.defaultManufacturingCharacters || [];
+    const reactionsAsIntermediates = settings.industry?.calculateReactionsAsIntermediates ? 1 : 0;
+
+    // For divisions, get per-character settings
+    const insertStmt = database.prepare(`
+      INSERT INTO plan_industry_settings (
+        plan_id, enabled_divisions_json, default_characters_json,
+        reactions_as_intermediates, last_updated
+      ) VALUES (?, ?, ?, ?, ?)
+    `);
+
+    for (const plan of plansWithoutSettings) {
+      // Get character division settings
+      const charSettings = database.prepare('SELECT enabled_divisions FROM character_settings WHERE character_id = ?')
+        .get(plan.character_id);
+
+      const divisionsJson = {};
+      if (charSettings && charSettings.enabled_divisions) {
+        const enabledDivisions = JSON.parse(charSettings.enabled_divisions);
+        divisionsJson[plan.character_id] = enabledDivisions;
+      }
+
+      insertStmt.run(
+        plan.plan_id,
+        JSON.stringify(divisionsJson),
+        JSON.stringify(defaultCharacters),
+        reactionsAsIntermediates,
+        Date.now()
+      );
+    }
+
+    console.log('[Migration] Successfully migrated plans to have industry settings');
+  } catch (error) {
+    console.error('[Migration] Error migrating plans to industry settings:', error);
+  }
+}
+
 module.exports = {
   getCharacterDatabase,
   initializeCharacterDatabase,
   closeCharacterDatabase,
+  migrateExistingPlansToSettings,
 };

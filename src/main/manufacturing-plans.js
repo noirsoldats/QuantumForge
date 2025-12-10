@@ -190,6 +190,120 @@ function deleteManufacturingPlan(planId) {
 }
 
 /**
+ * Get plan industry settings
+ * @param {string} planId - Plan ID
+ * @returns {Object} Settings object
+ */
+function getPlanIndustrySettings(planId) {
+  const db = getCharacterDatabase();
+  const { loadSettings } = require('./settings-manager');
+
+  let settings = db.prepare(`
+    SELECT enabled_divisions_json, default_characters_json,
+           reactions_as_intermediates, last_updated
+    FROM plan_industry_settings
+    WHERE plan_id = ?
+  `).get(planId);
+
+  if (!settings) {
+    // No settings exist yet, return defaults from global settings
+    const globalSettings = loadSettings();
+    return {
+      enabledDivisions: {}, // Empty per-character divisions
+      defaultCharacters: globalSettings.industry?.defaultManufacturingCharacters || [],
+      reactionsAsIntermediates: globalSettings.industry?.calculateReactionsAsIntermediates || false,
+      lastUpdated: null
+    };
+  }
+
+  return {
+    enabledDivisions: JSON.parse(settings.enabled_divisions_json || '{}'),
+    defaultCharacters: JSON.parse(settings.default_characters_json || '[]'),
+    reactionsAsIntermediates: Boolean(settings.reactions_as_intermediates),
+    lastUpdated: settings.last_updated
+  };
+}
+
+/**
+ * Update plan industry settings
+ * @param {string} planId - Plan ID
+ * @param {Object} settings - Settings to update
+ * @returns {boolean} Success status
+ */
+function updatePlanIndustrySettings(planId, settings) {
+  try {
+    const db = getCharacterDatabase();
+    const now = Date.now();
+
+    // Validate plan exists
+    const plan = db.prepare('SELECT plan_id FROM manufacturing_plans WHERE plan_id = ?').get(planId);
+    if (!plan) {
+      console.error('[Plans] Plan not found:', planId);
+      return false;
+    }
+
+    // Check if settings record exists
+    const existing = db.prepare('SELECT plan_id FROM plan_industry_settings WHERE plan_id = ?').get(planId);
+
+    if (existing) {
+      // Update existing settings
+      db.prepare(`
+        UPDATE plan_industry_settings SET
+          enabled_divisions_json = ?,
+          default_characters_json = ?,
+          reactions_as_intermediates = ?,
+          last_updated = ?
+        WHERE plan_id = ?
+      `).run(
+        JSON.stringify(settings.enabledDivisions || {}),
+        JSON.stringify(settings.defaultCharacters || []),
+        settings.reactionsAsIntermediates ? 1 : 0,
+        now,
+        planId
+      );
+    } else {
+      // Insert new settings
+      db.prepare(`
+        INSERT INTO plan_industry_settings (
+          plan_id, enabled_divisions_json, default_characters_json,
+          reactions_as_intermediates, last_updated
+        ) VALUES (?, ?, ?, ?, ?)
+      `).run(
+        planId,
+        JSON.stringify(settings.enabledDivisions || {}),
+        JSON.stringify(settings.defaultCharacters || []),
+        settings.reactionsAsIntermediates ? 1 : 0,
+        now
+      );
+    }
+
+    console.log('[Plans] Updated industry settings for plan:', planId);
+    return true;
+  } catch (error) {
+    console.error('[Plans] Error updating plan industry settings:', error);
+    return false;
+  }
+}
+
+/**
+ * Update enabled divisions for a specific character in a plan
+ * @param {string} planId - Plan ID
+ * @param {number} characterId - Character ID
+ * @param {number[]} enabledDivisions - Array of division IDs
+ * @returns {boolean} Success status
+ */
+function updatePlanCharacterDivisions(planId, characterId, enabledDivisions) {
+  try {
+    const currentSettings = getPlanIndustrySettings(planId);
+    currentSettings.enabledDivisions[characterId] = enabledDivisions;
+    return updatePlanIndustrySettings(planId, currentSettings);
+  } catch (error) {
+    console.error('[Plans] Error updating plan character divisions:', error);
+    return false;
+  }
+}
+
+/**
  * Add a blueprint to a manufacturing plan
  * @param {string} planId - Plan ID
  * @param {Object} blueprintConfig - Blueprint configuration
@@ -1494,28 +1608,69 @@ async function getPlanMaterials(planId, includeAssets = false) {
     if (includeAssets) {
       // Get plan to find character ID
       const plan = db.prepare('SELECT character_id FROM manufacturing_plans WHERE plan_id = ?').get(planId);
-      if (plan) {
-        // Get character assets
-        const personalAssets = getAssets(plan.character_id, false);
-        const corpAssets = getAssets(plan.character_id, true);
+      if (!plan) {
+        return result; // No plan found, skip assets
+      }
 
-        // Create lookup maps
-        const personalMap = {};
-        const corpMap = {};
+      // Get plan industry settings for character selection
+      const planSettings = getPlanIndustrySettings(planId);
 
+      // Determine which characters to use
+      let characterIds = planSettings.defaultCharacters || [];
+      if (characterIds.length === 0) {
+        // Fallback: use plan's default character only
+        characterIds = [plan.character_id];
+      }
+
+      // Get enabled divisions per character
+      const enabledDivisions = planSettings.enabledDivisions || {};
+
+      // Aggregate assets across all selected characters
+      const personalAssetMap = {};  // typeId -> quantity
+      const corpAssetMap = {};      // typeId -> quantity
+      const processedCorps = new Set(); // Track corporations to avoid double-counting
+
+      for (const characterId of characterIds) {
+        // Get character info to find corporation
+        const { getCharacter } = require('./settings-manager');
+        const character = getCharacter(characterId);
+
+        if (!character) {
+          console.warn(`[Plans] Character ${characterId} not found, skipping assets`);
+          continue;
+        }
+
+        // Fetch personal assets for this character
+        const personalAssets = getAssets(characterId, false);
         for (const asset of personalAssets) {
-          personalMap[asset.typeId] = (personalMap[asset.typeId] || 0) + asset.quantity;
+          personalAssetMap[asset.typeId] = (personalAssetMap[asset.typeId] || 0) + asset.quantity;
         }
 
-        for (const asset of corpAssets) {
-          corpMap[asset.typeId] = (corpMap[asset.typeId] || 0) + asset.quantity;
-        }
+        // Fetch corporation assets (with division filtering and deduplication)
+        const corpId = character.corporationId;
+        if (corpId && !processedCorps.has(corpId)) {
+          processedCorps.add(corpId);  // Mark corporation as processed
 
-        // Add asset quantities to materials
-        for (const material of result) {
-          material.ownedPersonal = personalMap[material.typeId] || 0;
-          material.ownedCorp = corpMap[material.typeId] || 0;
+          // Get enabled divisions for this character
+          const charEnabledDivisions = enabledDivisions[characterId] || [];
+
+          // Fetch all corp assets for this character
+          const corpAssets = getAssets(characterId, true);
+
+          // Filter by enabled divisions
+          for (const asset of corpAssets) {
+            // Check if asset is in an enabled division
+            if (isAssetInEnabledDivision(asset, charEnabledDivisions)) {
+              corpAssetMap[asset.typeId] = (corpAssetMap[asset.typeId] || 0) + asset.quantity;
+            }
+          }
         }
+      }
+
+      // Apply aggregated assets to materials
+      for (const material of result) {
+        material.ownedPersonal = personalAssetMap[material.typeId] || 0;
+        material.ownedCorp = corpAssetMap[material.typeId] || 0;
       }
     }
 
@@ -1524,6 +1679,40 @@ async function getPlanMaterials(planId, includeAssets = false) {
     console.error('Error getting plan materials:', error);
     return [];
   }
+}
+
+/**
+ * Check if an asset is in an enabled corporation division
+ * @param {Object} asset - Asset object with locationFlag
+ * @param {number[]} enabledDivisions - Array of enabled division IDs (1-7)
+ * @returns {boolean} True if asset is in an enabled division
+ */
+function isAssetInEnabledDivision(asset, enabledDivisions) {
+  // If no divisions are enabled, include all corp assets (backward compatibility)
+  if (!enabledDivisions || enabledDivisions.length === 0) {
+    return true;
+  }
+
+  // Parse location_flag to extract division number
+  // Format: "CorpSAG1", "CorpSAG2", etc.
+  const locationFlag = asset.locationFlag;
+  if (!locationFlag || !locationFlag.startsWith('CorpSAG')) {
+    // Asset is not in a corporation hangar division
+    // (might be in a station hangar, container, etc.)
+    // Include it to be safe
+    return true;
+  }
+
+  // Extract division number (1-7)
+  const divisionMatch = locationFlag.match(/^CorpSAG(\d+)$/);
+  if (!divisionMatch) {
+    return true; // Can't parse, include to be safe
+  }
+
+  const divisionId = parseInt(divisionMatch[1], 10);
+
+  // Check if this division is enabled
+  return enabledDivisions.includes(divisionId);
 }
 
 /**
@@ -1635,42 +1824,109 @@ async function getPlanSummary(planId) {
  * @param {number} characterId - Character ID
  * @returns {Promise<Object>} Refresh status
  */
-async function refreshActivePlansESIData(characterId) {
+/**
+ * Refresh ESI data for all characters associated with a plan
+ * @param {string} planId - Plan ID to refresh
+ * @returns {Promise<Object>} Refresh summary
+ */
+async function refreshPlanESIData(planId) {
   try {
     const { fetchCharacterIndustryJobs, saveIndustryJobs } = require('./esi-industry-jobs');
     const { fetchCharacterWalletTransactions, saveWalletTransactions } = require('./esi-wallet');
+    const { matchJobsToPlan, matchTransactionsToPlan } = require('./plan-matching');
+    const db = getCharacterDatabase();
+
+    // Get plan industry settings to find all characters
+    const planSettings = getPlanIndustrySettings(planId);
+    const plan = db.prepare('SELECT character_id FROM manufacturing_plans WHERE plan_id = ?').get(planId);
+
+    if (!plan) {
+      return { success: false, message: 'Plan not found' };
+    }
+
+    // Determine which characters to refresh
+    let characterIds = planSettings.defaultCharacters || [];
+    if (characterIds.length === 0) {
+      // Fallback: use plan's default character
+      characterIds = [plan.character_id];
+    }
+
+    // Fetch jobs and transactions for ALL characters
+    const results = {
+      success: true,
+      charactersRefreshed: [],
+      errors: []
+    };
+
+    for (const characterId of characterIds) {
+      try {
+        // Fetch industry jobs
+        const jobsData = await fetchCharacterIndustryJobs(characterId, true);
+        if (jobsData.jobs) {
+          saveIndustryJobs({ characterId, jobs: jobsData.jobs, lastUpdated: jobsData.lastUpdated });
+        }
+
+        // Fetch wallet transactions
+        const txData = await fetchCharacterWalletTransactions(characterId);
+        if (txData.transactions) {
+          saveWalletTransactions({ characterId, transactions: txData.transactions, lastUpdated: txData.lastUpdated });
+        }
+
+        results.charactersRefreshed.push(characterId);
+      } catch (error) {
+        console.error(`[Plans] Error refreshing character ${characterId}:`, error);
+        results.errors.push({ characterId, error: error.message });
+      }
+    }
+
+    // Run matching after fetching all data
+    try {
+      matchJobsToPlan(planId, { characterIds: results.charactersRefreshed });
+      matchTransactionsToPlan(planId, { characterIds: results.charactersRefreshed });
+    } catch (error) {
+      console.error('[Plans] Error running matches:', error);
+    }
+
+    return {
+      success: results.errors.length === 0,
+      message: `Refreshed ${results.charactersRefreshed.length} character(s)`,
+      charactersRefreshed: results.charactersRefreshed,
+      errors: results.errors
+    };
+  } catch (error) {
+    console.error('[Plans] Error refreshing plan ESI data:', error);
+    return { success: false, message: error.message };
+  }
+}
+
+/**
+ * Legacy function - refreshes active plans for a single character
+ * @deprecated Use refreshPlanESIData(planId) instead
+ */
+async function refreshActivePlansESIData(characterId) {
+  try {
+    const db = getCharacterDatabase();
 
     // Get active plans for this character
     const activePlans = getManufacturingPlans(characterId, { status: 'active' });
 
     if (activePlans.length === 0) {
-      return { success: true, message: 'No active plans to refresh' };
+      return { success: true, message: 'No active plans to refresh', plansRefreshed: 0 };
     }
 
-    // Fetch industry jobs
-    try {
-      const jobsData = await fetchCharacterIndustryJobs(characterId, true);
-      saveIndustryJobs(jobsData);
-    } catch (error) {
-      console.warn('Could not refresh industry jobs:', error.message);
-    }
-
-    // Fetch wallet transactions
-    try {
-      const txData = await fetchCharacterWalletTransactions(characterId);
-      saveWalletTransactions(txData);
-    } catch (error) {
-      console.warn('Could not refresh wallet transactions:', error.message);
+    // Refresh each active plan
+    for (const plan of activePlans) {
+      await refreshPlanESIData(plan.plan_id);
     }
 
     return {
       success: true,
-      message: `Refreshed ESI data for ${activePlans.length} active plan(s)`,
+      message: `Refreshed ${activePlans.length} active plan(s)`,
       plansRefreshed: activePlans.length,
     };
   } catch (error) {
     console.error('Error refreshing active plans ESI data:', error);
-    return { success: false, error: error.message };
+    return { success: false, message: error.message, plansRefreshed: 0 };
   }
 }
 
@@ -1995,6 +2251,9 @@ module.exports = {
   getManufacturingPlans,
   updateManufacturingPlan,
   deleteManufacturingPlan,
+  getPlanIndustrySettings,
+  updatePlanIndustrySettings,
+  updatePlanCharacterDivisions,
   addBlueprintToPlan,
   updatePlanBlueprint,
   removeBlueprintFromPlan,
@@ -2009,6 +2268,7 @@ module.exports = {
   getPlanProducts,
   getPlanSummary,
   refreshActivePlansESIData,
+  refreshPlanESIData,
   getPlanAnalytics,
   markMaterialAcquired,
   unmarkMaterialAcquired,

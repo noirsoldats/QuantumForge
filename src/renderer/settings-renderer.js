@@ -111,6 +111,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       // Load division settings when Industry tab is activated
       if (targetTab === 'industry') {
         loadIndustryDivisions();
+        loadDefaultManufacturingCharacters();
       }
     });
   });
@@ -698,6 +699,112 @@ async function fetchCharacterDivisionNames(characterId) {
     // Re-enable button
     fetchBtn.disabled = false;
     fetchBtn.innerHTML = originalHTML;
+  }
+}
+
+// Default Manufacturing Characters Functions
+
+/**
+ * Load and render default manufacturing characters checkboxes
+ */
+async function loadDefaultManufacturingCharacters() {
+  const containerEl = document.getElementById('default-manufacturing-characters-container');
+  if (!containerEl) return;
+
+  try {
+    // Show loading
+    containerEl.innerHTML = '<div class="divisions-loading"><div class="spinner"></div><span>Loading characters...</span></div>';
+
+    // Get all characters
+    const characters = await window.electronAPI.esi.getCharacters();
+
+    if (characters.length === 0) {
+      containerEl.innerHTML = '<p class="no-data">No characters authenticated. Go to Accounts tab to add characters.</p>';
+      return;
+    }
+
+    // Get current default manufacturing characters
+    const defaultCharacterIds = await window.electronAPI.industry.getDefaultManufacturingCharacters();
+
+    // Render checkboxes
+    let html = '<div class="default-characters-grid">';
+
+    for (const character of characters) {
+      const isChecked = defaultCharacterIds.includes(character.characterId);
+
+      html += `
+        <div class="character-checkbox-item">
+          <label class="character-checkbox-label">
+            <input
+              type="checkbox"
+              class="character-checkbox"
+              data-character-id="${character.characterId}"
+              ${isChecked ? 'checked' : ''}
+            />
+            <span class="character-checkbox-name">${character.characterName}</span>
+          </label>
+        </div>
+      `;
+    }
+
+    html += '</div>';
+    containerEl.innerHTML = html;
+
+    // Add event listeners to checkboxes
+    const checkboxes = containerEl.querySelectorAll('.character-checkbox');
+    checkboxes.forEach(checkbox => {
+      checkbox.addEventListener('change', handleDefaultManufacturingCharacterToggle);
+    });
+
+  } catch (error) {
+    console.error('Error loading default manufacturing characters:', error);
+    containerEl.innerHTML = '<p class="error-text">Failed to load characters</p>';
+  }
+}
+
+/**
+ * Handle default manufacturing character checkbox toggle
+ */
+async function handleDefaultManufacturingCharacterToggle(event) {
+  const checkbox = event.target;
+  const characterId = parseInt(checkbox.getAttribute('data-character-id'));
+  const isChecked = checkbox.checked;
+
+  try {
+    // Get current defaults
+    const currentDefaults = await window.electronAPI.industry.getDefaultManufacturingCharacters();
+
+    // Update array
+    let updatedDefaults;
+    if (isChecked) {
+      // Add character if not already in array
+      if (!currentDefaults.includes(characterId)) {
+        updatedDefaults = [...currentDefaults, characterId];
+      } else {
+        updatedDefaults = currentDefaults;
+      }
+    } else {
+      // Remove character from array
+      updatedDefaults = currentDefaults.filter(id => id !== characterId);
+    }
+
+    // Save to settings
+    const success = await window.electronAPI.industry.setDefaultManufacturingCharacters(updatedDefaults);
+
+    if (!success) {
+      console.error('Failed to update default manufacturing characters');
+      // Revert checkbox
+      checkbox.checked = !isChecked;
+      alert('Failed to update default manufacturing characters. Please try again.');
+    } else {
+      console.log('Updated default manufacturing characters:', updatedDefaults);
+    }
+
+  } catch (error) {
+    console.error('Error toggling default manufacturing character:', error);
+    // Revert checkbox
+    checkbox.checked = !isChecked;
+    alert('An error occurred while updating default manufacturing characters.');
   }
 }
 

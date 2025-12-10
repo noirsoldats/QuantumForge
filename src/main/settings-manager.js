@@ -60,6 +60,7 @@ const defaultSettings = {
   industry: {
     enabledDivisions: [],  // Array of division IDs (1-7) - empty by default, user selects which divisions to use
     calculateReactionsAsIntermediates: false,  // Global toggle for reaction intermediate calculation
+    defaultManufacturingCharacters: [],  // Array of character IDs for manufacturing defaults
   },
 };
 
@@ -1406,6 +1407,49 @@ function migrateGlobalDivisionsToCharacters() {
   }
 }
 
+/**
+ * Get default manufacturing characters
+ * @returns {number[]} Array of character IDs
+ */
+function getDefaultManufacturingCharacters() {
+  const settings = loadSettings();
+  return settings.industry?.defaultManufacturingCharacters || [];
+}
+
+/**
+ * Set default manufacturing characters
+ * @param {number[]} characterIds - Array of character IDs
+ * @returns {boolean} Success status
+ */
+function setDefaultManufacturingCharacters(characterIds) {
+  try {
+    const settings = loadSettings();
+
+    // Validate that all character IDs exist
+    const db = getCharacterDatabase();
+    const validIds = [];
+
+    for (const characterId of characterIds) {
+      const exists = db.prepare('SELECT character_id FROM characters WHERE character_id = ?')
+        .get(characterId);
+      if (exists) {
+        validIds.push(characterId);
+      }
+    }
+
+    // Update settings
+    settings.industry = settings.industry || {};
+    settings.industry.defaultManufacturingCharacters = validIds;
+
+    saveSettings(settings);
+    console.log('[Settings] Updated default manufacturing characters:', validIds);
+    return true;
+  } catch (error) {
+    console.error('[Settings] Error setting default manufacturing characters:', error);
+    return false;
+  }
+}
+
 module.exports = {
   loadSettings,
   saveSettings,
@@ -1446,4 +1490,6 @@ module.exports = {
   updateCharacterDivisionNames,
   getDivisionNamesCacheStatus,
   migrateGlobalDivisionsToCharacters,
+  getDefaultManufacturingCharacters,
+  setDefaultManufacturingCharacters,
 };

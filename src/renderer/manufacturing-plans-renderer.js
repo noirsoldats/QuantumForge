@@ -250,6 +250,9 @@ async function loadTabContent(tabName) {
     case 'analytics':
       await loadAnalytics();
       break;
+    case 'settings':
+      await loadSettings();
+      break;
   }
 }
 
@@ -1789,7 +1792,21 @@ async function matchJobs() {
 
   try {
     showLoading('Matching industry jobs...');
-    const matches = await window.electronAPI.plans.matchJobs(selectedPlanId, { characterId: currentCharacterId, minConfidence: 0.3 });
+
+    // Get configured characters from plan settings
+    const planSettings = await window.electronAPI.plans.getIndustrySettings(selectedPlanId);
+    let characterIds = planSettings.defaultCharacters || [];
+
+    if (characterIds.length === 0) {
+      // Fallback: use current character
+      characterIds = [currentCharacterId];
+    }
+
+    // Match using ALL characters
+    const matches = await window.electronAPI.plans.matchJobs(selectedPlanId, {
+      characterIds,
+      minConfidence: 0.3
+    });
 
     if (matches.length === 0) {
       showToast('No job matches found. Make sure you have industry jobs running and blueprints in the plan.', 'info');
@@ -1812,7 +1829,21 @@ async function matchTransactions() {
 
   try {
     showLoading('Matching wallet transactions...');
-    const matches = await window.electronAPI.plans.matchTransactions(selectedPlanId, { characterId: currentCharacterId, minConfidence: 0.3 });
+
+    // Get configured characters from plan settings
+    const planSettings = await window.electronAPI.plans.getIndustrySettings(selectedPlanId);
+    let characterIds = planSettings.defaultCharacters || [];
+
+    if (characterIds.length === 0) {
+      // Fallback: use current character
+      characterIds = [currentCharacterId];
+    }
+
+    // Match using ALL characters
+    const matches = await window.electronAPI.plans.matchTransactions(selectedPlanId, {
+      characterIds,
+      minConfidence: 0.3
+    });
 
     if (matches.length === 0) {
       showToast('No transaction matches found. Make sure you have wallet transactions and materials/products in the plan.', 'info');
@@ -1944,6 +1975,380 @@ async function loadAnalytics() {
   }
 }
 
+/**
+ * Load settings tab content
+ */
+async function loadSettings() {
+  if (!selectedPlanId) {
+    console.warn('No plan selected');
+    return;
+  }
+
+  try {
+    // Get plan settings
+    const planSettings = await window.electronAPI.plans.getIndustrySettings(selectedPlanId);
+
+    // Load corporation divisions (per-character)
+    await loadPlanDivisions(planSettings.enabledDivisions);
+
+    // Load default characters
+    await loadPlanDefaultCharacters(planSettings.defaultCharacters);
+
+    // Load reactions toggle
+    const reactionsCheckbox = document.getElementById('plan-reactions-as-intermediates');
+    if (reactionsCheckbox) {
+      reactionsCheckbox.checked = planSettings.reactionsAsIntermediates;
+
+      // Add event listener
+      reactionsCheckbox.removeEventListener('change', handlePlanReactionsToggle);
+      reactionsCheckbox.addEventListener('change', handlePlanReactionsToggle);
+    }
+
+  } catch (error) {
+    console.error('Error loading settings:', error);
+  }
+}
+
+/**
+ * Load plan corporation divisions (per-character sections)
+ */
+async function loadPlanDivisions(enabledDivisionsMap) {
+  const containerEl = document.getElementById('plan-character-divisions-container');
+  if (!containerEl) return;
+
+  try {
+    containerEl.innerHTML = '<div class="divisions-loading"><div class="spinner"></div><span>Loading divisions...</span></div>';
+
+    // Get all characters
+    const characters = await window.electronAPI.esi.getCharacters();
+
+    if (characters.length === 0) {
+      containerEl.innerHTML = '<p class="no-data">No characters authenticated.</p>';
+      return;
+    }
+
+    containerEl.innerHTML = '';
+
+    // Render section for each character (reuse pattern from settings-renderer.js)
+    for (const character of characters) {
+      await renderPlanCharacterDivisionSection(character, enabledDivisionsMap[character.characterId] || []);
+    }
+
+  } catch (error) {
+    console.error('Error loading plan divisions:', error);
+    containerEl.innerHTML = '<p class="error-text">Failed to load divisions</p>';
+  }
+}
+
+/**
+ * Render collapsible division section for one character
+ */
+async function renderPlanCharacterDivisionSection(character, enabledDivisions) {
+  const containerEl = document.getElementById('plan-character-divisions-container');
+  if (!containerEl) return;
+
+  const characterId = character.characterId;
+
+  // Get division names from character settings
+  const divisionSettings = await window.electronAPI.divisions.getSettings(characterId);
+  const divisionNames = divisionSettings.divisionNames || {};
+
+  // Build selected divisions summary
+  let selectedSummary = 'None selected';
+  if (enabledDivisions.length > 0) {
+    const divisionLabels = enabledDivisions.map(divId => divisionNames[divId] || `Division ${divId}`);
+    selectedSummary = divisionLabels.join(', ');
+  }
+
+  // Create section HTML (same pattern as settings-renderer.js)
+  const sectionHTML = `
+    <div class="character-division-section">
+      <div class="character-division-header" id="plan-division-header-${characterId}">
+        <div class="character-division-header-left">
+          <span class="expand-toggle" id="plan-expand-toggle-${characterId}">
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="6 9 12 15 18 9"></polyline>
+            </svg>
+          </span>
+          <span class="character-name">${character.characterName}</span>
+        </div>
+        <div class="character-division-summary" id="plan-division-summary-${characterId}">
+          <span class="summary-label">Selected:</span>
+          <span class="summary-value">${selectedSummary}</span>
+        </div>
+      </div>
+      <div class="character-division-content" id="plan-division-content-${characterId}" style="display: none;">
+        <div class="divisions-grid" id="plan-divisions-grid-${characterId}">
+          ${renderPlanDivisionCheckboxes(characterId, enabledDivisions, divisionNames)}
+        </div>
+      </div>
+    </div>
+  `;
+
+  containerEl.insertAdjacentHTML('beforeend', sectionHTML);
+
+  // Add event listeners
+  const headerEl = document.getElementById(`plan-division-header-${characterId}`);
+  if (headerEl) {
+    headerEl.addEventListener('click', () => togglePlanCharacterDivisions(characterId));
+  }
+
+  const checkboxes = document.querySelectorAll(`#plan-divisions-grid-${characterId} .division-checkbox`);
+  checkboxes.forEach(checkbox => {
+    checkbox.addEventListener('change', handlePlanDivisionToggle);
+  });
+}
+
+/**
+ * Render division checkboxes HTML
+ */
+function renderPlanDivisionCheckboxes(characterId, enabledDivisions, divisionNames) {
+  let html = '';
+  for (let divId = 1; divId <= 7; divId++) {
+    const isChecked = enabledDivisions.includes(divId);
+    const divName = divisionNames[divId] || `Division ${divId}`;
+
+    html += `
+      <div class="division-item">
+        <label class="division-label">
+          <input
+            type="checkbox"
+            class="division-checkbox"
+            data-character="${characterId}"
+            data-division="${divId}"
+            ${isChecked ? 'checked' : ''}
+          />
+          <span class="division-name">${divName}</span>
+          ${divisionNames[divId] ? '<span class="custom-name-badge">Custom</span>' : ''}
+        </label>
+      </div>
+    `;
+  }
+  return html;
+}
+
+/**
+ * Toggle expand/collapse division section
+ */
+function togglePlanCharacterDivisions(characterId) {
+  const contentEl = document.getElementById(`plan-division-content-${characterId}`);
+  const toggleIcon = document.getElementById(`plan-expand-toggle-${characterId}`);
+
+  if (!contentEl || !toggleIcon) return;
+
+  const isExpanded = contentEl.style.display !== 'none';
+
+  if (isExpanded) {
+    contentEl.style.display = 'none';
+    toggleIcon.innerHTML = `
+      <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="6 9 12 15 18 9"></polyline>
+      </svg>
+    `;
+  } else {
+    contentEl.style.display = 'block';
+    toggleIcon.innerHTML = `
+      <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="18 15 12 9 6 15"></polyline>
+      </svg>
+    `;
+  }
+}
+
+/**
+ * Handle division checkbox toggle
+ */
+async function handlePlanDivisionToggle(event) {
+  const checkbox = event.target;
+  const characterId = parseInt(checkbox.getAttribute('data-character'));
+  const divisionId = parseInt(checkbox.getAttribute('data-division'));
+  const isChecked = checkbox.checked;
+
+  try {
+    // Get current plan settings
+    const settings = await window.electronAPI.plans.getIndustrySettings(selectedPlanId);
+    let enabledDivisions = settings.enabledDivisions[characterId] || [];
+
+    // Update array
+    if (isChecked) {
+      if (!enabledDivisions.includes(divisionId)) {
+        enabledDivisions.push(divisionId);
+      }
+    } else {
+      enabledDivisions = enabledDivisions.filter(id => id !== divisionId);
+    }
+
+    enabledDivisions.sort((a, b) => a - b);
+
+    // Save to database
+    const success = await window.electronAPI.plans.updateCharacterDivisions(
+      selectedPlanId,
+      characterId,
+      enabledDivisions
+    );
+
+    if (!success) {
+      console.error('Failed to update plan divisions');
+      checkbox.checked = !isChecked;
+      showToast('Failed to update divisions', 'error');
+    } else {
+      console.log(`Updated plan divisions for character ${characterId}:`, enabledDivisions);
+      // Update header summary
+      await updatePlanDivisionHeader(characterId);
+    }
+
+  } catch (error) {
+    console.error('Error toggling plan division:', error);
+    checkbox.checked = !isChecked;
+    showToast('Error updating divisions', 'error');
+  }
+}
+
+/**
+ * Update division header summary
+ */
+async function updatePlanDivisionHeader(characterId) {
+  const summaryEl = document.getElementById(`plan-division-summary-${characterId}`);
+  if (!summaryEl) return;
+
+  try {
+    const settings = await window.electronAPI.plans.getIndustrySettings(selectedPlanId);
+    const enabledDivisions = settings.enabledDivisions[characterId] || [];
+    const divisionSettings = await window.electronAPI.divisions.getSettings(characterId);
+    const divisionNames = divisionSettings.divisionNames || {};
+
+    let selectedSummary = 'None selected';
+    if (enabledDivisions.length > 0) {
+      const divisionLabels = enabledDivisions.map(divId => divisionNames[divId] || `Division ${divId}`);
+      selectedSummary = divisionLabels.join(', ');
+    }
+
+    summaryEl.innerHTML = `
+      <span class="summary-label">Selected:</span>
+      <span class="summary-value">${selectedSummary}</span>
+    `;
+  } catch (error) {
+    console.error('Error updating division header:', error);
+  }
+}
+
+/**
+ * Load plan default manufacturing characters
+ */
+async function loadPlanDefaultCharacters(defaultCharacterIds) {
+  const containerEl = document.getElementById('plan-default-characters-container');
+  if (!containerEl) return;
+
+  try {
+    containerEl.innerHTML = '<div class="divisions-loading"><div class="spinner"></div><span>Loading characters...</span></div>';
+
+    const characters = await window.electronAPI.esi.getCharacters();
+
+    if (characters.length === 0) {
+      containerEl.innerHTML = '<p class="no-data">No characters authenticated.</p>';
+      return;
+    }
+
+    let html = '<div class="default-characters-grid">';
+
+    for (const character of characters) {
+      const isChecked = defaultCharacterIds.includes(character.characterId);
+
+      html += `
+        <div class="character-checkbox-item">
+          <label class="character-checkbox-label">
+            <input
+              type="checkbox"
+              class="character-checkbox"
+              data-character-id="${character.characterId}"
+              ${isChecked ? 'checked' : ''}
+            />
+            <span class="character-checkbox-name">${character.characterName}</span>
+          </label>
+        </div>
+      `;
+    }
+
+    html += '</div>';
+    containerEl.innerHTML = html;
+
+    // Add event listeners
+    const checkboxes = containerEl.querySelectorAll('.character-checkbox');
+    checkboxes.forEach(checkbox => {
+      checkbox.addEventListener('change', handlePlanDefaultCharacterToggle);
+    });
+
+  } catch (error) {
+    console.error('Error loading plan default characters:', error);
+    containerEl.innerHTML = '<p class="error-text">Failed to load characters</p>';
+  }
+}
+
+/**
+ * Handle default character checkbox toggle
+ */
+async function handlePlanDefaultCharacterToggle(event) {
+  const checkbox = event.target;
+  const characterId = parseInt(checkbox.getAttribute('data-character-id'));
+  const isChecked = checkbox.checked;
+
+  try {
+    const settings = await window.electronAPI.plans.getIndustrySettings(selectedPlanId);
+    let defaultCharacters = settings.defaultCharacters || [];
+
+    if (isChecked) {
+      if (!defaultCharacters.includes(characterId)) {
+        defaultCharacters.push(characterId);
+      }
+    } else {
+      defaultCharacters = defaultCharacters.filter(id => id !== characterId);
+    }
+
+    settings.defaultCharacters = defaultCharacters;
+    const success = await window.electronAPI.plans.updateIndustrySettings(selectedPlanId, settings);
+
+    if (!success) {
+      console.error('Failed to update plan default characters');
+      checkbox.checked = !isChecked;
+      showToast('Failed to update default characters', 'error');
+    } else {
+      console.log('Updated plan default characters:', defaultCharacters);
+    }
+
+  } catch (error) {
+    console.error('Error toggling plan default character:', error);
+    checkbox.checked = !isChecked;
+    showToast('Error updating default characters', 'error');
+  }
+}
+
+/**
+ * Handle reactions toggle change
+ */
+async function handlePlanReactionsToggle(event) {
+  const isChecked = event.target.checked;
+
+  try {
+    const settings = await window.electronAPI.plans.getIndustrySettings(selectedPlanId);
+    settings.reactionsAsIntermediates = isChecked;
+
+    const success = await window.electronAPI.plans.updateIndustrySettings(selectedPlanId, settings);
+
+    if (!success) {
+      console.error('Failed to update reactions setting');
+      event.target.checked = !isChecked;
+      showToast('Failed to update reactions setting', 'error');
+    } else {
+      console.log('Updated reactions as intermediates:', isChecked);
+    }
+
+  } catch (error) {
+    console.error('Error toggling reactions:', error);
+    event.target.checked = !isChecked;
+    showToast('Error updating reactions setting', 'error');
+  }
+}
+
 // Update progress bar
 function updateProgressBar(type, completed, total, percent) {
   const barEl = document.getElementById(`${type}-progress-bar`);
@@ -1996,25 +2401,32 @@ function startAutoRefresh() {
   const REFRESH_INTERVAL = 15 * 60 * 1000;
 
   autoRefreshInterval = setInterval(async () => {
-    if (currentCharacterId) {
-      try {
-        console.log('Auto-refreshing ESI data for active plans...');
-        const result = await window.electronAPI.plans.refreshESIData(currentCharacterId);
+    // Only refresh if viewing a plan
+    if (!selectedPlanId) {
+      return;
+    }
 
-        if (result.success && result.plansRefreshed > 0) {
-          console.log(`Auto-refresh: ${result.message}`);
+    try {
+      console.log('Auto-refreshing ESI data for plan...');
+      // Use plan-based refresh instead of character-based
+      const result = await window.electronAPI.plans.refreshPlanESIData(selectedPlanId);
 
-          // If we're viewing an active plan, reload the current tab
-          if (selectedPlanId) {
-            const plan = await window.electronAPI.plans.get(selectedPlanId);
-            if (plan && plan.status === 'active') {
-              await loadTabContent(activeTab);
-            }
+      if (result.success) {
+        console.log(`Auto-refresh: ${result.message}`);
+
+        // Reload current tab to show new matches
+        const currentTab = document.querySelector('.manufacturing-tab.active');
+        if (currentTab) {
+          const tabName = currentTab.dataset.tab;
+          if (tabName === 'jobs') {
+            await loadJobs();
+          } else if (tabName === 'transactions') {
+            await loadTransactions();
           }
         }
-      } catch (error) {
-        console.error('Auto-refresh failed:', error);
       }
+    } catch (error) {
+      console.error('Auto-refresh failed:', error);
     }
   }, REFRESH_INTERVAL);
 }
