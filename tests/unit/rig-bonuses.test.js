@@ -18,10 +18,12 @@ const facilitiesFixtures = require('./fixtures/facilities');
 
 // Mock rig-mappings module
 jest.mock('../../src/main/rig-mappings', () => ({
-  rigAffectsProduct: jest.fn((rigGroupId, productGroupId) => {
-    // Simple mock: assume rigs affect matching product groups
-    // In reality, this checks complex mappings
-    return true;  // For testing, assume all rigs affect all products
+  rigAffectsProduct: jest.fn((rigTypeId, productGroupId, activityKey, bonusType) => {
+    // For testing, assume all rigs affect all products for manufacturing activities
+    if (activityKey === 'manufacturing') {
+      return true;
+    }
+    return false;
   }),
   getSecurityMultiplier: jest.fn((securityStatus) => {
     // Security multiplier affects rig bonuses
@@ -47,12 +49,12 @@ jest.mock('better-sqlite3', () => {
         return { groupID: rigGroups[rigTypeId] || null };
       }),
       all: jest.fn((rigTypeId) => {
-        // Mock rig attribute bonuses
+        // Mock rig attribute bonuses - SDE stores NEGATIVE values (reductions)
         const rigBonuses = {
-          43920: [{ attributeID: 2594, valueFloat: 1.9, valueInt: null }],  // ME T1: 1.9%
-          43921: [{ attributeID: 2594, valueFloat: 2.4, valueInt: null }],  // ME T2: 2.4%
-          43922: [{ attributeID: 2593, valueFloat: 20.0, valueInt: null }], // TE T1: 20%
-          43924: [{ attributeID: 2594, valueFloat: 1.9, valueInt: null }]   // L-Set ME: 1.9%
+          43920: [{ attributeID: 2594, valueFloat: -1.9, valueInt: null }],  // ME T1: -1.9%
+          43921: [{ attributeID: 2594, valueFloat: -2.4, valueInt: null }],  // ME T2: -2.4%
+          43922: [{ attributeID: 2593, valueFloat: -20.0, valueInt: null }], // TE T1: -20%
+          43924: [{ attributeID: 2594, valueFloat: -1.9, valueInt: null }]   // L-Set ME: -1.9%
         };
         return rigBonuses[rigTypeId] || [];
       })
@@ -89,8 +91,8 @@ describe('Rig Bonus Calculations', () => {
 
       const result = getRigMaterialBonus(rigs, productGroupId, securityStatus);
 
-      // Should be 1.9% (1.9 * 1.0 security multiplier)
-      expect(result).toBeApproximately(1.9, 0.1);
+      // Should be -1.9% (-1.9 * 1.0 security multiplier) - negative means reduction
+      expect(result).toBeApproximately(-1.9, 0.1);
     });
 
     test('calculates bonus for T2 ME rig', () => {
@@ -99,7 +101,8 @@ describe('Rig Bonus Calculations', () => {
 
       const result = getRigMaterialBonus(rigs, productGroupId, 0.9);
 
-      expect(result).toBeApproximately(2.4, 0.1);
+      // Should be negative (reduction)
+      expect(result).toBeApproximately(-2.4, 0.1);
     });
 
     test('stacks bonuses from multiple ME rigs', () => {
@@ -110,8 +113,8 @@ describe('Rig Bonus Calculations', () => {
 
       const result = getRigMaterialBonus(rigs, 88, 0.9);
 
-      // Should stack: 1.9 + 1.9 = 3.8
-      expect(result).toBeApproximately(3.8, 0.1);
+      // Should stack: -1.9 + -1.9 = -3.8 (negative means reduction)
+      expect(result).toBeApproximately(-3.8, 0.1);
     });
 
     test('applies security status multiplier in low-sec', () => {
@@ -120,8 +123,10 @@ describe('Rig Bonus Calculations', () => {
 
       const result = getRigMaterialBonus(rigs, 88, lowSecStatus);
 
-      // Should be 1.9 * 0.8 (low-sec multiplier) = 1.52
-      expect(result).toBeLessThan(1.9);
+      // Should be -1.9 * 0.8 (low-sec multiplier) = -1.52
+      // Result should be less negative (closer to 0) than high-sec
+      expect(result).toBeGreaterThan(-1.9);
+      expect(result).toBeLessThan(0);
     });
 
     test('applies security status multiplier in null-sec', () => {
@@ -130,8 +135,10 @@ describe('Rig Bonus Calculations', () => {
 
       const result = getRigMaterialBonus(rigs, 88, nullSecStatus);
 
-      // Should be 1.9 * 0.7 (null-sec multiplier) = 1.33
-      expect(result).toBeLessThan(1.9);
+      // Should be -1.9 * 0.7 (null-sec multiplier) = -1.33
+      // Result should be less negative (closer to 0) than high-sec
+      expect(result).toBeGreaterThan(-1.9);
+      expect(result).toBeLessThan(0);
     });
 
     test('handles string typeId format', () => {
@@ -139,7 +146,8 @@ describe('Rig Bonus Calculations', () => {
 
       const result = getRigMaterialBonus(rigs, 88, 0.9);
 
-      expect(result).toBeGreaterThan(0);
+      // Should be negative (reduction)
+      expect(result).toBeLessThan(0);
     });
 
     test('skips rigs with invalid typeId', () => {
@@ -150,8 +158,8 @@ describe('Rig Bonus Calculations', () => {
 
       const result = getRigMaterialBonus(rigs, 88, 0.9);
 
-      // Should only count the valid rig
-      expect(result).toBeApproximately(1.9, 0.1);
+      // Should only count the valid rig (negative value)
+      expect(result).toBeApproximately(-1.9, 0.1);
     });
   });
 
@@ -167,7 +175,8 @@ describe('Rig Bonus Calculations', () => {
 
       const result = getRigTimeBonus(rigs, 88, 0.9);
 
-      expect(result).toBeApproximately(20.0, 0.1);
+      // Should be negative (reduction)
+      expect(result).toBeApproximately(-20.0, 0.1);
     });
 
     test('stacks bonuses from multiple TE rigs', () => {
@@ -178,8 +187,8 @@ describe('Rig Bonus Calculations', () => {
 
       const result = getRigTimeBonus(rigs, 88, 0.9);
 
-      // Should stack: 20 + 20 = 40
-      expect(result).toBeApproximately(40.0, 0.1);
+      // Should stack: -20 + -20 = -40 (negative means reduction)
+      expect(result).toBeApproximately(-40.0, 0.1);
     });
 
     test('applies security status multiplier', () => {
@@ -243,13 +252,15 @@ describe('Rig Bonus Calculations', () => {
     test('returns ME bonus for ME rig', () => {
       const result = getRigBonusesFromSDE(43920);  // ME T1 rig
 
-      expect(result.materialBonus).toBeApproximately(1.9, 0.1);
+      // Should be negative (reduction)
+      expect(result.materialBonus).toBeApproximately(-1.9, 0.1);
     });
 
     test('returns TE bonus for TE rig', () => {
       const result = getRigBonusesFromSDE(43922);  // TE T1 rig
 
-      expect(result.timeBonus).toBeApproximately(20.0, 0.1);
+      // Should be negative (reduction)
+      expect(result.timeBonus).toBeApproximately(-20.0, 0.1);
     });
 
     test('returns zero bonuses for invalid rig', () => {
@@ -299,7 +310,8 @@ describe('Rig Bonus Calculations', () => {
       const rigs = [{ typeId: 43920 }];
       const result = getRigMaterialBonus(rigs, 88, 0.9);
 
-      expect(result).toBeGreaterThan(0);
+      // Should be negative (reduction)
+      expect(result).toBeLessThan(0);
       expect(rigMappings.rigAffectsProduct).toHaveBeenCalled();
     });
   });
@@ -316,10 +328,10 @@ describe('Rig Bonus Calculations', () => {
     test('handles undefined security status', () => {
       const rigs = [{ typeId: 43920 }];
 
-      // Should use default 0.5 security
+      // Should use default 0.5 security and return negative value (reduction)
       const result = getRigMaterialBonus(rigs, 88);
 
-      expect(result).toBeGreaterThan(0);
+      expect(result).toBeLessThan(0);
     });
 
     test('handles mixed valid and invalid rigs', () => {
@@ -331,8 +343,8 @@ describe('Rig Bonus Calculations', () => {
 
       const result = getRigMaterialBonus(rigs, 88, 0.9);
 
-      // Should sum only valid rigs: 1.9 + 2.4 = 4.3
-      expect(result).toBeApproximately(4.3, 0.1);
+      // Should sum only valid rigs: -1.9 + -2.4 = -4.3 (negative means reduction)
+      expect(result).toBeApproximately(-4.3, 0.1);
     });
   });
 });

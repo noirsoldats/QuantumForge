@@ -22,9 +22,9 @@ tests/
 ### Prerequisites
 
 1. **SDE Database Required**: Tests require a downloaded SDE database in the standard Quantum Forge location:
-   - **Mac**: `~/Library/Application Support/Quantum Forge/sde/sqlite-latest.sqlite`
-   - **Windows**: `%APPDATA%\Quantum Forge\sde\sqlite-latest.sqlite`
-   - **Linux**: `~/.config/Quantum Forge/sde/sqlite-latest.sqlite`
+   - **Mac**: `~/Library/Application Support/Quantum Forge/sde/eve-sde.db`
+   - **Windows**: `%APPDATA%\Quantum Forge\sde\eve-sde.db`
+   - **Linux**: `~/.config/Quantum Forge/sde/eve-sde.db`
 
    **To download the SDE**: Run Quantum Forge and use the Settings to download the SDE, or manually download from Fuzzwork and place it in the above location.
 

@@ -1,4 +1,4 @@
-const { getMarketDatabase } = require('./market-database');
+const { getMarketDatabase, clearPriceCache } = require('./market-database');
 const { getUserAgent } = require('./user-agent');
 
 /**
@@ -283,6 +283,10 @@ function storeMarketOrders(orders, regionId) {
 
   insertMany(orders);
   console.log(`Stored ${orders.length} market orders in database`);
+
+  // Clear price cache for this region since we have fresh data
+  clearPriceCache(regionId);
+  console.log(`[ESI Market] Cleared price cache for region ${regionId} after storing ${orders.length} orders`);
 }
 
 /**
@@ -510,6 +514,10 @@ function storeMarketHistory(history, regionId, typeId) {
 
   insertMany(history);
   console.log(`Stored ${history.length} days of market history in database`);
+
+  // Clear price cache for this type since we have fresh data
+  clearPriceCache(regionId, typeId);
+  console.log(`[ESI Market] Cleared price cache for typeId ${typeId} in region ${regionId} after storing history`);
 }
 
 /**
@@ -680,6 +688,10 @@ async function manualRefreshMarketData(regionId) {
     // Fetch all market orders for the region (force refresh)
     await fetchMarketOrders(regionId, null, null, true);
 
+    // Additional cache clear to ensure fresh calculations
+    // (storeMarketOrders already clears, but this ensures it happens)
+    clearPriceCache(regionId);
+
     return {
       success: true,
       lastFetch: Date.now(),
@@ -751,6 +763,10 @@ async function manualRefreshHistoryData(regionId) {
       // Add small delay to avoid rate limiting
       await new Promise(resolve => setTimeout(resolve, 100));
     }
+
+    // Additional cache clear for the entire region to ensure fresh calculations
+    // (storeMarketHistory already clears per-type, but this ensures full refresh)
+    clearPriceCache(regionId);
 
     return {
       success: true,

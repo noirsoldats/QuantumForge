@@ -290,6 +290,38 @@ function cleanupOldData(daysToKeep = 90) {
   console.log(`Cleaned up market data older than ${daysToKeep} days`);
 }
 
+/**
+ * Clear price calculation cache
+ * @param {number|null} regionId - Optional region to clear (null = all regions)
+ * @param {number|null} typeId - Optional type to clear (requires regionId)
+ */
+function clearPriceCache(regionId = null, typeId = null) {
+  if (!db) {
+    console.error('[Market Database] Database not initialized');
+    return;
+  }
+
+  try {
+    if (regionId && typeId) {
+      // Clear specific type in specific region
+      db.prepare('DELETE FROM market_price_cache WHERE region_id = ? AND type_id = ?')
+        .run(regionId, typeId);
+      console.log(`[Market Database] Cleared price cache for typeId ${typeId} in region ${regionId}`);
+    } else if (regionId) {
+      // Clear entire region
+      db.prepare('DELETE FROM market_price_cache WHERE region_id = ?')
+        .run(regionId);
+      console.log(`[Market Database] Cleared price cache for region ${regionId}`);
+    } else {
+      // Clear all cached prices
+      db.prepare('DELETE FROM market_price_cache').run();
+      console.log('[Market Database] Cleared all price cache');
+    }
+  } catch (error) {
+    console.error('[Market Database] Error clearing price cache:', error);
+  }
+}
+
 module.exports = {
   initializeMarketDatabase,
   closeMarketDatabase,
@@ -299,4 +331,5 @@ module.exports = {
   getAdjustedPrice,
   clearAdjustedPrices,
   cleanupOldData,
+  clearPriceCache,
 };

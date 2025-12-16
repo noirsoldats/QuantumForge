@@ -20,10 +20,13 @@ jest.mock('../../src/main/rig-bonuses', () => ({
     // Simple mock: return 0 bonus if no rigs
     if (!rigs || rigs.length === 0) return 0;
 
-    // Return first ME rig bonus found
+    // Return first ME rig bonus found (NEGATIVE for reduction)
+    // Fixture bonusValue is positive (e.g., 1.9), but real SDE returns negative (-1.9)
+    // So we negate the fixture value to simulate real SDE behavior
     for (const rig of rigs) {
       if (rig.bonusType === 'materialEfficiency') {
-        return rig.bonusValue;
+        // Negate fixture value to match real SDE (which stores negative values)
+        return -rig.bonusValue;
       }
     }
     return 0;
@@ -95,9 +98,10 @@ describe('Blueprint Calculator - Pure Functions', () => {
       const productGroupId = 88;  // Light Missile group
       const result = calculateMaterialQuantity(100, 10, 1, facility, productGroupId);
 
-      // 100 * 0.9 * 0.99 * (1 + 0.019) = 90.71 -> ceil = 91
-      // Note: Rig bonus is negative (reduces materials)
-      expect(result).toBeGreaterThanOrEqual(90);
+      // 100 * 0.9 (ME) * 0.99 (structure) * (1 + (-0.019)) = 100 * 0.9 * 0.99 * 0.981 = 87.4 → ceil = 88
+      // Rig bonus is negative (reduces materials)
+      expect(result).toBeLessThanOrEqual(88);
+      expect(result).toBeGreaterThanOrEqual(87);
     });
 
     test('handles multiple runs', () => {

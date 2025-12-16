@@ -6,16 +6,14 @@
  */
 
 const Database = require('better-sqlite3');
-const path = require('path');
-const { app } = require('electron');
+const { getSdePath } = require('../../src/main/sde-manager');
 const { materials, ores, ammunition, ships, locations } = require('./fixtures/known-items');
 
 describe('SDE Known Items Data', () => {
   let db;
 
   beforeAll(() => {
-    const userDataPath = app.getPath('userData');
-    const dbPath = path.join(userDataPath, 'sde', 'sqlite-latest.sqlite');
+    const dbPath = getSdePath();
     db = new Database(dbPath, { readonly: true });
   });
 

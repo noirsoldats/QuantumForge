@@ -1,15 +1,6 @@
 const { rigAffectsProduct, getSecurityMultiplier } = require('./rig-mappings');
+const { getSdePath } = require('./sde-manager');
 const Database = require('better-sqlite3');
-const path = require('path');
-const { app } = require('electron');
-
-/**
- * Get the path to the SDE database
- */
-function getSDEPath() {
-  const userDataPath = app.getPath('userData');
-  return path.join(userDataPath, 'sde', 'sqlite-latest.sqlite');
-}
 
 /**
  * Get rig bonuses from SDE database
@@ -18,7 +9,7 @@ function getSDEPath() {
  */
 function getRigBonusesFromSDE(rigTypeId) {
   try {
-    const dbPath = getSDEPath();
+    const dbPath = getSdePath();
     const db = new Database(dbPath, { readonly: true });
 
     // Get rig attributes
@@ -41,6 +32,11 @@ function getRigBonusesFromSDE(rigTypeId) {
 
     attributes.forEach(attr => {
       const value = attr.valueFloat !== null ? attr.valueFloat : attr.valueInt;
+
+      // SDE stores rig bonuses as NEGATIVE values (e.g., -1.9 for 1.9% reduction)
+      // Use them as-is for the formula in blueprint-calculator.js
+      // Formula: quantity * (1 + rigBonus/100), where rigBonus is already negative
+      // Example: (1 + (-1.9)/100) = (1 - 0.019) = 0.981 (1.9% reduction)
       if (attr.attributeID === 2594) {
         bonuses.materialBonus = value || 0;
       } else if (attr.attributeID === 2593) {
@@ -64,7 +60,7 @@ function getRigBonusesFromSDE(rigTypeId) {
  */
 function getRigGroupId(rigTypeId) {
   try {
-    const dbPath = getSDEPath();
+    const dbPath = getSdePath();
     const db = new Database(dbPath, { readonly: true });
 
     const result = db.prepare(`
@@ -99,11 +95,9 @@ function getRigMaterialBonus(rigs, productGroupId, securityStatus = 0.5) {
   for (const rig of rigs) {
     // Handle both string typeIds and object format {typeId: ...}
     const rigTypeId = typeof rig === 'string' ? parseInt(rig) : rig.typeId;
-    const rigGroupId = getRigGroupId(rigTypeId);
-    if (!rigGroupId) continue;
 
-    // Check if this rig affects the product
-    if (rigAffectsProduct(rigGroupId, productGroupId)) {
+    // Check if this rig affects the product (now uses typeID directly)
+    if (rigAffectsProduct(rigTypeId, productGroupId, 'manufacturing', 'material')) {
       const bonuses = getRigBonusesFromSDE(rigTypeId);
       // Apply security multiplier to the bonus
       totalBonus += bonuses.materialBonus * securityMultiplier;
@@ -131,11 +125,9 @@ function getRigTimeBonus(rigs, productGroupId, securityStatus = 0.5) {
   for (const rig of rigs) {
     // Handle both string typeIds and object format {typeId: ...}
     const rigTypeId = typeof rig === 'string' ? parseInt(rig) : rig.typeId;
-    const rigGroupId = getRigGroupId(rigTypeId);
-    if (!rigGroupId) continue;
 
-    // Check if this rig affects the product
-    if (rigAffectsProduct(rigGroupId, productGroupId)) {
+    // Check if this rig affects the product (now uses typeID directly)
+    if (rigAffectsProduct(rigTypeId, productGroupId, 'manufacturing', 'time')) {
       const bonuses = getRigBonusesFromSDE(rigTypeId);
       // Apply security multiplier to the bonus
       totalBonus += bonuses.timeBonus * securityMultiplier;
@@ -163,11 +155,9 @@ function getRigCostBonus(rigs, productGroupId, securityStatus = 0.5) {
   for (const rig of rigs) {
     // Handle both string typeIds and object format {typeId: ...}
     const rigTypeId = typeof rig === 'string' ? parseInt(rig) : rig.typeId;
-    const rigGroupId = getRigGroupId(rigTypeId);
-    if (!rigGroupId) continue;
 
-    // Check if this rig affects the product
-    if (rigAffectsProduct(rigGroupId, productGroupId)) {
+    // Check if this rig affects the product (now uses typeID directly)
+    if (rigAffectsProduct(rigTypeId, productGroupId, 'manufacturing', 'cost')) {
       const bonuses = getRigBonusesFromSDE(rigTypeId);
       // Apply security multiplier to the bonus
       totalBonus += bonuses.costBonus * securityMultiplier;

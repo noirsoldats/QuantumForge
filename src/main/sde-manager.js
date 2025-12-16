@@ -16,9 +16,8 @@ const GITHUB_RELEASES_URL = `${GITHUB_API_BASE}/repos/${GITHUB_REPO_OWNER}/${GIT
 // SDE Database filename (we'll use the stripped version for smaller download)
 const SDE_DATABASE_NAME = 'eve-stripped.db';
 
-// Legacy Fuzzwork URLs (kept for potential fallback/migration)
+// Fuzzwork URLs
 const FUZZWORK_BASE_URL = 'https://www.fuzzwork.co.uk/dump';
-const FUZZWORK_LATEST_URL = `${FUZZWORK_BASE_URL}/sqlite-latest.sqlite.bz2`;
 const FUZZWORK_VERSION_CHECK_URL = 'https://www.fuzzwork.co.uk/dump/latest/';
 
 // Minimum required SDE version (format: numeric version from tag)
@@ -471,38 +470,19 @@ async function decompressBz2(source, dest) {
 }
 
 /**
- * Get SDE database file path (handles both old and new filenames)
+ * Get SDE database file path
  * @returns {string} Path to SDE database
  */
 function getSdePath() {
-  // Check for new filename first
-  if (fs.existsSync(sdeFilePath)) {
-    return sdeFilePath;
-  }
-
-  // Check for legacy Fuzzwork filename
-  const legacyPath = path.join(sdeDirectory, 'sqlite-latest.sqlite');
-  if (fs.existsSync(legacyPath)) {
-    return legacyPath;
-  }
-
-  // Return new path as default
   return sdeFilePath;
 }
 
 /**
- * Check if SDE database exists (handles both old and new filenames)
+ * Check if SDE database exists
  * @returns {boolean} True if database exists
  */
 function sdeExists() {
-  // Check new filename
-  if (fs.existsSync(sdeFilePath)) {
-    return true;
-  }
-
-  // Check legacy Fuzzwork filename
-  const legacyPath = path.join(sdeDirectory, 'sqlite-latest.sqlite');
-  return fs.existsSync(legacyPath);
+  return fs.existsSync(sdeFilePath);
 }
 
 /**

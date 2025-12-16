@@ -141,7 +141,7 @@ All main-renderer communication uses IPC handlers registered in `src/main/main.j
 
 **User Data Location**: `app.getPath('userData')` (platform-specific)
 - `quantum_config.json`: All application settings
-- `sde/sqlite-latest.sqlite`: Eve Online static data
+- `sde/eve-sde.db`: Eve Online static data
 - `sde/version.txt`: SDE version tracking
 - `market-data.db`: Cached market orders and history
 - `character-data.db`: Per-character data including manufacturing plans, industry jobs, wallet transactions
@@ -365,3 +365,4 @@ Use appropriate database library based on module context.
 - `src/main/market-pricing.js` - Price calculation logic
 - `src/main/esi-auth.js` - Eve SSO OAuth flow
 - `public/index.html` - Main application dashboard
+- Please don't run the tests automatically, I will handle testing when I'm ready.

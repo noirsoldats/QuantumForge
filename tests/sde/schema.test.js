@@ -6,8 +6,7 @@
  */
 
 const Database = require('better-sqlite3');
-const path = require('path');
-const { app } = require('electron');
+const { getSdePath } = require('../../src/main/sde-manager');
 const { requiredTables, invTypesColumns, industryActivityMaterialsColumns, industryActivityProductsColumns } = require('./fixtures/known-items');
 
 describe('SDE Schema Validation', () => {
@@ -15,8 +14,7 @@ describe('SDE Schema Validation', () => {
 
   beforeAll(() => {
     // Get SDE database path
-    const userDataPath = app.getPath('userData');
-    const dbPath = path.join(userDataPath, 'sde', 'sqlite-latest.sqlite');
+    const dbPath = getSdePath();
 
     // Open database connection
     db = new Database(dbPath, { readonly: true });
