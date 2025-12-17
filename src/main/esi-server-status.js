@@ -1,8 +1,10 @@
 const { getUserAgent } = require('./user-agent');
 const { getMarketDatabase } = require('./market-database');
+const { recordESICallStart, recordESICallSuccess, recordESICallError } = require('./esi-status-tracker');
 
 const ESI_BASE_URL = 'https://esi.evetech.net/latest';
 const CACHE_TTL = 60 * 1000; // 1 minute cache
+const CALL_KEY = 'universe_server_status';
 
 /**
  * Fetch Eve server status from ESI
@@ -22,6 +24,16 @@ async function fetchServerStatus(forceRefresh = false) {
     };
   }
 
+  // Record call start
+  recordESICallStart(CALL_KEY, {
+    category: 'universe',
+    characterId: null,
+    endpointType: 'server_status',
+    endpointLabel: 'Server Status'
+  });
+
+  const startTime = Date.now();
+
   try {
     // Fetch from ESI with retry logic
     const response = await retryFetch(
@@ -35,7 +47,9 @@ async function fetchServerStatus(forceRefresh = false) {
     );
 
     if (!response.ok) {
-      throw new Error(`Failed to fetch server status: ${response.status} ${response.statusText}`);
+      const errorMsg = `Failed to fetch server status: ${response.status} ${response.statusText}`;
+      recordESICallError(CALL_KEY, errorMsg, response.status.toString(), startTime);
+      throw new Error(errorMsg);
     }
 
     const data = await response.json();
@@ -61,11 +75,16 @@ async function fetchServerStatus(forceRefresh = false) {
       VALUES (?, ?, ?)
     `).run('server_status', now, now + CACHE_TTL);
 
+    // Record success
+    const responseSize = JSON.stringify(data).length;
+    recordESICallSuccess(CALL_KEY, now + CACHE_TTL, null, responseSize, startTime);
+
     console.log(`[ESI Server Status] Fetched: ${data.players} players online, status: ${serverStatus}`);
     return result;
 
   } catch (error) {
     console.error('[ESI Server Status] Error fetching server status:', error);
+    recordESICallError(CALL_KEY, error.message, 'NETWORK_ERROR', startTime);
     return {
       success: false,
       error: error.message,

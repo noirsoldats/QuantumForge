@@ -1,5 +1,6 @@
 const { getMarketDatabase } = require('./market-database');
 const { getUserAgent } = require('./user-agent');
+const { recordESICallStart, recordESICallSuccess, recordESICallError } = require('./esi-status-tracker');
 
 /**
  * Retry a fetch operation with exponential backoff
@@ -100,6 +101,17 @@ async function fetchCostIndices(forceRefresh = false) {
     };
   }
 
+  const callKey = 'universe_cost_indices';
+
+  recordESICallStart(callKey, {
+    category: 'universe',
+    characterId: null,
+    endpointType: 'cost_indices',
+    endpointLabel: 'Cost Indices'
+  });
+
+  const startTime = Date.now();
+
   try {
     const url = 'https://esi.evetech.net/latest/industry/systems/?datasource=tranquility';
 
@@ -129,6 +141,9 @@ async function fetchCostIndices(forceRefresh = false) {
     // Update fetch metadata
     updateCostIndicesFetchMetadata();
 
+    const responseSize = JSON.stringify(systemsData).length;
+    recordESICallSuccess(callKey, null, null, responseSize, startTime);
+
     return {
       success: true,
       systemCount: systemsData.length,
@@ -136,6 +151,8 @@ async function fetchCostIndices(forceRefresh = false) {
       message: `Cost indices updated for ${systemsData.length} solar systems`
     };
   } catch (error) {
+    const errorMsg = `Failed to fetch cost indices: ${error.message}`;
+    recordESICallError(callKey, errorMsg, 'NETWORK_ERROR', startTime);
     console.error('Error fetching cost indices:', error);
     return {
       success: false,

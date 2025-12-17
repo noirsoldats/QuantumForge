@@ -144,6 +144,7 @@ const {
   getRigEffects,
 } = require('./sde-database');
 const { initializeMarketDatabase, getMarketDatabase } = require('./market-database');
+const { initializeESIStatusDatabase } = require('./esi-status-tracker');
 const { fetchMarketOrders, fetchMarketHistory, fetchMarketData, getLastMarketFetchTime, getLastHistoryFetchTime, getHistoryDataStatus, manualRefreshMarketData, manualRefreshHistoryData } = require('./esi-market');
 const { fetchCostIndices, getCostIndices, getAllCostIndices, getLastCostIndicesFetchTime, getCostIndicesSystemCount } = require('./esi-cost-indices');
 const { fetchFuzzworkHistory, fetchJitaPrice, fetchBulkPrices } = require('./fuzzwork-market');
@@ -324,6 +325,9 @@ app.whenReady().then(async () => {
   // Initialize character database
   const { initializeCharacterDatabase } = require('./character-database');
   initializeCharacterDatabase();
+
+  // Initialize ESI status database
+  initializeESIStatusDatabase();
 
   // Run database schema migrations (must run AFTER database initialization)
   const { needsSchemaMigrations, runSchemaMigrations } = require('./database-schema-migrations');
@@ -552,6 +556,50 @@ function setupIPCHandlers() {
 
   ipcMain.handle('status:getLastFetchTime', () => {
     return getLastServerStatusFetchTime();
+  });
+
+  // ESI Status Monitoring IPC Handlers
+  ipcMain.handle('esiStatus:openWindow', () => {
+    const { createESIStatusWindow } = require('./esi-status-window');
+    createESIStatusWindow();
+  });
+
+  ipcMain.handle('esiStatus:getAggregated', () => {
+    const { getAggregatedStatus } = require('./esi-status-tracker');
+    return getAggregatedStatus();
+  });
+
+  ipcMain.handle('esiStatus:initializeCharacter', (event, characterId, characterName) => {
+    const { initializeCharacterEndpoints } = require('./esi-status-tracker');
+    return initializeCharacterEndpoints(characterId, characterName);
+  });
+
+  ipcMain.handle('esiStatus:initializeUniverse', () => {
+    const { initializeUniverseEndpoints } = require('./esi-status-tracker');
+    return initializeUniverseEndpoints();
+  });
+
+  ipcMain.handle('esiStatus:getCharacterCalls', (event, characterId) => {
+    const { getAllCharacterCallStatuses } = require('./esi-status-tracker');
+    return getAllCharacterCallStatuses(characterId);
+  });
+
+  ipcMain.handle('esiStatus:getUniverseCalls', () => {
+    const { getAllUniverseCallStatuses } = require('./esi-status-tracker');
+    return getAllUniverseCallStatuses();
+  });
+
+  ipcMain.handle('esiStatus:getCallDetails', (event, callKey) => {
+    const { getESICallStatus, getCallHistory } = require('./esi-status-tracker');
+    return {
+      status: getESICallStatus(callKey),
+      history: getCallHistory(callKey, 10)
+    };
+  });
+
+  ipcMain.handle('esiStatus:cleanup', () => {
+    const { cleanupOldHistory } = require('./esi-status-tracker');
+    return cleanupOldHistory(7);
   });
 
   // Character Division Settings IPC Handlers

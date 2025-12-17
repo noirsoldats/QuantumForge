@@ -1,0 +1,372 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ESI Status - Quantum Forge</title>
+  <link rel="stylesheet" href="styles.css">
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+    }
+
+    .esi-status-container {
+      display: grid;
+      grid-template-columns: 250px 1fr 400px;
+      height: 100vh;
+      gap: 1px;
+      background: #2a2a3e;
+    }
+
+    .navigation-panel {
+      background: #1e1e2e;
+      overflow-y: auto;
+      padding: 15px;
+      border-right: 1px solid #2a2a3e;
+    }
+
+    .calls-panel {
+      background: #252535;
+      overflow-y: auto;
+      padding: 20px;
+    }
+
+    .detail-panel {
+      background: #1e1e2e;
+      overflow-y: auto;
+      padding: 20px;
+      border-left: 1px solid #2a2a3e;
+    }
+
+    .nav-section {
+      margin-bottom: 20px;
+    }
+
+    .nav-header {
+      font-weight: bold;
+      font-size: 11px;
+      text-transform: uppercase;
+      color: #888;
+      margin-bottom: 10px;
+      letter-spacing: 0.5px;
+    }
+
+    .nav-item {
+      padding: 10px 12px;
+      cursor: pointer;
+      border-radius: 6px;
+      margin-bottom: 4px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 14px;
+      transition: background-color 0.2s;
+    }
+
+    .nav-item:hover {
+      background: rgba(255, 255, 255, 0.05);
+    }
+
+    .nav-item.active {
+      background: #3a3a5a;
+    }
+
+    .status-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+
+    .status-dot.green {
+      background: #4caf50;
+      box-shadow: 0 0 8px rgba(76, 175, 80, 0.5);
+    }
+
+    .status-dot.yellow {
+      background: #ffa500;
+      box-shadow: 0 0 8px rgba(255, 165, 0, 0.5);
+    }
+
+    .status-dot.red {
+      background: #f44336;
+      box-shadow: 0 0 8px rgba(244, 67, 54, 0.5);
+    }
+
+    .status-dot.gray {
+      background: #666;
+    }
+
+    .calls-panel-header {
+      margin-bottom: 20px;
+    }
+
+    .calls-panel-title {
+      font-size: 20px;
+      font-weight: 600;
+      margin-bottom: 10px;
+    }
+
+    .calls-panel-subtitle {
+      font-size: 13px;
+      color: #888;
+    }
+
+    .call-item {
+      background: #1e1e2e;
+      padding: 15px;
+      border-radius: 8px;
+      margin-bottom: 12px;
+      cursor: pointer;
+      border-left: 4px solid transparent;
+      transition: all 0.2s;
+    }
+
+    .call-item.status-success {
+      border-left-color: #4caf50;
+    }
+
+    .call-item.status-warning {
+      border-left-color: #ffa500;
+    }
+
+    .call-item.status-error {
+      border-left-color: #f44336;
+    }
+
+    .call-item:hover {
+      background: #252535;
+      transform: translateX(4px);
+    }
+
+    .call-item.selected {
+      background: #2a2a4e;
+      border-left-width: 6px;
+    }
+
+    .call-item-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 8px;
+    }
+
+    .call-item-title {
+      font-weight: 600;
+      font-size: 15px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .call-item-meta {
+      font-size: 12px;
+      color: #888;
+    }
+
+    .empty-state {
+      text-align: center;
+      padding: 60px 20px;
+      color: #888;
+    }
+
+    .empty-state-icon {
+      font-size: 48px;
+      margin-bottom: 20px;
+      opacity: 0.5;
+    }
+
+    .detail-header {
+      margin-bottom: 30px;
+      padding-bottom: 20px;
+      border-bottom: 1px solid #2a2a3e;
+    }
+
+    .detail-title {
+      font-size: 18px;
+      font-weight: 600;
+      margin-bottom: 8px;
+    }
+
+    .detail-subtitle {
+      font-size: 13px;
+      color: #888;
+    }
+
+    .detail-section {
+      margin-bottom: 25px;
+    }
+
+    .detail-section-title {
+      font-size: 12px;
+      font-weight: 600;
+      text-transform: uppercase;
+      color: #888;
+      margin-bottom: 12px;
+      letter-spacing: 0.5px;
+    }
+
+    .detail-row {
+      display: flex;
+      justify-content: space-between;
+      padding: 10px 0;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    }
+
+    .detail-row:last-child {
+      border-bottom: none;
+    }
+
+    .detail-label {
+      font-size: 13px;
+      color: #999;
+    }
+
+    .detail-value {
+      font-size: 14px;
+      font-weight: 500;
+      text-align: right;
+    }
+
+    .detail-value.success {
+      color: #4caf50;
+    }
+
+    .detail-value.error {
+      color: #f44336;
+    }
+
+    .detail-value.warning {
+      color: #ffa500;
+    }
+
+    .error-message {
+      background: rgba(244, 67, 54, 0.1);
+      border: 1px solid rgba(244, 67, 54, 0.3);
+      border-radius: 6px;
+      padding: 12px;
+      font-size: 13px;
+      font-family: 'Courier New', monospace;
+      color: #f44336;
+      margin-top: 10px;
+      word-wrap: break-word;
+    }
+
+    .loading {
+      text-align: center;
+      padding: 40px;
+      color: #888;
+    }
+
+    .spinner {
+      border: 3px solid rgba(255, 255, 255, 0.1);
+      border-top: 3px solid #64b4ff;
+      border-radius: 50%;
+      width: 40px;
+      height: 40px;
+      animation: spin 1s linear infinite;
+      margin: 0 auto 20px;
+    }
+
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+
+    .refresh-button {
+      background: #3a3a5a;
+      border: 1px solid #4a4a6a;
+      color: #fff;
+      padding: 8px 16px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 13px;
+      transition: background 0.2s;
+    }
+
+    .refresh-button:hover {
+      background: #4a4a6a;
+    }
+
+    .badge {
+      background: rgba(100, 180, 255, 0.2);
+      color: #64b4ff;
+      padding: 4px 8px;
+      border-radius: 4px;
+      font-size: 11px;
+      font-weight: 600;
+    }
+
+    .badge.success {
+      background: rgba(76, 175, 80, 0.2);
+      color: #4caf50;
+    }
+
+    .badge.error {
+      background: rgba(244, 67, 54, 0.2);
+      color: #f44336;
+    }
+
+    .badge.warning {
+      background: rgba(255, 165, 0, 0.2);
+      color: #ffa500;
+    }
+  </style>
+</head>
+<body>
+  <div class="esi-status-container">
+    <!-- Left Panel: Navigation -->
+    <div class="navigation-panel">
+      <div class="nav-section">
+        <div class="nav-header">Characters</div>
+        <div id="character-nav-items">
+          <div class="loading">
+            <div class="spinner"></div>
+            Loading characters...
+          </div>
+        </div>
+      </div>
+
+      <div class="nav-section">
+        <div class="nav-header">General</div>
+        <div class="nav-item" data-view="universe" data-type="universe">
+          <span class="status-dot gray"></span>
+          <span>Eve Universe</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Center Panel: Call List -->
+    <div class="calls-panel">
+      <div class="calls-panel-header">
+        <div class="calls-panel-title" id="calls-panel-title">Select a category</div>
+        <div class="calls-panel-subtitle" id="calls-panel-subtitle">Choose a character or Eve Universe from the left</div>
+      </div>
+      <div id="calls-list">
+        <div class="empty-state">
+          <div class="empty-state-icon">📊</div>
+          <p>Select a category from the navigation to view ESI call status</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Right Panel: Details -->
+    <div class="detail-panel">
+      <div class="detail-header">
+        <div class="detail-title">Call Details</div>
+        <div class="detail-subtitle">Select a call to view detailed information</div>
+      </div>
+      <div id="call-details">
+        <div class="empty-state">
+          <div class="empty-state-icon">📋</div>
+          <p>Click on any call to see its details</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="../src/renderer/esi-status-renderer.js"></script>
+</body>
+</html>

@@ -1,6 +1,7 @@
 const { refreshAccessToken, isTokenExpired } = require('./esi-auth');
 const { getCharacter, updateCharacterTokens } = require('./settings-manager');
 const { getUserAgent } = require('./user-agent');
+const { recordESICallStart, recordESICallSuccess, recordESICallError } = require('./esi-status-tracker');
 
 /**
  * Fetch corporation division names from ESI
@@ -9,11 +10,24 @@ const { getUserAgent } = require('./user-agent');
  * @returns {Promise<Object>} Division names with metadata
  */
 async function fetchCorporationDivisions(characterId, corporationId) {
+  const callKey = `character_${characterId}_corporation_divisions`;
+
+  recordESICallStart(callKey, {
+    category: 'character',
+    characterId: characterId,
+    endpointType: 'corporation_divisions',
+    endpointLabel: 'Corporation Divisions'
+  });
+
+  const startTime = Date.now();
+
   try {
     let character = getCharacter(characterId);
 
     if (!character) {
-      throw new Error('Character not found');
+      const errorMsg = 'Character not found';
+      recordESICallError(callKey, errorMsg, 'NOT_FOUND', startTime);
+      throw new Error(errorMsg);
     }
 
     // Check if token is expired and refresh if needed
@@ -30,6 +44,7 @@ async function fetchCorporationDivisions(characterId, corporationId) {
 
     if (!hasScope) {
       console.log('[ESI Divisions] Character missing divisions scope, using generic names');
+      recordESICallSuccess(callKey, null, null, 0, startTime);
       return {
         hasScope: false,
         divisions: {},
@@ -55,6 +70,7 @@ async function fetchCorporationDivisions(characterId, corporationId) {
       // If we get a 403, the character doesn't have permission
       if (response.status === 403) {
         console.log('[ESI Divisions] Character does not have permission to view corporation divisions');
+        recordESICallSuccess(callKey, null, null, 0, startTime);
         return {
           hasScope: false,
           divisions: {},
@@ -66,7 +82,9 @@ async function fetchCorporationDivisions(characterId, corporationId) {
       }
 
       const errorText = await response.text();
-      throw new Error(`Failed to fetch corporation divisions: ${response.status} ${errorText}`);
+      const errorMsg = `Failed to fetch corporation divisions: ${response.status} ${errorText}`;
+      recordESICallError(callKey, errorMsg, response.status.toString(), startTime);
+      throw new Error(errorMsg);
     }
 
     const data = await response.json();
@@ -91,6 +109,9 @@ async function fetchCorporationDivisions(characterId, corporationId) {
 
     console.log(`[ESI Divisions] Fetched ${Object.keys(divisionNames).length} division names for corp ${corporationId}`);
 
+    const responseSize = JSON.stringify(data).length;
+    recordESICallSuccess(callKey, cacheExpiresAt, null, responseSize, startTime);
+
     return {
       hasScope: true,
       divisions: divisionNames,
@@ -101,6 +122,9 @@ async function fetchCorporationDivisions(characterId, corporationId) {
     };
   } catch (error) {
     console.error('[ESI Divisions] Error fetching corporation divisions:', error);
+    if (!error.message.includes('Character not found') && !error.message.includes('Failed to fetch')) {
+      recordESICallError(callKey, error.message, 'NETWORK_ERROR', startTime);
+    }
     // Return empty divisions on error, not an error state
     return {
       hasScope: false,

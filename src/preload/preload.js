@@ -316,6 +316,18 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getLastFetchTime: () => ipcRenderer.invoke('status:getLastFetchTime'),
   },
 
+  // ESI Status Monitoring API
+  esiStatus: {
+    openWindow: () => ipcRenderer.invoke('esiStatus:openWindow'),
+    getAggregated: () => ipcRenderer.invoke('esiStatus:getAggregated'),
+    initializeCharacter: (characterId, characterName) => ipcRenderer.invoke('esiStatus:initializeCharacter', characterId, characterName),
+    initializeUniverse: () => ipcRenderer.invoke('esiStatus:initializeUniverse'),
+    getCharacterCalls: (characterId) => ipcRenderer.invoke('esiStatus:getCharacterCalls', characterId),
+    getUniverseCalls: () => ipcRenderer.invoke('esiStatus:getUniverseCalls'),
+    getCallDetails: (callKey) => ipcRenderer.invoke('esiStatus:getCallDetails', callKey),
+    cleanup: () => ipcRenderer.invoke('esiStatus:cleanup'),
+  },
+
   // Shell API (for opening external links)
   shell: {
     openExternal: (url) => ipcRenderer.invoke('shell:openExternal', url),

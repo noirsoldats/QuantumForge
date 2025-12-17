@@ -2,6 +2,7 @@ const { refreshAccessToken, isTokenExpired } = require('./esi-auth');
 const { getCharacter, updateCharacterTokens } = require('./settings-manager');
 const { getUserAgent } = require('./user-agent');
 const { getCharacterDatabase } = require('./character-database');
+const { recordESICallStart, recordESICallSuccess, recordESICallError } = require('./esi-status-tracker');
 
 /**
  * Fetch character wallet transactions from ESI
@@ -10,11 +11,24 @@ const { getCharacterDatabase } = require('./character-database');
  * @returns {Promise<Object>} Wallet transactions data with metadata
  */
 async function fetchCharacterWalletTransactions(characterId, fromId = null) {
+  const callKey = `character_${characterId}_wallet_transactions`;
+
+  recordESICallStart(callKey, {
+    category: 'character',
+    characterId: characterId,
+    endpointType: 'wallet_transactions',
+    endpointLabel: 'Wallet Transactions'
+  });
+
+  const startTime = Date.now();
+
   try {
     let character = getCharacter(characterId);
 
     if (!character) {
-      throw new Error('Character not found');
+      const errorMsg = 'Character not found';
+      recordESICallError(callKey, errorMsg, 'NOT_FOUND', startTime);
+      throw new Error(errorMsg);
     }
 
     // Check if token is expired and refresh if needed
@@ -43,7 +57,9 @@ async function fetchCharacterWalletTransactions(characterId, fromId = null) {
 
     if (!response.ok) {
       const errorText = await response.text();
-      throw new Error(`Failed to fetch wallet transactions: ${response.status} ${errorText}`);
+      const errorMsg = `Failed to fetch wallet transactions: ${response.status} ${errorText}`;
+      recordESICallError(callKey, errorMsg, response.status.toString(), startTime);
+      throw new Error(errorMsg);
     }
 
     const transactionsData = await response.json();
@@ -59,6 +75,9 @@ async function fetchCharacterWalletTransactions(characterId, fromId = null) {
 
     console.log(`Fetched ${allTransactionsData.length} wallet transactions`);
 
+    const responseSize = JSON.stringify(allTransactionsData).length;
+    recordESICallSuccess(callKey, cacheExpiresAt, null, responseSize, startTime);
+
     return {
       transactions: allTransactionsData,
       characterId: characterId,
@@ -67,6 +86,9 @@ async function fetchCharacterWalletTransactions(characterId, fromId = null) {
     };
   } catch (error) {
     console.error('Error fetching character wallet transactions:', error);
+    if (!error.message.includes('Character not found') && !error.message.includes('Failed to fetch')) {
+      recordESICallError(callKey, error.message, 'NETWORK_ERROR', startTime);
+    }
     throw error;
   }
 }

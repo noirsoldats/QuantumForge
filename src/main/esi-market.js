@@ -1,5 +1,6 @@
 const { getMarketDatabase, clearPriceCache } = require('./market-database');
 const { getUserAgent } = require('./user-agent');
+const { recordESICallStart, recordESICallSuccess, recordESICallError } = require('./esi-status-tracker');
 
 /**
  * Retry a fetch operation with exponential backoff
@@ -120,6 +121,17 @@ async function fetchMarketOrders(regionId, typeId = null, locationFilter = null,
     return getCachedMarketOrders(regionId, typeId, locationFilter);
   }
 
+  const callKey = `universe_market_orders_${regionId}`;
+
+  recordESICallStart(callKey, {
+    category: 'universe',
+    characterId: null,
+    endpointType: 'market_orders',
+    endpointLabel: 'Market Orders'
+  });
+
+  const startTime = Date.now();
+
   try {
     const baseUrl = typeId
       ? `https://esi.evetech.net/latest/markets/${regionId}/orders/?datasource=tranquility&type_id=${typeId}`
@@ -219,6 +231,9 @@ async function fetchMarketOrders(regionId, typeId = null, locationFilter = null,
     // Update fetch metadata
     updateFetchMetadata(cacheKey, expiresAt);
 
+    const responseSize = JSON.stringify(allOrders).length;
+    recordESICallSuccess(callKey, expiresAt, null, responseSize, startTime);
+
     // Apply location filter to fetched orders before returning
     if (locationFilter) {
       if (locationFilter.stationId) {
@@ -233,8 +248,11 @@ async function fetchMarketOrders(regionId, typeId = null, locationFilter = null,
     // Special handling for items not available in market (T2 Blueprints, etc.)
     if (error.noRetry) {
       console.log(`Item ${typeId} not available in market (expected for T2 Blueprints, etc.) - using fallback pricing`);
+      recordESICallSuccess(callKey, null, null, 0, startTime);
       return []; // Return empty array for items without market data
     }
+    const errorMsg = `Failed to fetch market orders: ${error.message}`;
+    recordESICallError(callKey, errorMsg, 'NETWORK_ERROR', startTime);
     console.error('Error fetching market orders:', error);
     // Return cached data on error
     return getCachedMarketOrders(regionId, typeId, locationFilter);
@@ -398,6 +416,17 @@ function isHistoryStale(regionId, typeId) {
  * @returns {Promise<Array>} Market history
  */
 async function fetchHistoryFromESI(regionId, typeId) {
+  const callKey = `universe_market_history_${regionId}`;
+
+  recordESICallStart(callKey, {
+    category: 'universe',
+    characterId: null,
+    endpointType: 'market_history',
+    endpointLabel: 'Market History'
+  });
+
+  const startTime = Date.now();
+
   try {
     const url = `https://esi.evetech.net/latest/markets/${regionId}/history/?datasource=tranquility&type_id=${typeId}`;
 
@@ -434,12 +463,18 @@ async function fetchHistoryFromESI(regionId, typeId) {
     const cacheKey = `market_history_${regionId}_${typeId}`;
     updateFetchMetadata(cacheKey, expiresAt);
 
+    const responseSize = JSON.stringify(history).length;
+    recordESICallSuccess(callKey, expiresAt, null, responseSize, startTime);
+
     return history;
   } catch (error) {
     if (error.noRetry) {
       console.log(`Item ${typeId} not available in market - returning empty array`);
+      recordESICallSuccess(callKey, null, null, 0, startTime);
       return [];
     }
+    const errorMsg = `Failed to fetch market history: ${error.message}`;
+    recordESICallError(callKey, errorMsg, 'NETWORK_ERROR', startTime);
     console.error('Error fetching market history:', error);
     // Return cached data on error
     return getCachedMarketHistory(regionId, typeId);
@@ -789,6 +824,17 @@ async function manualRefreshHistoryData(regionId) {
  * @returns {Promise<Array>} Array of price objects
  */
 async function fetchAdjustedPrices() {
+  const callKey = 'universe_adjusted_prices';
+
+  recordESICallStart(callKey, {
+    category: 'universe',
+    characterId: null,
+    endpointType: 'adjusted_prices',
+    endpointLabel: 'Adjusted Prices'
+  });
+
+  const startTime = Date.now();
+
   try {
     console.log('Fetching adjusted prices from ESI...');
 
@@ -801,10 +847,16 @@ async function fetchAdjustedPrices() {
     });
 
     const prices = await response.json();
+    const expiresAt = getCacheExpiry(response);
     console.log(`Fetched ${prices.length} adjusted prices from ESI`);
+
+    const responseSize = JSON.stringify(prices).length;
+    recordESICallSuccess(callKey, expiresAt, null, responseSize, startTime);
 
     return prices;
   } catch (error) {
+    const errorMsg = `Failed to fetch adjusted prices: ${error.message}`;
+    recordESICallError(callKey, errorMsg, 'NETWORK_ERROR', startTime);
     console.error('Error fetching adjusted prices:', error);
     throw error;
   }

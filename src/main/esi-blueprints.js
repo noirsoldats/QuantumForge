@@ -1,6 +1,7 @@
 const { refreshAccessToken, isTokenExpired } = require('./esi-auth');
 const { getCharacter, updateCharacterTokens } = require('./settings-manager');
 const { getUserAgent } = require('./user-agent');
+const { recordESICallStart, recordESICallSuccess, recordESICallError } = require('./esi-status-tracker');
 
 /**
  * Fetch corporation blueprints from ESI
@@ -9,11 +10,25 @@ const { getUserAgent } = require('./user-agent');
  * @returns {Promise<Array>} Corporation blueprints data
  */
 async function fetchCorporationBlueprints(characterId, corporationId) {
+  const callKey = `character_${characterId}_corporation_blueprints`;
+
+  // Record call start
+  recordESICallStart(callKey, {
+    category: 'character',
+    characterId: characterId,
+    endpointType: 'corporation_blueprints',
+    endpointLabel: 'Corporation Blueprints'
+  });
+
+  const startTime = Date.now();
+
   try {
     let character = getCharacter(characterId);
 
     if (!character) {
-      throw new Error('Character not found');
+      const errorMsg = 'Character not found';
+      recordESICallError(callKey, errorMsg, 'NOT_FOUND', startTime);
+      throw new Error(errorMsg);
     }
 
     // Check if token is expired and refresh if needed
@@ -27,6 +42,7 @@ async function fetchCorporationBlueprints(characterId, corporationId) {
     // Check if character has the required scope
     if (!character.scopes || !character.scopes.includes('esi-corporations.read_blueprints.v1')) {
       console.log('Character does not have corporation blueprints scope, skipping...');
+      recordESICallSuccess(callKey, null, null, 0, startTime);
       return [];
     }
 
@@ -52,10 +68,13 @@ async function fetchCorporationBlueprints(characterId, corporationId) {
         // If we get a 403, the character doesn't have permission
         if (response.status === 403) {
           console.log('Character does not have permission to view corporation blueprints');
+          recordESICallSuccess(callKey, null, null, 0, startTime);
           return [];
         }
         const errorText = await response.text();
-        throw new Error(`Failed to fetch corporation blueprints: ${response.status} ${errorText}`);
+        const errorMsg = `Failed to fetch corporation blueprints: ${response.status} ${errorText}`;
+        recordESICallError(callKey, errorMsg, response.status.toString(), startTime);
+        throw new Error(errorMsg);
       }
 
       const blueprintsData = await response.json();
@@ -92,9 +111,16 @@ async function fetchCorporationBlueprints(characterId, corporationId) {
       };
     });
 
+    // Record success
+    const responseSize = JSON.stringify(allBlueprintsData).length;
+    recordESICallSuccess(callKey, null, null, responseSize, startTime);
+
     return blueprints;
   } catch (error) {
     console.error('Error fetching corporation blueprints:', error);
+    if (!error.message.includes('Character not found') && !error.message.includes('Failed to fetch')) {
+      recordESICallError(callKey, error.message, 'NETWORK_ERROR', startTime);
+    }
     // Don't throw - just return empty array so character blueprints still work
     return [];
   }
@@ -106,20 +132,34 @@ async function fetchCorporationBlueprints(characterId, corporationId) {
  * @returns {Promise<Array>} Blueprints data
  */
 async function fetchCharacterBlueprints(characterId) {
+  const callKey = `character_${characterId}_blueprints`;
+
+  // Record call start
+  recordESICallStart(callKey, {
+    category: 'character',
+    characterId: characterId,
+    endpointType: 'blueprints',
+    endpointLabel: 'Blueprints'
+  });
+
+  const startTime = Date.now();
+
   try {
     let character = getCharacter(characterId);
 
-      if (!character) {
-          throw new Error('Character not found');
-      }
+    if (!character) {
+      const errorMsg = 'Character not found';
+      recordESICallError(callKey, errorMsg, 'NOT_FOUND', startTime);
+      throw new Error(errorMsg);
+    }
 
-      // Check if token is expired and refresh if needed
-      if (isTokenExpired(character.expiresAt)) {
-          console.log('Token expired, refreshing...');
-          const newTokens = await refreshAccessToken(character.refreshToken);
-          updateCharacterTokens(characterId, newTokens);
-          character = getCharacter(characterId);
-      }
+    // Check if token is expired and refresh if needed
+    if (isTokenExpired(character.expiresAt)) {
+      console.log('Token expired, refreshing...');
+      const newTokens = await refreshAccessToken(character.refreshToken);
+      updateCharacterTokens(characterId, newTokens);
+      character = getCharacter(characterId);
+    }
 
     // Fetch all pages of character blueprints from ESI
     let allBlueprintsData = [];
@@ -142,7 +182,9 @@ async function fetchCharacterBlueprints(characterId) {
 
       if (!response.ok) {
         const errorText = await response.text();
-        throw new Error(`Failed to fetch blueprints: ${response.status} ${errorText}`);
+        const errorMsg = `Failed to fetch blueprints: ${response.status} ${errorText}`;
+        recordESICallError(callKey, errorMsg, response.status.toString(), startTime);
+        throw new Error(errorMsg);
       }
 
       const blueprintsData = await response.json();
@@ -199,6 +241,10 @@ async function fetchCharacterBlueprints(characterId) {
     // Combine character and corporation blueprints
     const allBlueprints = [...characterBlueprints, ...corporationBlueprints];
 
+    // Record success
+    const responseSize = JSON.stringify(allBlueprintsData).length;
+    recordESICallSuccess(callKey, cacheExpiresAt, null, responseSize, startTime);
+
     return {
       blueprints: allBlueprints,
       lastUpdated: Date.now(),
@@ -207,6 +253,9 @@ async function fetchCharacterBlueprints(characterId) {
     };
   } catch (error) {
     console.error('Error fetching character blueprints:', error);
+    if (!error.message.includes('Character not found') && !error.message.includes('Failed to fetch')) {
+      recordESICallError(callKey, error.message, 'NETWORK_ERROR', startTime);
+    }
     throw error;
   }
 }

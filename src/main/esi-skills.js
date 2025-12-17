@@ -1,6 +1,7 @@
 const { refreshAccessToken, isTokenExpired } = require('./esi-auth');
 const { getCharacter, updateCharacterTokens } = require('./settings-manager');
 const { getUserAgent } = require('./user-agent');
+const { recordESICallStart, recordESICallSuccess, recordESICallError } = require('./esi-status-tracker');
 
 /**
  * Fetch character skills from ESI
@@ -8,11 +9,25 @@ const { getUserAgent } = require('./user-agent');
  * @returns {Promise<Object>} Skills data
  */
 async function fetchCharacterSkills(characterId) {
+  const callKey = `character_${characterId}_skills`;
+
+  // Record call start
+  recordESICallStart(callKey, {
+    category: 'character',
+    characterId: characterId,
+    endpointType: 'skills',
+    endpointLabel: 'Skills'
+  });
+
+  const startTime = Date.now();
+
   try {
     let character = getCharacter(characterId);
 
     if (!character) {
-      throw new Error('Character not found');
+      const errorMsg = 'Character not found';
+      recordESICallError(callKey, errorMsg, 'NOT_FOUND', startTime);
+      throw new Error(errorMsg);
     }
 
     // Check if token is expired and refresh if needed
@@ -36,7 +51,9 @@ async function fetchCharacterSkills(characterId) {
 
     if (!response.ok) {
       const errorText = await response.text();
-      throw new Error(`Failed to fetch skills: ${response.status} ${errorText}`);
+      const errorMsg = `Failed to fetch skills: ${response.status} ${errorText}`;
+      recordESICallError(callKey, errorMsg, response.status.toString(), startTime);
+      throw new Error(errorMsg);
     }
 
     const skillsData = await response.json();
@@ -64,6 +81,10 @@ async function fetchCharacterSkills(characterId) {
       });
     }
 
+    // Record success
+    const responseSize = JSON.stringify(skillsData).length;
+    recordESICallSuccess(callKey, cacheExpiresAt, null, responseSize, startTime);
+
     return {
       totalSp: skillsData.total_sp || 0,
       unallocatedSp: skillsData.unallocated_sp || 0,
@@ -73,6 +94,9 @@ async function fetchCharacterSkills(characterId) {
     };
   } catch (error) {
     console.error('Error fetching character skills:', error);
+    if (!error.message.includes('Character not found') && !error.message.includes('Failed to fetch skills')) {
+      recordESICallError(callKey, error.message, 'NETWORK_ERROR', startTime);
+    }
     throw error;
   }
 }

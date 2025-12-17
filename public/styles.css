@@ -343,6 +343,16 @@ main {
   opacity: 0.5;
 }
 
+.status-icon.status-warning {
+  stroke: #ffa500;
+  fill: rgba(255, 165, 0, 0.1);
+}
+
+.status-icon.status-error {
+  stroke: #f44336;
+  fill: rgba(244, 67, 54, 0.1);
+}
+
 @keyframes pulse {
   0%, 100% {
     opacity: 1;
@@ -350,6 +360,23 @@ main {
   50% {
     opacity: 0.5;
   }
+}
+
+/* Footer clickable items */
+.footer-clickable {
+  cursor: pointer;
+  transition: all 0.2s ease;
+  border-radius: 4px;
+  padding: 4px 8px;
+  margin: -4px -8px;
+}
+
+.footer-clickable:hover {
+  background-color: rgba(255, 255, 255, 0.05);
+}
+
+.footer-clickable:active {
+  background-color: rgba(255, 255, 255, 0.1);
 }
 
 /* Responsive adjustments */

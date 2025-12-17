@@ -7,6 +7,7 @@
 let footerUpdateIntervals = {
   clock: null,
   status: null,
+  esiStatus: null,
 };
 
 // Constants
@@ -54,12 +55,16 @@ async function initializeFooter() {
   // Initial data load
   await updateCharacterCount();
   await updateServerStatus();
+  await updateESIStatus();
 
   // Start Eve Time clock (updates every second)
   startEveTimeClock();
 
   // Start server status polling (updates every minute)
   startServerStatusPolling();
+
+  // Start ESI status polling (updates every 30 seconds)
+  startESIStatusPolling();
 }
 
 /**
@@ -211,6 +216,53 @@ function startServerStatusPolling() {
 }
 
 /**
+ * Update ESI status in footer
+ */
+async function updateESIStatus() {
+  try {
+    const status = await window.electronAPI.esiStatus.getAggregated();
+
+    const iconElement = document.getElementById('esi-status-icon');
+    const textElement = document.getElementById('esi-status-text');
+    const statusItem = document.getElementById('esi-status-item');
+
+    if (iconElement && textElement && statusItem) {
+      // Remove all status classes
+      iconElement.classList.remove('status-online', 'status-warning', 'status-error', 'status-loading');
+
+      if (status.overall === 'green') {
+        iconElement.classList.add('status-online');
+        textElement.textContent = 'ESI: OK';
+        statusItem.title = `ESI Status: All systems operational (${status.totalCount} calls tracked)`;
+      } else if (status.overall === 'yellow') {
+        iconElement.classList.add('status-warning');
+        textElement.textContent = 'ESI: Warning';
+        statusItem.title = `ESI Status: ${status.warningCount} calls need attention, ${status.inProgressCount || 0} in progress`;
+      } else {
+        iconElement.classList.add('status-error');
+        textElement.textContent = 'ESI: Error';
+        statusItem.title = `ESI Status: ${status.errorCount} calls failed`;
+      }
+    }
+  } catch (error) {
+    console.error('[Footer] Error updating ESI status:', error);
+  }
+}
+
+/**
+ * Start ESI status polling (every 30 seconds)
+ */
+function startESIStatusPolling() {
+  // Clear existing interval if any
+  if (footerUpdateIntervals.esiStatus) {
+    clearInterval(footerUpdateIntervals.esiStatus);
+  }
+
+  // Update every 30 seconds
+  footerUpdateIntervals.esiStatus = setInterval(updateESIStatus, 30 * 1000);
+}
+
+/**
  * Cleanup footer intervals (call when window unloads)
  */
 function cleanupFooter() {
@@ -220,7 +272,21 @@ function cleanupFooter() {
   if (footerUpdateIntervals.status) {
     clearInterval(footerUpdateIntervals.status);
   }
+  if (footerUpdateIntervals.esiStatus) {
+    clearInterval(footerUpdateIntervals.esiStatus);
+  }
 }
+
+// Add click handler for ESI status item to open window
+document.addEventListener('DOMContentLoaded', () => {
+  const esiStatusItem = document.getElementById('esi-status-item');
+  if (esiStatusItem) {
+    esiStatusItem.addEventListener('click', () => {
+      console.log('[Footer] Opening ESI Status window...');
+      window.electronAPI.esiStatus.openWindow();
+    });
+  }
+});
 
 // Cleanup on window unload
 window.addEventListener('beforeunload', () => {
@@ -232,5 +298,6 @@ window.footerUtils = {
   initializeFooter,
   updateCharacterCount,
   updateServerStatus,
+  updateESIStatus,
   cleanupFooter,
 };

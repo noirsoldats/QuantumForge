@@ -2,6 +2,7 @@ const { refreshAccessToken, isTokenExpired } = require('./esi-auth');
 const { getCharacter, updateCharacterTokens } = require('./settings-manager');
 const { getUserAgent } = require('./user-agent');
 const { getCharacterDatabase } = require('./character-database');
+const { recordESICallStart, recordESICallSuccess, recordESICallError } = require('./esi-status-tracker');
 
 /**
  * Fetch character assets from ESI
@@ -9,11 +10,24 @@ const { getCharacterDatabase } = require('./character-database');
  * @returns {Promise<Object>} Assets data with metadata
  */
 async function fetchCharacterAssets(characterId) {
+  const callKey = `character_${characterId}_assets`;
+
+  recordESICallStart(callKey, {
+    category: 'character',
+    characterId: characterId,
+    endpointType: 'assets',
+    endpointLabel: 'Assets'
+  });
+
+  const startTime = Date.now();
+
   try {
     let character = getCharacter(characterId);
 
     if (!character) {
-      throw new Error('Character not found');
+      const errorMsg = 'Character not found';
+      recordESICallError(callKey, errorMsg, 'NOT_FOUND', startTime);
+      throw new Error(errorMsg);
     }
 
     // Check if token is expired and refresh if needed
@@ -45,7 +59,9 @@ async function fetchCharacterAssets(characterId) {
 
       if (!response.ok) {
         const errorText = await response.text();
-        throw new Error(`Failed to fetch assets: ${response.status} ${errorText}`);
+        const errorMsg = `Failed to fetch assets: ${response.status} ${errorText}`;
+        recordESICallError(callKey, errorMsg, response.status.toString(), startTime);
+        throw new Error(errorMsg);
       }
 
       const assetsData = await response.json();
@@ -72,6 +88,9 @@ async function fetchCharacterAssets(characterId) {
 
     console.log(`Fetched ${allAssetsData.length} character assets across ${totalPages} page(s)`);
 
+    const responseSize = JSON.stringify(allAssetsData).length;
+    recordESICallSuccess(callKey, cacheExpiresAt, null, responseSize, startTime);
+
     return {
       assets: allAssetsData,
       characterId: characterId,
@@ -81,6 +100,9 @@ async function fetchCharacterAssets(characterId) {
     };
   } catch (error) {
     console.error('Error fetching character assets:', error);
+    if (!error.message.includes('Character not found') && !error.message.includes('Failed to fetch')) {
+      recordESICallError(callKey, error.message, 'NETWORK_ERROR', startTime);
+    }
     throw error;
   }
 }
@@ -92,11 +114,24 @@ async function fetchCharacterAssets(characterId) {
  * @returns {Promise<Object>} Assets data with metadata
  */
 async function fetchCorporationAssets(characterId, corporationId) {
+  const callKey = `character_${characterId}_corporation_assets`;
+
+  recordESICallStart(callKey, {
+    category: 'character',
+    characterId: characterId,
+    endpointType: 'corporation_assets',
+    endpointLabel: 'Corporation Assets'
+  });
+
+  const startTime = Date.now();
+
   try {
     let character = getCharacter(characterId);
 
     if (!character) {
-      throw new Error('Character not found');
+      const errorMsg = 'Character not found';
+      recordESICallError(callKey, errorMsg, 'NOT_FOUND', startTime);
+      throw new Error(errorMsg);
     }
 
     // Check if token is expired and refresh if needed
@@ -110,6 +145,7 @@ async function fetchCorporationAssets(characterId, corporationId) {
     // Check if character has the required scope
     if (!character.scopes || !character.scopes.includes('esi-assets.read_corporation_assets.v1')) {
       console.log('Character does not have corporation assets scope, skipping...');
+      recordESICallSuccess(callKey, null, null, 0, startTime);
       return {
         assets: [],
         characterId: characterId,
@@ -143,6 +179,7 @@ async function fetchCorporationAssets(characterId, corporationId) {
         // If we get a 403, the character doesn't have permission
         if (response.status === 403) {
           console.log('Character does not have permission to view corporation assets');
+          recordESICallSuccess(callKey, null, null, 0, startTime);
           return {
             assets: [],
             characterId: characterId,
@@ -153,7 +190,9 @@ async function fetchCorporationAssets(characterId, corporationId) {
           };
         }
         const errorText = await response.text();
-        throw new Error(`Failed to fetch corporation assets: ${response.status} ${errorText}`);
+        const errorMsg = `Failed to fetch corporation assets: ${response.status} ${errorText}`;
+        recordESICallError(callKey, errorMsg, response.status.toString(), startTime);
+        throw new Error(errorMsg);
       }
 
       const assetsData = await response.json();
@@ -180,6 +219,9 @@ async function fetchCorporationAssets(characterId, corporationId) {
 
     console.log(`Fetched ${allAssetsData.length} corporation assets across ${totalPages} page(s)`);
 
+    const responseSize = JSON.stringify(allAssetsData).length;
+    recordESICallSuccess(callKey, cacheExpiresAt, null, responseSize, startTime);
+
     return {
       assets: allAssetsData,
       characterId: characterId,
@@ -190,6 +232,9 @@ async function fetchCorporationAssets(characterId, corporationId) {
     };
   } catch (error) {
     console.error('Error fetching corporation assets:', error);
+    if (!error.message.includes('Character not found') && !error.message.includes('Failed to fetch')) {
+      recordESICallError(callKey, error.message, 'NETWORK_ERROR', startTime);
+    }
     // Don't throw - just return empty array so character assets still work
     return {
       assets: [],
