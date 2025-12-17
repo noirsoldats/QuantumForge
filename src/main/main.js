@@ -823,12 +823,12 @@ function setupIPCHandlers() {
     return addManualBlueprint(blueprintData);
   });
 
-  ipcMain.handle('blueprints:remove', (event, itemId) => {
-    return removeBlueprint(itemId);
+  ipcMain.handle('blueprints:remove', (event, characterId, itemId) => {
+    return removeBlueprint(characterId, itemId);
   });
 
-  ipcMain.handle('blueprints:setOverride', (event, itemId, field, value) => {
-    return setBlueprintOverride(itemId, field, value);
+  ipcMain.handle('blueprints:setOverride', (event, characterId, itemId, field, value) => {
+    return setBlueprintOverride(characterId, itemId, field, value);
   });
 
   ipcMain.handle('blueprints:getEffectiveValues', (event, itemId) => {

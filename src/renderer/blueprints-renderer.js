@@ -503,7 +503,7 @@ async function setBlueprintValue(itemId, field, value) {
       value = null;
     }
 
-    const success = await window.electronAPI.blueprints.setOverride(itemId, field, value);
+    const success = await window.electronAPI.blueprints.setOverride(currentCharacterId, itemId, field, value);
 
     if (success) {
       console.log(`Set blueprint ${itemId} ${field} to ${value}`);
@@ -521,7 +521,7 @@ async function setBlueprintValue(itemId, field, value) {
 // Reset blueprint value (remove override)
 async function resetBlueprintValue(itemId, field) {
   try {
-    const success = await window.electronAPI.blueprints.setOverride(itemId, field, null);
+    const success = await window.electronAPI.blueprints.setOverride(currentCharacterId, itemId, field, null);
 
     if (success) {
       console.log(`Reset blueprint ${itemId} ${field}`);
@@ -543,7 +543,7 @@ async function deleteBlueprint(itemId) {
   }
 
   try {
-    const success = await window.electronAPI.blueprints.remove(itemId);
+    const success = await window.electronAPI.blueprints.remove(currentCharacterId, itemId);
 
     if (success) {
       console.log(`Deleted blueprint ${itemId}`);

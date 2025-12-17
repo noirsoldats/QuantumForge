@@ -800,6 +800,16 @@ function updateCharacterBlueprints(characterId, blueprintsData) {
       return true;
     } catch (error) {
       db.exec('ROLLBACK');
+      console.error('[Settings Manager] Error saving blueprints:', error);
+      console.error('[Settings Manager] Failed blueprint count:', blueprintsData.blueprints.length);
+      console.error('[Settings Manager] Character ID:', characterId);
+
+      // Log specific constraint violations
+      if (error.message && error.message.includes('PRIMARY KEY')) {
+        console.error('[Settings Manager] PRIMARY KEY constraint violation detected');
+        console.error('[Settings Manager] This may indicate duplicate item_ids for different characters');
+      }
+
       throw error;
     }
   } catch (error) {
@@ -864,16 +874,18 @@ function addManualBlueprint(blueprint) {
 
 /**
  * Remove a blueprint
+ * @param {number} characterId - Character ID
  * @param {string} itemId - Blueprint item ID
  * @returns {boolean} Success status
  */
-function removeBlueprint(itemId) {
+function removeBlueprint(characterId, itemId) {
   try {
     const db = getCharacterDatabase();
 
-    const result = db.prepare('DELETE FROM blueprints WHERE item_id = ?').run(itemId);
+    const result = db.prepare('DELETE FROM blueprints WHERE character_id = ? AND item_id = ?')
+      .run(characterId, itemId);
 
-    console.log('Removed blueprint:', itemId);
+    console.log('Removed blueprint:', characterId, itemId);
     return result.changes > 0;
   } catch (error) {
     console.error('Error removing blueprint:', error);
@@ -883,33 +895,36 @@ function removeBlueprint(itemId) {
 
 /**
  * Set blueprint override (ME or TE)
+ * @param {number} characterId - Character ID
  * @param {string} itemId - Blueprint item ID
  * @param {string} field - Field to override ('materialEfficiency' or 'timeEfficiency')
  * @param {number} value - Override value
  * @returns {boolean} Success status
  */
-function setBlueprintOverride(itemId, field, value) {
+function setBlueprintOverride(characterId, itemId, field, value) {
   try {
     const db = getCharacterDatabase();
 
     // Verify blueprint exists
-    const blueprint = db.prepare('SELECT item_id FROM blueprints WHERE item_id = ?').get(itemId);
+    const blueprint = db.prepare('SELECT item_id FROM blueprints WHERE character_id = ? AND item_id = ?')
+      .get(characterId, itemId);
     if (!blueprint) {
-      console.error('Blueprint not found:', itemId);
+      console.error('Blueprint not found:', characterId, itemId);
       return false;
     }
 
     if (value === null || value === undefined) {
       // Remove override
-      db.prepare('DELETE FROM blueprint_overrides WHERE item_id = ? AND field = ?').run(itemId, field);
-      console.log(`Removed blueprint override for ${itemId}, ${field}`);
+      db.prepare('DELETE FROM blueprint_overrides WHERE character_id = ? AND item_id = ? AND field = ?')
+        .run(characterId, itemId, field);
+      console.log(`Removed blueprint override for ${characterId}, ${itemId}, ${field}`);
     } else {
       // Set override
       db.prepare(`
-        INSERT OR REPLACE INTO blueprint_overrides (item_id, field, value)
-        VALUES (?, ?, ?)
-      `).run(itemId, field, String(value));
-      console.log(`Set blueprint override for ${itemId}, ${field}: ${value}`);
+        INSERT OR REPLACE INTO blueprint_overrides (character_id, item_id, field, value)
+        VALUES (?, ?, ?, ?)
+      `).run(characterId, itemId, field, String(value));
+      console.log(`Set blueprint override for ${characterId}, ${itemId}, ${field}: ${value}`);
     }
 
     return true;

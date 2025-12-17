@@ -93,9 +93,9 @@ function initializeCharacterDatabase() {
   // Blueprints table
   database.exec(`
     CREATE TABLE IF NOT EXISTS blueprints (
-      item_id TEXT PRIMARY KEY,
-      type_id INTEGER NOT NULL,
       character_id INTEGER NOT NULL,
+      item_id TEXT NOT NULL,
+      type_id INTEGER NOT NULL,
       corporation_id INTEGER,
       location_id INTEGER,
       location_flag TEXT,
@@ -110,6 +110,7 @@ function initializeCharacterDatabase() {
       fetched_at INTEGER,
       last_updated INTEGER NOT NULL,
       cache_expires_at INTEGER,
+      PRIMARY KEY (character_id, item_id),
       FOREIGN KEY (character_id) REFERENCES characters(character_id) ON DELETE CASCADE
     )
   `);
@@ -117,11 +118,12 @@ function initializeCharacterDatabase() {
   // Blueprint overrides
   database.exec(`
     CREATE TABLE IF NOT EXISTS blueprint_overrides (
+      character_id INTEGER NOT NULL,
       item_id TEXT NOT NULL,
       field TEXT NOT NULL,
       value TEXT NOT NULL,
-      PRIMARY KEY (item_id, field),
-      FOREIGN KEY (item_id) REFERENCES blueprints(item_id) ON DELETE CASCADE
+      PRIMARY KEY (character_id, item_id, field),
+      FOREIGN KEY (character_id, item_id) REFERENCES blueprints(character_id, item_id) ON DELETE CASCADE
     )
   `);
 
@@ -284,6 +286,7 @@ function initializeCharacterDatabase() {
     CREATE INDEX IF NOT EXISTS idx_skills_character ON skills(character_id);
     CREATE INDEX IF NOT EXISTS idx_blueprints_character ON blueprints(character_id);
     CREATE INDEX IF NOT EXISTS idx_blueprints_type ON blueprints(type_id);
+    CREATE INDEX IF NOT EXISTS idx_blueprints_source ON blueprints(character_id, source);
     CREATE INDEX IF NOT EXISTS idx_assets_character ON assets(character_id);
     CREATE INDEX IF NOT EXISTS idx_assets_type ON assets(type_id);
     CREATE INDEX IF NOT EXISTS idx_assets_location ON assets(location_id);
@@ -444,8 +447,118 @@ function initializeCharacterDatabase() {
     console.error('[Character Database] Plan industry settings migration error:', error);
   }
 
+  // Migration: Migrate blueprints and blueprint_overrides to composite primary key
+  migrateBlueprints_v2();
+
   console.log('[Character Database] Schema initialized successfully');
   return database;
+}
+
+/**
+ * Migrate blueprints table to use composite primary key (character_id, item_id)
+ * This fixes the issue where multiple characters in same corp can't sync blueprints
+ * due to shared ESI item_ids for corporation blueprints
+ */
+function migrateBlueprints_v2() {
+  try {
+    const database = getCharacterDatabase();
+
+    // Check if migration needed (test if composite key exists)
+    const tableInfo = database.prepare("PRAGMA table_info(blueprints)").all();
+    const pkColumns = tableInfo.filter(col => col.pk > 0).map(col => col.name);
+
+    // If already composite key (character_id, item_id), skip migration
+    if (pkColumns.length === 2 && pkColumns.includes('character_id') && pkColumns.includes('item_id')) {
+      console.log('[Character Database] Blueprints table already migrated to v2');
+      return;
+    }
+
+    console.log('[Character Database] Migrating blueprints table to composite primary key...');
+
+    // Disable foreign keys BEFORE transaction
+    database.pragma('foreign_keys = OFF');
+
+    database.exec(`
+      BEGIN TRANSACTION;
+
+      -- STEP 1: Backup existing overrides data with character_id from blueprints
+      CREATE TEMP TABLE temp_overrides_backup AS
+      SELECT b.character_id, bo.item_id, bo.field, bo.value
+      FROM blueprint_overrides bo
+      JOIN blueprints b ON b.item_id = bo.item_id;
+
+      -- STEP 2: Drop old blueprint_overrides table (has FK to old blueprints)
+      DROP TABLE blueprint_overrides;
+
+      -- STEP 3: Migrate blueprints table
+      CREATE TABLE blueprints_new (
+        character_id INTEGER NOT NULL,
+        item_id TEXT NOT NULL,
+        type_id INTEGER NOT NULL,
+        corporation_id INTEGER,
+        location_id INTEGER,
+        location_flag TEXT,
+        quantity INTEGER NOT NULL,
+        time_efficiency INTEGER,
+        material_efficiency INTEGER,
+        runs INTEGER,
+        is_copy INTEGER DEFAULT 0,
+        is_corporation INTEGER DEFAULT 0,
+        source TEXT NOT NULL,
+        manually_added INTEGER DEFAULT 0,
+        fetched_at INTEGER,
+        last_updated INTEGER NOT NULL,
+        cache_expires_at INTEGER,
+        PRIMARY KEY (character_id, item_id),
+        FOREIGN KEY (character_id) REFERENCES characters(character_id) ON DELETE CASCADE
+      );
+
+      -- Copy existing blueprints data
+      INSERT INTO blueprints_new
+      SELECT * FROM blueprints;
+
+      -- Drop old blueprints table
+      DROP TABLE blueprints;
+
+      -- Rename new table
+      ALTER TABLE blueprints_new RENAME TO blueprints;
+
+      -- Recreate blueprints indexes
+      CREATE INDEX idx_blueprints_character ON blueprints(character_id);
+      CREATE INDEX idx_blueprints_type ON blueprints(type_id);
+      CREATE INDEX idx_blueprints_source ON blueprints(character_id, source);
+
+      -- STEP 4: Create new blueprint_overrides table with composite FK
+      CREATE TABLE blueprint_overrides (
+        character_id INTEGER NOT NULL,
+        item_id TEXT NOT NULL,
+        field TEXT NOT NULL,
+        value TEXT NOT NULL,
+        PRIMARY KEY (character_id, item_id, field),
+        FOREIGN KEY (character_id, item_id) REFERENCES blueprints(character_id, item_id) ON DELETE CASCADE
+      );
+
+      -- STEP 5: Restore overrides data from backup
+      INSERT INTO blueprint_overrides (character_id, item_id, field, value)
+      SELECT character_id, item_id, field, value
+      FROM temp_overrides_backup;
+
+      -- Clean up temp table
+      DROP TABLE temp_overrides_backup;
+
+      COMMIT;
+    `);
+
+    // Re-enable foreign keys AFTER transaction
+    database.pragma('foreign_keys = ON');
+
+    console.log('[Character Database] Blueprints table migration complete');
+  } catch (error) {
+    console.error('[Character Database] Migration failed:', error);
+    const database = getCharacterDatabase();
+    database.exec('ROLLBACK');
+    throw error;
+  }
 }
 
 /**

@@ -366,3 +366,4 @@ Use appropriate database library based on module context.
 - `src/main/esi-auth.js` - Eve SSO OAuth flow
 - `public/index.html` - Main application dashboard
 - Please don't run the tests automatically, I will handle testing when I'm ready.
+- Stop automatically running tests.
