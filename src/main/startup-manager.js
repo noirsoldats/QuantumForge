@@ -417,9 +417,36 @@ async function runSDECheck(splashWindow) {
     return;
   }
 
-  // Check for updates
-  const updateStatus = await checkUpdateRequired();
-  console.log('[Startup] SDE update status:', updateStatus);
+  // Check for updates with timeout handling
+  let updateStatus;
+  try {
+    updateStatus = await checkUpdateRequired();
+    console.log('[Startup] SDE update status:', updateStatus);
+  } catch (error) {
+    // Check if it's a network timeout or connection error
+    const isNetworkError = error.message?.includes('timeout') ||
+                          error.message?.includes('ETIMEDOUT') ||
+                          error.message?.includes('Failed to connect') ||
+                          error.message?.includes('fetch failed') ||
+                          error.message?.includes('rate limit');
+
+    if (isNetworkError) {
+      console.warn('[Startup] Network error checking SDE updates, continuing with current SDE:', error.message);
+      splashWindow.webContents.send('startup:warning', {
+        task: 'sdeCheck',
+        message: 'Network timeout - unable to check for SDE updates. You can check manually in settings.',
+      });
+      splashWindow.webContents.send('startup:progress', {
+        task: 'sdeCheck',
+        status: 'Update check timed out (continuing)',
+        complete: true,
+      });
+      return;
+    } else {
+      // Other error, re-throw
+      throw error;
+    }
+  }
 
   if (updateStatus.needsUpdate) {
     if (updateStatus.isCritical) {
@@ -762,6 +789,7 @@ async function runCharacterDataRefresh(splashWindow) {
     console.log(`[Startup] Refreshing data for ${charactersNeedingRefresh.length} character(s)`);
 
     let completed = 0;
+    let failed = 0;
     const total = charactersNeedingRefresh.length;
 
     for (const { character, needsSkillsRefresh, needsBlueprintsRefresh } of charactersNeedingRefresh) {
@@ -807,14 +835,40 @@ async function runCharacterDataRefresh(splashWindow) {
 
       } catch (error) {
         console.error(`[Startup] Failed to refresh data for ${charName}:`, error);
+
+        // Check if it's a network timeout error
+        const isTimeoutError = error.cause?.code === 'UND_ERR_CONNECT_TIMEOUT' ||
+                               error.message?.includes('timeout') ||
+                               error.message?.includes('ETIMEDOUT') ||
+                               error.message?.includes('fetch failed');
+
+        if (isTimeoutError) {
+          console.warn(`[Startup] Network timeout for ${charName}, skipping to continue startup`);
+          splashWindow.webContents.send('startup:warning', {
+            task: 'characterData',
+            character: charName,
+            message: 'Network timeout - unable to refresh character data. You can retry later from the character menu.',
+          });
+          failed++;
+        } else {
+          // Other error, increment failed count
+          failed++;
+        }
+
         // Continue with other characters even if one fails
       }
     }
 
+    // Send final status
+    const statusMessage = failed > 0
+      ? `Refreshed ${completed} character(s), ${failed} failed due to network issues`
+      : `Refreshed ${completed} character(s)`;
+
     splashWindow.webContents.send('startup:progress', {
       task: 'characterData',
-      status: `Refreshed ${completed} character(s)`,
+      status: statusMessage,
       complete: true,
+      hasWarnings: failed > 0,
     });
 
     console.log('[Startup] Character data refresh completed');

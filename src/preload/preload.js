@@ -292,6 +292,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   startup: {
     onProgress: (callback) => ipcRenderer.on('startup:progress', (event, progress) => callback(progress)),
     onRequireAction: (callback) => ipcRenderer.on('startup:requireAction', (event, action) => callback(action)),
+    onWarning: (callback) => ipcRenderer.on('startup:warning', (event, warning) => callback(warning)),
     onError: (callback) => ipcRenderer.on('startup:error', (event, error) => callback(error)),
     onComplete: (callback) => ipcRenderer.on('startup:complete', () => callback()),
     updateApp: () => ipcRenderer.send('startup:updateApp'),

@@ -105,7 +105,7 @@ async function fetchGitHubRelease() {
       timeout: 10000, // 10 second timeout
     };
 
-    https.get(GITHUB_RELEASES_URL, options, (res) => {
+    const request = https.get(GITHUB_RELEASES_URL, options, (res) => {
       let data = '';
 
       res.on('data', (chunk) => {
@@ -137,6 +137,9 @@ async function fetchGitHubRelease() {
       });
     }).on('error', (error) => {
       reject(new Error(`Failed to connect to GitHub: ${error.message}`));
+    }).on('timeout', () => {
+      request.destroy();
+      reject(new Error('GitHub API request timeout'));
     });
   });
 }

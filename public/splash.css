@@ -89,6 +89,11 @@ body {
   background: rgba(239, 68, 68, 0.05);
 }
 
+.task-item.warning {
+  border-color: rgba(255, 152, 0, 0.5);
+  background: rgba(255, 152, 0, 0.05);
+}
+
 /* Task Icon */
 .task-icon {
   width: 24px;
@@ -148,6 +153,10 @@ body {
 
 .task-item.error .task-status {
   color: #ef4444;
+}
+
+.task-item.warning .task-status {
+  color: #ff9800;
 }
 
 /* Task Progress (for downloads) */

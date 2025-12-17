@@ -38,6 +38,12 @@ window.electronAPI.startup.onRequireAction((action) => {
   showActionPanel(action);
 });
 
+// Listen for warnings
+window.electronAPI.startup.onWarning((warning) => {
+  console.log('[Splash] Warning:', warning);
+  showWarningMessage(warning);
+});
+
 // Listen for errors
 window.electronAPI.startup.onError((error) => {
   console.log('[Splash] Error:', error);
@@ -339,4 +345,29 @@ function formatBytes(bytes) {
   const sizes = ['Bytes', 'KB', 'MB', 'GB'];
   const i = Math.floor(Math.log(bytes) / Math.log(k));
   return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i];
+}
+
+// Show warning message for non-critical issues
+function showWarningMessage(warning) {
+  const taskElement = document.querySelector(`[data-task="${warning.task}"]`);
+  if (!taskElement) {
+    console.warn('[Splash] Task element not found for warning:', warning.task);
+    return;
+  }
+
+  // Add warning indicator to task element (triggers CSS styling)
+  taskElement.classList.add('warning');
+
+  // Update status text with warning
+  const statusEl = taskElement.querySelector('.task-status');
+  if (statusEl) {
+    // If character name provided, include it in the message
+    if (warning.character) {
+      statusEl.textContent = `${warning.character}: ${warning.message}`;
+    } else {
+      statusEl.textContent = warning.message;
+    }
+  }
+
+  console.log('[Splash] Warning displayed:', warning);
 }
