@@ -77,7 +77,12 @@ async function initializeMarketManager() {
     window.electronAPI.esi.onDefaultCharacterChanged(() => {
       console.log('Default character changed, refreshing avatar...');
       loadDefaultCharacterAvatar();
+      // Also update character count in footer when default character changes
+      window.footerUtils.updateCharacterCount();
     });
+
+    // Initialize status footer
+    await window.footerUtils.initializeFooter();
 
     console.log('Market Manager initialized successfully');
   } catch (error) {
@@ -2289,8 +2294,9 @@ function setupCharacterMenu(defaultCharacter) {
   const menu = document.getElementById('character-menu');
   const menuSkills = document.getElementById('menu-skills');
   const menuBlueprints = document.getElementById('menu-blueprints');
+  const menuAssets = document.getElementById('menu-assets');
 
-  if (!avatarBtn || !menu || !menuSkills || !menuBlueprints) {
+  if (!avatarBtn || !menu || !menuSkills || !menuBlueprints || !menuAssets) {
     console.error('Menu elements not found');
     return;
   }
@@ -2313,6 +2319,13 @@ function setupCharacterMenu(defaultCharacter) {
   menuBlueprints.onclick = () => {
     console.log('Opening blueprints window for character:', defaultCharacter.characterId);
     window.electronAPI.blueprints.openWindow(defaultCharacter.characterId);
+    menu.style.display = 'none';
+  };
+
+  // Asset Manager handler
+  menuAssets.onclick = () => {
+    console.log('Opening assets window for character:', defaultCharacter.characterId);
+    window.electronAPI.assets.openWindow(defaultCharacter.characterId);
     menu.style.display = 'none';
   };
 

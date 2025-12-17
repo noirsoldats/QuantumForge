@@ -153,7 +153,12 @@ document.addEventListener('DOMContentLoaded', async () => {
   window.electronAPI.esi.onDefaultCharacterChanged(() => {
     console.log('Default character changed, refreshing avatar...');
     loadDefaultCharacterAvatar();
+    // Also update character count in footer when default character changes
+    window.footerUtils.updateCharacterCount();
   });
+
+  // Initialize status footer
+  await window.footerUtils.initializeFooter();
 
   } catch (error) {
     console.error('Fatal initialization error:', error);

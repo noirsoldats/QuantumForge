@@ -14,25 +14,70 @@ body {
 
 #facilities-app {
   width: 100%;
-  min-height: 100vh;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
 }
 
-.facilities-container {
-  max-width: 1400px;
-  margin: 0 auto;
-  padding: 20px;
-}
-
-/* Header */
+/* Header - Fixed at top */
 .facilities-header {
+  background: rgba(0, 0, 0, 0.3);
+  padding: 20px 30px;
+  border-bottom: 2px solid rgba(100, 180, 255, 0.3);
+  flex-shrink: 0;
+}
+
+.header-content {
   display: flex;
   align-items: center;
-  gap: 16px;
-  margin-bottom: 30px;
-  padding-bottom: 20px;
-  border-bottom: 1px solid #2d2d44;
+  gap: 20px;
 }
 
+.header-title h1 {
+  margin: 0;
+  font-size: 1.8rem;
+  color: #64b4ff;
+}
+
+.header-title p {
+  margin: 5px 0 0 0;
+  font-size: 0.95rem;
+  color: #a0a0b0;
+}
+
+.back-btn {
+  background: rgba(100, 180, 255, 0.1);
+  border: 1px solid rgba(100, 180, 255, 0.3);
+  border-radius: 6px;
+  width: 40px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  color: #64b4ff;
+  transition: all 0.2s ease;
+}
+
+.back-btn:hover {
+  background: rgba(100, 180, 255, 0.2);
+  border-color: rgba(100, 180, 255, 0.5);
+  transform: translateX(-2px);
+}
+
+.back-btn svg {
+  stroke: #64b4ff;
+}
+
+/* Scrollable container */
+.facilities-container {
+  width: 100%;
+  padding: 20px;
+  flex: 1;
+  overflow-y: auto;
+}
+
+/* Old back-button style - remove or repurpose */
 .back-button {
   background: #2d2d44;
   border: 1px solid #3d3d54;

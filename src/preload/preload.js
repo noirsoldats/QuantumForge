@@ -310,6 +310,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
     complete: () => ipcRenderer.invoke('wizard:complete'),
   },
 
+  // Server Status API
+  status: {
+    fetch: () => ipcRenderer.invoke('status:fetch'),
+    getLastFetchTime: () => ipcRenderer.invoke('status:getLastFetchTime'),
+  },
+
   // Shell API (for opening external links)
   shell: {
     openExternal: (url) => ipcRenderer.invoke('shell:openExternal', url),

@@ -271,3 +271,98 @@ main {
   background: rgba(74, 222, 128, 0.1);
   border: 1px solid rgba(74, 222, 128, 0.3);
 }
+
+/* Status Footer */
+.status-footer {
+  background: rgba(30, 30, 46, 0.95);
+  border-top: 1px solid rgba(100, 180, 255, 0.3);
+  padding: 8px 20px;
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  flex-shrink: 0;
+  backdrop-filter: blur(10px);
+}
+
+.footer-content {
+  display: flex;
+  gap: 24px;
+  align-items: center;
+}
+
+.footer-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.85em;
+  color: #c0c0d0;
+  transition: color 0.2s ease;
+}
+
+.footer-item svg {
+  flex-shrink: 0;
+  opacity: 0.7;
+}
+
+.footer-item .label {
+  color: #a0a0b0;
+  font-size: 0.9em;
+}
+
+.footer-item:hover {
+  color: #e0e0e0;
+}
+
+.footer-item:hover svg {
+  opacity: 1;
+}
+
+/* Server Status Icon Styles */
+.status-icon {
+  transition: all 0.3s ease;
+}
+
+.status-icon.status-online {
+  stroke: #4ade80;
+  fill: rgba(74, 222, 128, 0.1);
+}
+
+.status-icon.status-offline {
+  stroke: #ef4444;
+  fill: rgba(239, 68, 68, 0.1);
+}
+
+.status-icon.status-restarting {
+  stroke: #ff9800;
+  fill: rgba(255, 152, 0, 0.1);
+  animation: pulse 2s ease-in-out infinite;
+}
+
+.status-icon.status-loading {
+  stroke: #64b4ff;
+  opacity: 0.5;
+}
+
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+  .footer-content {
+    gap: 16px;
+  }
+
+  .footer-item {
+    font-size: 0.75em;
+  }
+
+  .footer-item .label {
+    display: none; /* Hide labels on small screens */
+  }
+}

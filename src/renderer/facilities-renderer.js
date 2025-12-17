@@ -8,6 +8,10 @@ let systems = [];
 let structureTypes = [];
 let structureRigs = [];
 let editingFacilityId = null; // Track which facility is being edited
+let currentDefaultCharacterId = null;
+
+// Store event listeners so they can be removed
+let characterMenuClickOutsideListener = null;
 
 // Global error handlers
 window.onerror = (message, source, lineno, colno, error) => {
@@ -31,6 +35,20 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // Load existing facilities
     await loadFacilities();
+
+    // Load default character avatar
+    await loadDefaultCharacterAvatar();
+
+    // Listen for default character changes
+    window.electronAPI.esi.onDefaultCharacterChanged(() => {
+      console.log('Default character changed, refreshing avatar...');
+      loadDefaultCharacterAvatar();
+      // Also update character count in footer when default character changes
+      window.footerUtils.updateCharacterCount();
+    });
+
+    // Initialize status footer
+    await window.footerUtils.initializeFooter();
 
   } catch (error) {
     console.error('Fatal initialization error:', error);
@@ -163,6 +181,14 @@ function populateRigsDropdowns(filterBySize = null) {
 
 // Setup event listeners
 function setupEventListeners() {
+  // Settings button
+  const settingsBtn = document.getElementById('settings-btn');
+  if (settingsBtn) {
+    settingsBtn.addEventListener('click', () => {
+      window.electronAPI.openSettings();
+    });
+  }
+
   // Back button
   const backBtn = document.getElementById('back-btn');
   backBtn.addEventListener('click', () => {
@@ -760,3 +786,114 @@ async function deleteFacility(id) {
     alert('Error deleting facility');
   }
 }
+
+// Load and display default character avatar
+async function loadDefaultCharacterAvatar() {
+  try {
+    const defaultCharacter = await window.electronAPI.esi.getDefaultCharacter();
+
+    const avatarContainer = document.getElementById('character-avatar-container');
+    const avatarBtn = document.getElementById('character-avatar-btn');
+    const avatarImg = document.getElementById('character-avatar-img');
+    const menuNameEl = document.getElementById('character-menu-name');
+
+    if (!avatarContainer || !avatarBtn || !avatarImg || !menuNameEl) {
+      console.error('Avatar elements not found in DOM');
+      return;
+    }
+
+    if (defaultCharacter) {
+      // Only update if the character has changed
+      if (currentDefaultCharacterId !== defaultCharacter.characterId) {
+        currentDefaultCharacterId = defaultCharacter.characterId;
+
+        // Set avatar image
+        avatarImg.src = `${defaultCharacter.portrait}?size=128`;
+        avatarImg.alt = defaultCharacter.characterName;
+
+        // Update menu header
+        menuNameEl.textContent = defaultCharacter.characterName;
+
+        // Show the avatar container
+        avatarContainer.style.display = 'block';
+
+        // Setup menu toggle
+        setupCharacterMenu(defaultCharacter);
+
+        console.log('Loaded default character avatar:', defaultCharacter.characterName);
+      } else {
+        console.log('Default character unchanged, skipping update');
+      }
+    } else {
+      // No default character, hide the container
+      currentDefaultCharacterId = null;
+      avatarContainer.style.display = 'none';
+      console.log('No default character set');
+    }
+  } catch (error) {
+    console.error('Error loading default character avatar:', error);
+  }
+}
+
+// Setup character menu toggle and handlers
+function setupCharacterMenu(defaultCharacter) {
+  const avatarBtn = document.getElementById('character-avatar-btn');
+  const menu = document.getElementById('character-menu');
+  const menuSkills = document.getElementById('menu-skills');
+  const menuBlueprints = document.getElementById('menu-blueprints');
+  const menuAssets = document.getElementById('menu-assets');
+
+  if (!avatarBtn || !menu || !menuSkills || !menuBlueprints || !menuAssets) {
+    console.error('Menu elements not found');
+    return;
+  }
+
+  // Toggle menu on avatar click
+  avatarBtn.onclick = (e) => {
+    e.stopPropagation();
+    const isVisible = menu.style.display === 'block';
+    menu.style.display = isVisible ? 'none' : 'block';
+  };
+
+  // Skills Manager handler
+  menuSkills.onclick = () => {
+    console.log('Opening skills window for character:', defaultCharacter.characterId);
+    window.electronAPI.skills.openWindow(defaultCharacter.characterId);
+    menu.style.display = 'none';
+  };
+
+  // Blueprint Manager handler
+  menuBlueprints.onclick = () => {
+    console.log('Opening blueprints window for character:', defaultCharacter.characterId);
+    window.electronAPI.blueprints.openWindow(defaultCharacter.characterId);
+    menu.style.display = 'none';
+  };
+
+  // Asset Manager handler
+  menuAssets.onclick = () => {
+    console.log('Opening assets window for character:', defaultCharacter.characterId);
+    window.electronAPI.assets.openWindow(defaultCharacter.characterId);
+    menu.style.display = 'none';
+  };
+
+  // Close menu when clicking outside
+  // Remove old listener first to prevent accumulation
+  if (characterMenuClickOutsideListener) {
+    document.removeEventListener('click', characterMenuClickOutsideListener);
+  }
+
+  characterMenuClickOutsideListener = (e) => {
+    if (!avatarBtn.contains(e.target) && !menu.contains(e.target)) {
+      menu.style.display = 'none';
+    }
+  };
+
+  document.addEventListener('click', characterMenuClickOutsideListener);
+}
+
+// Clean up event listeners on page unload
+window.addEventListener('beforeunload', () => {
+  if (characterMenuClickOutsideListener) {
+    document.removeEventListener('click', characterMenuClickOutsideListener);
+  }
+});

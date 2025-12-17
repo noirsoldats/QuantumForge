@@ -5,6 +5,7 @@ const { initAutoUpdater, checkForUpdates } = require('./auto-updater');
 const { getWindowBounds, trackWindowState } = require('./window-state-manager');
 const { runStartupChecks } = require('./startup-manager');
 const { createWizardWindow } = require('./wizard-window');
+const { fetchServerStatus, getLastServerStatusFetchTime } = require('./esi-server-status');
 
 // Global error handlers for main process
 process.on('uncaughtException', (error) => {
@@ -542,6 +543,15 @@ function setupIPCHandlers() {
       mainWindow.webContents.send('default-character-changed');
     }
     return result;
+  });
+
+  // Server Status IPC Handlers
+  ipcMain.handle('status:fetch', async () => {
+    return await fetchServerStatus();
+  });
+
+  ipcMain.handle('status:getLastFetchTime', () => {
+    return getLastServerStatusFetchTime();
   });
 
   // Character Division Settings IPC Handlers

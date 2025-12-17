@@ -43,6 +43,13 @@
           </svg>
           Blueprint Manager
         </button>
+        <button class="character-menu-item" id="menu-assets">
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="2" y="7" width="20" height="14" rx="2" ry="2"></rect>
+            <path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"></path>
+          </svg>
+          Asset Manager
+        </button>
       </div>
     </div>
 
@@ -191,6 +198,47 @@
         <p>Search for a blueprint to get started</p>
       </div>
     </main>
+
+    <!-- Status Footer -->
+    <footer id="status-footer" class="status-footer">
+      <div class="footer-content">
+        <div class="footer-item" id="character-count-item">
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
+            <circle cx="12" cy="7" r="4"></circle>
+          </svg>
+          <span id="character-count">0</span> <span class="label">Characters</span>
+        </div>
+
+        <div class="footer-item" id="eve-time-item">
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="10"></circle>
+            <polyline points="12 6 12 12 16 14"></polyline>
+          </svg>
+          <span id="eve-time">--:--:--</span> <span class="label">EVE Time</span>
+        </div>
+
+        <div class="footer-item" id="players-online-item">
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+            <circle cx="9" cy="7" r="4"></circle>
+            <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
+            <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
+          </svg>
+          <span id="players-online">--</span> <span class="label">Players</span>
+        </div>
+
+        <div class="footer-item" id="server-status-item" title="Server Status: Loading...">
+          <svg id="server-status-icon" class="status-icon status-loading" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <!-- Default loading icon -->
+            <circle cx="12" cy="12" r="10"></circle>
+            <line x1="12" y1="8" x2="12" y2="12"></line>
+            <line x1="12" y1="16" x2="12.01" y2="16"></line>
+          </svg>
+          <span id="server-status-text" class="label">Loading</span>
+        </div>
+      </div>
+    </footer>
   </div>
 
   <!-- Plan Selection Modal -->
@@ -217,6 +265,7 @@
     </div>
   </div>
 
+  <script src="../src/renderer/footer-utils.js"></script>
   <script src="../src/renderer/blueprint-calculator-renderer.js"></script>
 </body>
 </html>
