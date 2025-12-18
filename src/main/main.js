@@ -76,6 +76,7 @@ const {
   updatePlanCharacterDivisions,
   addBlueprintToPlan,
   updatePlanBlueprint,
+  bulkUpdateBlueprints,
   removeBlueprintFromPlan,
   getPlanBlueprints,
   getIntermediateBlueprints,
@@ -1018,6 +1019,10 @@ function setupIPCHandlers() {
     return await updatePlanBlueprint(planBlueprintId, updates);
   });
 
+  ipcMain.handle('plans:bulkUpdateBlueprints', async (event, planId, bulkUpdates) => {
+    return await bulkUpdateBlueprints(planId, bulkUpdates);
+  });
+
   ipcMain.handle('plans:removeBlueprint', async (event, planBlueprintId) => {
     return await removeBlueprintFromPlan(planBlueprintId);
   });
@@ -1039,8 +1044,8 @@ function setupIPCHandlers() {
     return await updateIntermediateBlueprint(intermediateBlueprintId, updates);
   });
 
-  ipcMain.handle('plans:markIntermediateBuilt', async (event, intermediateBlueprintId, isBuilt) => {
-    return await markIntermediateBuilt(intermediateBlueprintId, isBuilt);
+  ipcMain.handle('plans:markIntermediateBuilt', async (event, intermediateBlueprintId, builtRuns) => {
+    return await markIntermediateBuilt(intermediateBlueprintId, builtRuns);
   });
 
   ipcMain.handle('plans:getMaterials', async (event, planId, includeAssets) => {

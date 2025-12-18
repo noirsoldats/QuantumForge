@@ -375,6 +375,43 @@ tr[data-fully-acquired="true"] {
   align-items: center;
 }
 
+/* Bulk Edit Controls */
+.blueprints-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.bulk-edit-control {
+  white-space: nowrap;
+}
+
+/* Bulk Edit Banner */
+.bulk-edit-banner {
+  background: #fef3cd;
+  border: 1px solid #ffc107;
+  border-radius: 4px;
+  padding: 12px 16px;
+  margin-bottom: 16px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #856404;
+}
+
+.bulk-edit-banner .banner-icon {
+  flex-shrink: 0;
+}
+
+.bulk-edit-banner strong {
+  font-weight: 600;
+}
+
+/* Highlight editable cells in bulk mode */
+tr[data-editing="true"] .editable-cell {
+  background-color: rgba(88, 101, 242, 0.05);
+}
+
 /* Overview Tab */
 .overview-grid {
   display: grid;
@@ -1681,4 +1718,166 @@ tr[data-editing="true"] {
 
 .footer-stat strong {
   color: #ffffff;
+}
+
+/* Modal Overlay */
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.8);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10000;
+  backdrop-filter: blur(4px);
+}
+
+.modal-overlay.hidden {
+  display: none;
+}
+
+.modal-content {
+  background: linear-gradient(135deg, #1e1e2e 0%, #2d2d44 100%);
+  border-radius: 12px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+  max-width: 90vw;
+  max-height: 90vh;
+  overflow: auto;
+  position: relative;
+}
+
+.modal-header {
+  padding: 20px 24px;
+  border-bottom: 1px solid #3a3a4e;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.modal-header h3 {
+  margin: 0;
+  color: #ffffff;
+  font-size: 20px;
+}
+
+.close-modal {
+  background: none;
+  border: none;
+  color: #888;
+  font-size: 28px;
+  cursor: pointer;
+  padding: 0;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: color 0.2s;
+}
+
+.close-modal:hover {
+  color: #ffffff;
+}
+
+.modal-footer {
+  padding: 16px 24px;
+  border-top: 1px solid #3a3a4e;
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+}
+
+/* Mark Built Modal */
+.mark-built-modal {
+  max-width: 500px;
+}
+
+.mark-built-modal .modal-body {
+  padding: 24px;
+}
+
+.mark-built-modal label {
+  display: block;
+  margin-top: 16px;
+  margin-bottom: 8px;
+  font-weight: 500;
+  color: #ffffff;
+}
+
+.mark-built-modal input[type="number"] {
+  width: 100%;
+  padding: 10px;
+  font-size: 16px;
+  border: 1px solid #3a3a4e;
+  border-radius: 4px;
+  background-color: #2a2a3e;
+  color: #ffffff;
+}
+
+.mark-built-modal input[type="number"]:focus {
+  outline: none;
+  border-color: #5865f2;
+}
+
+/* Built Progress Bar */
+.built-progress {
+  margin-top: 16px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.progress-bar {
+  flex: 1;
+  height: 24px;
+  background-color: #2a2a3e;
+  border-radius: 12px;
+  overflow: hidden;
+  border: 1px solid #3a3a4e;
+}
+
+.progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #5865f2, #7289da);
+  transition: width 0.3s ease;
+  border-radius: 12px;
+}
+
+.built-progress span {
+  min-width: 50px;
+  text-align: right;
+  font-weight: 600;
+  color: #ffffff;
+}
+
+/* Partial Built Badges */
+.status-badge.partially-built {
+  background-color: #ff9800;
+  color: white;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.status-badge.fully-built {
+  background-color: #4caf50;
+  color: white;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+/* Keep existing built badge for backward compatibility */
+.status-badge.built {
+  background-color: #4caf50;
+  color: white;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
 }

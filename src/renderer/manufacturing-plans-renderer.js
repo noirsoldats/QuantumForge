@@ -9,6 +9,7 @@ let activeTab = 'overview';
 let selectedBlueprintTypeId = null;
 let facilities = [];
 let autoRefreshInterval = null;
+let bulkEditMode = false;
 
 // Initialize
 document.addEventListener('DOMContentLoaded', async () => {
@@ -89,6 +90,11 @@ function setupEventListeners() {
   document.getElementById('add-blueprint-btn').addEventListener('click', showAddBlueprintModal);
   document.getElementById('close-blueprint-modal-btn').addEventListener('click', hideAddBlueprintModal);
   document.getElementById('blueprint-search-modal').addEventListener('input', searchBlueprints);
+
+  // Bulk edit buttons
+  document.getElementById('bulk-edit-btn').addEventListener('click', enterBulkEditMode);
+  document.getElementById('bulk-save-btn').addEventListener('click', saveBulkEdit);
+  document.getElementById('bulk-cancel-btn').addEventListener('click', () => exitBulkEditMode(true));
 
   // Configure blueprint modal
   document.getElementById('close-configure-modal-btn').addEventListener('click', hideConfigureBlueprintModal);
@@ -306,7 +312,9 @@ async function loadBlueprints() {
 
   // Build hierarchical structure with recursive intermediate nesting
   function buildIntermediateTree(parentId, depth = 1) {
-    const children = allIntermediates.filter(ib => ib.parentBlueprintId === parentId);
+    const children = allIntermediates
+      .filter(ib => ib.parentBlueprintId === parentId)
+      .sort((a, b) => b.runs - a.runs); // Sort by runs descending
     return children.map(child => ({
       intermediate: child,
       depth: depth,
@@ -387,9 +395,16 @@ async function loadBlueprints() {
         const intProductName = productNames[intermediate.intermediateProductTypeId] || `Type ${intermediate.intermediateProductTypeId}`;
         const intFacilityName = intermediate.facilitySnapshot ? (intermediate.facilitySnapshot.name || 'Unknown') : 'None';
         const intFacilityId = intermediate.facilityId || '';
-        const builtBadge = intermediate.isBuilt
-          ? '<span class="status-badge built" title="Marked as built">Built ✓</span>'
-          : '';
+
+        // Build status badge with partial quantity support
+        let builtBadge = '';
+        if (intermediate.builtRuns > 0) {
+          const percentage = Math.round((intermediate.builtRuns / intermediate.runs) * 100);
+          const statusClass = intermediate.builtRuns >= intermediate.runs ? 'fully-built' : 'partially-built';
+          builtBadge = `<span class="status-badge ${statusClass}" title="${intermediate.builtRuns} of ${intermediate.runs} runs built">
+            ${intermediate.builtRuns}/${intermediate.runs} Built (${percentage}%)
+          </span>`;
+        }
 
         // intermediate.runs already contains the correct number of runs needed
         const runsNeeded = intermediate.runs;
@@ -427,7 +442,7 @@ async function loadBlueprints() {
             <td><span style="color: #72767d;">Raw Materials</span></td>
             <td class="blueprint-actions">
               <button class="secondary-button small toggle-built-btn" data-action="toggle-built" data-is-built="${intermediate.isBuilt ? '1' : '0'}">
-                ${intermediate.isBuilt ? 'Mark Unbuilt' : 'Mark Built'}
+                ${intermediate.builtRuns > 0 ? 'Edit Built Qty' : 'Mark Built'}
               </button>
               <button class="secondary-button small edit-btn" data-action="edit">Edit</button>
               <button class="primary-button small save-btn" data-action="save" style="display: none;">Save</button>
@@ -1365,6 +1380,9 @@ async function confirmAddBlueprint() {
     if (activeTab !== 'overview') {
       await loadOverview(); // Update overview stats
     }
+    // Force refresh Materials and Products tabs to ensure they're in sync
+    await loadMaterials();
+    await loadProducts();
     showToast('Blueprint added to plan successfully', 'success');
   } catch (error) {
     showToast('Failed to add blueprint: ' + error.message, 'error');
@@ -1435,6 +1453,9 @@ window.saveBlueprintEdit = async function(planBlueprintId) {
 
     await loadBlueprints();
     await loadOverview(); // Update overview stats
+    // Force refresh Materials and Products tabs to ensure they're in sync
+    await loadMaterials();
+    await loadProducts();
     showToast('Blueprint updated successfully', 'success');
   } catch (error) {
     showToast('Failed to update blueprint: ' + error.message, 'error');
@@ -1475,6 +1496,160 @@ window.cancelBlueprintEdit = function(planBlueprintId) {
   row.querySelector('.cancel-btn').style.display = 'none';
 };
 
+// Enter bulk edit mode - make ALL rows editable
+window.enterBulkEditMode = function() {
+  bulkEditMode = true;
+
+  // Make ALL rows editable (both top-level and intermediate blueprints)
+  const allRows = document.querySelectorAll('.top-level-blueprint, .intermediate-blueprint');
+  allRows.forEach(row => {
+    row.dataset.editing = 'true';
+
+    // Show inputs, hide values for all .editable-cell elements
+    row.querySelectorAll('.editable-cell').forEach(cell => {
+      cell.querySelector('.cell-value').style.display = 'none';
+      cell.querySelector('.cell-input').style.display = 'block';
+    });
+
+    // Hide individual action buttons
+    const editBtn = row.querySelector('.edit-btn');
+    const removeBtn = row.querySelector('.remove-btn');
+    const toggleBuiltBtn = row.querySelector('.toggle-built-btn');
+    if (editBtn) editBtn.style.display = 'none';
+    if (removeBtn) removeBtn.style.display = 'none';
+    if (toggleBuiltBtn) toggleBuiltBtn.style.display = 'none';
+  });
+
+  // Show Bulk Save/Cancel buttons, hide Bulk Edit button
+  document.getElementById('bulk-edit-btn').style.display = 'none';
+  document.getElementById('bulk-save-btn').style.display = 'inline-flex';
+  document.getElementById('bulk-cancel-btn').style.display = 'inline-flex';
+
+  // Show banner
+  document.getElementById('bulk-edit-banner').style.display = 'flex';
+};
+
+// Exit bulk edit mode
+window.exitBulkEditMode = async function(reload = false) {
+  bulkEditMode = false;
+
+  if (reload) {
+    // Reload entire tab to reset all values
+    await loadBlueprints();
+  } else {
+    // Revert UI without reloading
+    const allRows = document.querySelectorAll('.top-level-blueprint, .intermediate-blueprint');
+    allRows.forEach(row => {
+      row.dataset.editing = 'false';
+
+      row.querySelectorAll('.editable-cell').forEach(cell => {
+        cell.querySelector('.cell-value').style.display = 'block';
+        cell.querySelector('.cell-input').style.display = 'none';
+      });
+
+      // Restore buttons
+      const editBtn = row.querySelector('.edit-btn');
+      const removeBtn = row.querySelector('.remove-btn');
+      const toggleBuiltBtn = row.querySelector('.toggle-built-btn');
+      if (editBtn) editBtn.style.display = 'inline-flex';
+      if (removeBtn) removeBtn.style.display = 'inline-flex';
+      if (toggleBuiltBtn) toggleBuiltBtn.style.display = 'inline-flex';
+    });
+  }
+
+  // Restore button states
+  document.getElementById('bulk-edit-btn').style.display = 'inline-flex';
+  document.getElementById('bulk-save-btn').style.display = 'none';
+  document.getElementById('bulk-cancel-btn').style.display = 'none';
+  document.getElementById('bulk-edit-banner').style.display = 'none';
+};
+
+// Save bulk edit - collect and save all changes
+window.saveBulkEdit = async function() {
+  try {
+    // Collect all changes from ALL rows (both top-level and intermediate blueprints)
+    const allRows = document.querySelectorAll('.top-level-blueprint, .intermediate-blueprint');
+    const bulkUpdates = [];
+
+    allRows.forEach(row => {
+      const planBlueprintId = row.dataset.blueprintId;
+      const updates = {};
+      let hasChanges = false;
+
+      row.querySelectorAll('.editable-cell').forEach(cell => {
+        const field = cell.dataset.field;
+        const input = cell.querySelector('.cell-input');
+        const originalValue = cell.querySelector('.cell-value').textContent.trim();
+        const newValue = input.value;
+
+        if (field === 'facilityId') {
+          // Compare facility IDs (could be empty string vs "None")
+          const oldFacilityId = originalValue === 'None' ? '' : originalValue;
+          if (newValue !== oldFacilityId) {
+            hasChanges = true;
+            updates.facilityId = newValue || null;
+
+            // Get facility snapshot if facility is selected
+            if (newValue) {
+              const facility = facilities.find(f => f.id === newValue);
+              if (facility) {
+                updates.facilitySnapshot = facility;
+              }
+            } else {
+              updates.facilitySnapshot = null;
+            }
+          }
+        } else if (field === 'useIntermediates') {
+          // Compare string values for build plan strategy
+          if (newValue !== originalValue) {
+            hasChanges = true;
+            updates[field] = newValue;
+          }
+        } else if (input.type === 'number') {
+          // Compare numeric values
+          const oldNum = parseInt(originalValue) || 0;
+          const newNum = parseInt(newValue) || 0;
+          if (newNum !== oldNum) {
+            hasChanges = true;
+            updates[field] = newNum;
+          }
+        }
+      });
+
+      // Only add to bulk updates if there are changes
+      if (hasChanges) {
+        bulkUpdates.push({ planBlueprintId, updates });
+      }
+    });
+
+    if (bulkUpdates.length === 0) {
+      showToast('No changes to save', 'info');
+      await exitBulkEditMode(false);
+      return;
+    }
+
+    // Send to backend
+    showLoading(`Saving ${bulkUpdates.length} blueprint(s)...`);
+    await window.electronAPI.plans.bulkUpdateBlueprints(selectedPlanId, bulkUpdates);
+
+    // Recalculate materials once for entire plan
+    await window.electronAPI.plans.recalculateMaterials(selectedPlanId, false);
+
+    // Reload all tabs
+    await loadBlueprints();
+    await loadOverview();
+    await loadMaterials();
+    await loadProducts();
+
+    showToast(`Successfully updated ${bulkUpdates.length} blueprint(s)`, 'success');
+    await exitBulkEditMode(false);
+  } catch (error) {
+    showToast('Failed to save bulk changes: ' + error.message, 'error');
+  } finally {
+    hideLoading();
+  }
+};
+
 // Remove blueprint
 window.removeBlueprint = async function(planBlueprintId) {
   const confirmed = await showConfirmDialog(
@@ -1497,6 +1672,9 @@ window.removeBlueprint = async function(planBlueprintId) {
     if (activeTab !== 'overview') {
       await loadOverview(); // Update overview stats
     }
+    // Force refresh Materials and Products tabs to ensure they're in sync
+    await loadMaterials();
+    await loadProducts();
     showToast('Blueprint removed from plan', 'success');
   } catch (error) {
     showToast('Failed to remove blueprint: ' + error.message, 'error');
@@ -1506,37 +1684,174 @@ window.removeBlueprint = async function(planBlueprintId) {
 };
 
 // Toggle intermediate built status
-window.toggleIntermediateBuilt = async function(intermediateBlueprintId, currentlyBuilt) {
-  const newStatus = !currentlyBuilt;
-  const action = newStatus ? 'built' : 'unbuilt';
-
-  const confirmed = await showConfirmDialog(
-    `Mark this intermediate blueprint as ${action}?${newStatus ? ' This will mark its raw materials as acquired (manufactured).' : ' This will unmark its raw materials as acquired.'}`,
-    `Mark as ${action}`,
-    'Confirm',
-    'Cancel'
-  );
-
-  if (!confirmed) return;
+window.showMarkBuiltModal = async function(intermediateBlueprintId) {
+  console.log('showMarkBuiltModal called with:', intermediateBlueprintId);
+  console.log('Current selectedPlanId:', selectedPlanId);
 
   try {
-    showLoading(`Marking intermediate as ${action}...`);
-    const result = await window.electronAPI.plans.markIntermediateBuilt(intermediateBlueprintId, newStatus);
-
-    if (result.warnings && result.warnings.length > 0) {
-      for (const warning of result.warnings) {
-        showToast(warning, 'warning');
-      }
+    if (!selectedPlanId) {
+      console.error('No plan selected!');
+      showToast('No plan selected', 'error');
+      return;
     }
 
-    await loadBlueprints();
-    await loadMaterials();
-    await loadOverview();
-    showToast(`Intermediate marked as ${action}`, 'success');
+    // Get all intermediates for this plan
+    console.log('Fetching intermediates for plan:', selectedPlanId);
+    const allIntermediates = await window.electronAPI.plans.getAllIntermediates(selectedPlanId);
+    console.log('Got intermediates:', allIntermediates.length);
+
+    const intermediate = allIntermediates.find(i => i.planBlueprintId === intermediateBlueprintId);
+    console.log('Found intermediate:', intermediate);
+
+    if (!intermediate) {
+      console.error('Intermediate not found in list');
+      showToast('Intermediate blueprint not found', 'error');
+      return;
+    }
+
+    // Get type name for display
+    console.log('About to fetch type name for:', intermediate.intermediateProductTypeId);
+    const typeNames = await window.electronAPI.sde.getTypeNames([intermediate.intermediateProductTypeId]);
+    console.log('Type names result:', typeNames);
+    const name = typeNames[intermediate.intermediateProductTypeId] || 'Unknown';
+    console.log('Using name:', name);
+
+    // Create modal
+    console.log('Creating modal element...');
+    const modal = document.createElement('div');
+    modal.className = 'modal-overlay';
+    console.log('Setting modal HTML...');
+    modal.innerHTML = `
+      <div class="modal-content mark-built-modal">
+        <div class="modal-header">
+          <h3>Mark Intermediate as Built</h3>
+          <button class="close-modal" aria-label="Close">&times;</button>
+        </div>
+        <div class="modal-body">
+          <p><strong>${escapeHtml(name)}</strong></p>
+          <p>Total Runs Needed: <strong>${intermediate.runs}</strong></p>
+
+          <label for="built-runs-input">Runs Already Built:</label>
+          <input
+            type="number"
+            id="built-runs-input"
+            min="0"
+            max="${intermediate.runs}"
+            value="${intermediate.builtRuns || 0}"
+            step="1"
+          />
+
+          <div class="quick-actions">
+            <button class="secondary-button small" data-percent="0">0% (None)</button>
+            <button class="secondary-button small" data-percent="25">25%</button>
+            <button class="secondary-button small" data-percent="50">50%</button>
+            <button class="secondary-button small" data-percent="75">75%</button>
+            <button class="secondary-button small" data-percent="100">100% (All)</button>
+          </div>
+
+          <div class="built-progress">
+            <div class="progress-bar">
+              <div class="progress-fill" id="built-progress-fill" style="width: ${Math.round(((intermediate.builtRuns || 0) / intermediate.runs) * 100)}%"></div>
+            </div>
+            <span id="built-percentage">${Math.round(((intermediate.builtRuns || 0) / intermediate.runs) * 100)}%</span>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="secondary-button cancel-btn">Cancel</button>
+          <button class="primary-button save-btn">Save</button>
+        </div>
+      </div>
+    `;
+
+    console.log('Modal HTML set, about to append to body');
+    document.body.appendChild(modal);
+    console.log('Modal appended to body successfully');
+
+    const input = modal.querySelector('#built-runs-input');
+    const progressFill = modal.querySelector('#built-progress-fill');
+    const percentageText = modal.querySelector('#built-percentage');
+    const closeBtn = modal.querySelector('.close-modal');
+    const cancelBtn = modal.querySelector('.cancel-btn');
+    const saveBtn = modal.querySelector('.save-btn');
+
+    // Update progress bar on input change
+    function updateProgress() {
+      const value = parseInt(input.value) || 0;
+      const percentage = Math.round((value / intermediate.runs) * 100);
+      progressFill.style.width = percentage + '%';
+      percentageText.textContent = percentage + '%';
+    }
+
+    input.addEventListener('input', updateProgress);
+
+    // Quick action buttons
+    modal.querySelectorAll('.quick-actions button').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const percent = parseInt(btn.dataset.percent);
+        const runs = Math.round((percent / 100) * intermediate.runs);
+        input.value = runs;
+        updateProgress();
+      });
+    });
+
+    // Close handlers
+    function closeModal() {
+      modal.remove();
+    }
+
+    closeBtn.addEventListener('click', closeModal);
+    cancelBtn.addEventListener('click', closeModal);
+    modal.addEventListener('click', (e) => {
+      if (e.target === modal) closeModal();
+    });
+
+    // Save handler
+    saveBtn.addEventListener('click', async () => {
+      const builtRuns = parseInt(input.value) || 0;
+
+      if (builtRuns < 0 || builtRuns > intermediate.runs) {
+        showToast(`Invalid value. Must be between 0 and ${intermediate.runs}`, 'error');
+        return;
+      }
+
+      try {
+        closeModal();
+        showLoading('Updating built quantity...');
+        const result = await window.electronAPI.plans.markIntermediateBuilt(intermediateBlueprintId, builtRuns);
+
+        if (result.warnings && result.warnings.length > 0) {
+          for (const warning of result.warnings) {
+            showToast(warning, 'warning');
+          }
+        }
+
+        await loadBlueprints();
+        await loadMaterials();
+        await loadOverview();
+        showToast(`Updated built quantity to ${builtRuns} runs`, 'success');
+      } catch (error) {
+        showToast('Failed to update built quantity: ' + error.message, 'error');
+      } finally {
+        hideLoading();
+      }
+    });
+
   } catch (error) {
-    showToast('Failed to update intermediate: ' + error.message, 'error');
-  } finally {
-    hideLoading();
+    console.error('Error showing mark built modal:', error);
+    showToast('Failed to show modal: ' + error.message, 'error');
+  }
+};
+
+// Keep old function for backward compatibility during transition
+window.toggleIntermediateBuilt = async function(intermediateBlueprintId, currentlyBuilt) {
+  console.log('toggleIntermediateBuilt called with:', intermediateBlueprintId, currentlyBuilt);
+  console.log('selectedPlanId:', selectedPlanId);
+  try {
+    // Redirect to new modal
+    await window.showMarkBuiltModal(intermediateBlueprintId);
+  } catch (error) {
+    console.error('Error in toggleIntermediateBuilt:', error);
+    showToast('Error opening modal: ' + error.message, 'error');
   }
 };
 

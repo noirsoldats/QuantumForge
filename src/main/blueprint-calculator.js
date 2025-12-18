@@ -194,7 +194,9 @@ function calculateMaterialQuantity(baseQuantity, meLevel, runs, facility = null,
     let finalQuantity = afterStructure;
     if (facility && facility.rigs && facility.rigs.length > 0 && productGroupId) {
         const {getRigMaterialBonus} = require('./rig-bonuses');
-        const rigBonus              = getRigMaterialBonus(facility.rigs, productGroupId, facility.securityStatus);
+        // Use facility.securityStatus if available, otherwise default to 0.5 (lowsec)
+        const securityStatus = facility.securityStatus ?? 0.5;
+        const rigBonus = getRigMaterialBonus(facility.rigs, productGroupId, securityStatus);
 
         if (rigBonus !== 0) {
             // Rig bonus is negative (e.g., -2.0 for 2% reduction)
@@ -322,6 +324,7 @@ function getProductGroupId(productTypeId, db = null) {
  * @param {number} meLevel - ME level (0-10)
  * @param {number} characterId - Character ID for owned blueprints (optional)
  * @param {Object} facility - Facility object with rigs and security status (optional)
+ * @param useIntermediates
  * @param {number} depth - Current recursion depth (for internal use)
  * @param db
  * @returns {Object} Calculation result with materials and breakdown

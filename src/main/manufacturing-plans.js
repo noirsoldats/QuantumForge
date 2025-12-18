@@ -1,11 +1,78 @@
 const { getCharacterDatabase } = require('./character-database');
-const { calculateBlueprintMaterials, getBlueprintProduct } = require('./blueprint-calculator');
+const { calculateBlueprintMaterials, getBlueprintProduct, getBlueprintForProduct, getOwnedBlueprintME } = require('./blueprint-calculator');
 const { calculateRealisticPrice } = require('./market-pricing');
 const { getAssets } = require('./esi-assets');
 const { getMarketSettings } = require('./settings-manager');
 const { getSdePath } = require('./sde-manager');
 const { randomUUID } = require('crypto');
 const Database = require('better-sqlite3');
+
+// ============================================================================
+// HELPER FUNCTIONS - Shared logic for intermediate blueprint processing
+// ============================================================================
+
+/**
+ * Classify materials into intermediates and raw materials
+ * @param {object} materials - Materials object from calculateBlueprintMaterials
+ * @returns {object} { intermediates: [{typeId, quantity, blueprintTypeId, product}], rawMaterials: [{typeId, quantity}] }
+ */
+function classifyMaterials(materials) {
+  const intermediates = [];
+  const rawMaterials = [];
+
+  for (const [materialTypeId, materialQuantity] of Object.entries(materials)) {
+    const blueprintTypeId = getBlueprintForProduct(parseInt(materialTypeId));
+
+    if (blueprintTypeId) {
+      const product = getBlueprintProduct(blueprintTypeId);
+      intermediates.push({
+        typeId: parseInt(materialTypeId),
+        quantity: materialQuantity,
+        blueprintTypeId: blueprintTypeId,
+        product: product
+      });
+    } else {
+      rawMaterials.push({
+        typeId: parseInt(materialTypeId),
+        quantity: materialQuantity
+      });
+    }
+  }
+
+  return { intermediates, rawMaterials };
+}
+
+/**
+ * Calculate runs needed for an intermediate blueprint
+ * @param {number} materialQuantity - Units of product needed
+ * @param {number} blueprintTypeId - Blueprint type ID
+ * @param {number} productionLines - Number of concurrent production lines (default 1)
+ * @returns {number} Runs needed
+ */
+function calculateIntermediateRuns(materialQuantity, blueprintTypeId, productionLines = 1) {
+  const product = getBlueprintProduct(blueprintTypeId);
+  const productsPerRun = product ? product.quantity : 1;
+  return Math.ceil((materialQuantity * productionLines) / productsPerRun);
+}
+
+/**
+ * Check recursion depth limit
+ * @param {number} depth - Current depth
+ * @param {number} maxDepth - Maximum allowed depth (default 10)
+ * @param {string} context - Context for warning message
+ * @returns {boolean} True if depth exceeded
+ */
+function isMaxDepthExceeded(depth, maxDepth = 10, context = 'intermediate expansion') {
+  if (depth >= maxDepth) {
+    console.warn(`[Plans] Max depth ${maxDepth} reached for ${context}`);
+    return true;
+  }
+  return false;
+}
+
+// ============================================================================
+// MANUFACTURING PLANS CRUD OPERATIONS
+// ============================================================================
 
 /**
  * Create a new manufacturing plan
@@ -388,13 +455,43 @@ async function addBlueprintToPlan(planId, blueprintConfig) {
 }
 
 /**
- * Detect and create intermediate blueprints for a parent blueprint
- * @param {string} parentBlueprintId - Parent blueprint ID
- * @param {string} planId - Plan ID
- * @param {number} characterId - Character ID
- * @returns {Promise<Array>} Array of created intermediate blueprint IDs
+ * Detect and create intermediate blueprint database entries for a parent blueprint
+ *
+ * This function is part of the STRUCTURE CREATION phase - it manages the database
+ * entries for intermediates but does NOT calculate final materials.
+ *
+ * This function can be called:
+ * - Directly when adding a new blueprint to a plan (via addBlueprintToPlan)
+ * - Automatically by recalculatePlanMaterials() to ensure structure is up-to-date
+ * - Recursively for nested intermediates (depth controlled, max 10)
+ *
+ * The created intermediates will have default configurations:
+ * - ME level: From character's owned blueprints, or 0 if not owned
+ * - TE level: 0
+ * - use_intermediates: 'raw_materials' (always expand by default)
+ * - facility: inherited from parent
+ * - runs: calculated based on parent's material requirements
+ *
+ * Users can customize these after creation via updateIntermediateBlueprint(),
+ * and recalculatePlanMaterials() will respect those customizations.
+ *
+ * This function is idempotent:
+ * - Checks for existing intermediates before creating
+ * - Updates runs if changed
+ * - Safe to call multiple times
+ *
+ * @param {string} parentBlueprintId - Plan blueprint ID of parent
+ * @param {string} planId - Manufacturing plan ID
+ * @param {string} characterId - Character ID for skill/blueprint lookups
+ * @param {number} depth - Current recursion depth (internal, default 0)
+ * @returns {Promise<string[]>} Array of created/updated intermediate plan_blueprint_ids
  */
-async function detectAndCreateIntermediates(parentBlueprintId, planId, characterId) {
+async function detectAndCreateIntermediates(parentBlueprintId, planId, characterId, depth = 0) {
+  // Check depth limit using helper
+  if (isMaxDepthExceeded(depth, 10, `detectAndCreateIntermediates for ${parentBlueprintId}`)) {
+    return [];
+  }
+
   try {
     const db = getCharacterDatabase();
 
@@ -414,104 +511,107 @@ async function detectAndCreateIntermediates(parentBlueprintId, planId, character
       return [];
     }
 
-    // Calculate materials to get intermediate components
+    // Parse facility snapshot
     const facilitySnapshot = parent.facility_snapshot ? JSON.parse(parent.facility_snapshot) : null;
 
+    // CRITICAL: Call calculateBlueprintMaterials with useIntermediates=FALSE
+    // This gives us component-level materials only (same as recalculatePlanMaterials)
     const calculation = await calculateBlueprintMaterials(
       parent.blueprint_type_id,
       parent.runs,
       parent.me_level,
       characterId,
       facilitySnapshot,
-      true  // useIntermediates = true
+      false  // CRITICAL: Always false - we manually expand intermediates below
     );
 
     const createdIntermediateIds = [];
+    const now = Date.now();
 
-    // Check if breakdown has intermediate components
-    if (calculation.breakdown && calculation.breakdown.length > 0) {
-      const mainBreakdown = calculation.breakdown[0];
+    // Classify materials using helper function
+    const { intermediates, rawMaterials } = classifyMaterials(calculation.materials);
 
-      if (mainBreakdown.intermediateComponents && mainBreakdown.intermediateComponents.length > 0) {
-        const now = Date.now();
+    // Process each intermediate
+    for (const intermediate of intermediates) {
+      const intermediateBlueprintTypeId = intermediate.blueprintTypeId;
+      const materialTypeId = intermediate.typeId;
+      const materialQuantity = intermediate.quantity;
+      const product = intermediate.product;
 
-        for (const intermediate of mainBreakdown.intermediateComponents) {
-          // Calculate actual runs needed based on products-per-run
-          // Example: 369 products needed ÷ 3 per run = 123 runs
-          const productsPerRun = intermediate.productQuantityPerRun || 1;
-          const runsNeeded = Math.ceil(intermediate.quantity / productsPerRun);
+      // Calculate runs needed using helper function
+      const runsNeeded = calculateIntermediateRuns(materialQuantity, intermediateBlueprintTypeId, parent.lines);
+      const productsPerRun = product ? product.quantity : 1;
 
-          // Check if this intermediate already exists for this parent
-          const existing = db.prepare(`
-            SELECT plan_blueprint_id FROM plan_blueprints
-            WHERE parent_blueprint_id = ?
-              AND blueprint_type_id = ?
-              AND intermediate_product_type_id = ?
-          `).get(parentBlueprintId, intermediate.blueprintTypeID, intermediate.typeID);
+      console.log(`[Plans] Intermediate detected: ${intermediateBlueprintTypeId} - need ${materialQuantity * parent.lines} units @ ${productsPerRun}/run = ${runsNeeded} runs (depth ${depth})`);
 
-          let intermediateBlueprintId;
-          if (existing) {
-            // Update runs if it changed
-            db.prepare(`
-              UPDATE plan_blueprints
-              SET runs = ?
-              WHERE plan_blueprint_id = ?
-            `).run(runsNeeded, existing.plan_blueprint_id);
+      // Check if this intermediate already exists for this parent
+      const existing = db.prepare(`
+        SELECT plan_blueprint_id, runs FROM plan_blueprints
+        WHERE parent_blueprint_id = ?
+          AND blueprint_type_id = ?
+          AND intermediate_product_type_id = ?
+      `).get(parentBlueprintId, intermediateBlueprintTypeId, materialTypeId);
 
-            console.log(`Updated intermediate blueprint ${intermediate.blueprintTypeID} runs to ${runsNeeded} (${intermediate.quantity} products ÷ ${productsPerRun} per run)`);
-            intermediateBlueprintId = existing.plan_blueprint_id;
-            createdIntermediateIds.push(existing.plan_blueprint_id);
-          } else {
-            // Create new intermediate blueprint entry
-            intermediateBlueprintId = randomUUID();
-
-            // Use parent's facility by default
-            const intermediateFacilityId = parent.facility_id;
-            const intermediateFacilitySnapshot = facilitySnapshot;
-
-            // Use the ME from the calculation breakdown
-            let intermediateME = intermediate.meLevel || 0;
-            let intermediateTE = 0;
-
-            db.prepare(`
-              INSERT INTO plan_blueprints (
-                plan_blueprint_id, plan_id, parent_blueprint_id,
-                blueprint_type_id, runs, lines,
-                me_level, te_level, facility_id, facility_snapshot,
-                is_intermediate, is_built, intermediate_product_type_id,
-                added_at
-              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0, ?, ?)
-            `).run(
-              intermediateBlueprintId,
-              planId,
-              parentBlueprintId,
-              intermediate.blueprintTypeID,
-              runsNeeded,  // Actual runs calculated from quantity ÷ products-per-run
-              1,  // lines always 1 for intermediates
-              intermediateME,
-              intermediateTE,
-              intermediateFacilityId,
-              intermediateFacilitySnapshot ? JSON.stringify(intermediateFacilitySnapshot) : null,
-              intermediate.typeID,
-              now
-            );
-
-            console.log(`Created intermediate blueprint ${intermediate.blueprintTypeID} (${runsNeeded} runs to produce ${intermediate.quantity} ${intermediate.typeName})`);
-            createdIntermediateIds.push(intermediateBlueprintId);
-          }
-
-          // Recursively detect and create nested intermediates
-          if (intermediate.nestedIntermediates && intermediate.nestedIntermediates.length > 0) {
-            console.log(`Recursively creating ${intermediate.nestedIntermediates.length} nested intermediates for ${intermediate.typeName}`);
-            const nestedIds = await detectAndCreateIntermediates(
-              intermediateBlueprintId,  // This intermediate becomes the parent
-              planId,
-              characterId
-            );
-            createdIntermediateIds.push(...nestedIds);
-          }
+      let intermediateBlueprintId;
+      if (existing) {
+        // Update runs if it changed
+        if (existing.runs !== runsNeeded) {
+          db.prepare(`
+            UPDATE plan_blueprints
+            SET runs = ?
+            WHERE plan_blueprint_id = ?
+          `).run(runsNeeded, existing.plan_blueprint_id);
+          console.log(`[Plans] Updated intermediate ${intermediateBlueprintTypeId} runs: ${existing.runs} → ${runsNeeded}`);
         }
+        intermediateBlueprintId = existing.plan_blueprint_id;
+        createdIntermediateIds.push(existing.plan_blueprint_id);
+      } else {
+        // Create new intermediate blueprint entry
+        intermediateBlueprintId = randomUUID();
+
+        // Use parent's facility by default
+        const intermediateFacilityId = parent.facility_id;
+
+        // Get ME level from owned blueprints
+        let intermediateME = getOwnedBlueprintME(characterId, intermediateBlueprintTypeId) || 0;
+
+        db.prepare(`
+          INSERT INTO plan_blueprints (
+            plan_blueprint_id, plan_id, parent_blueprint_id,
+            blueprint_type_id, runs, lines,
+            me_level, te_level, facility_id, facility_snapshot,
+            is_intermediate, is_built, intermediate_product_type_id,
+            use_intermediates,
+            added_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0, ?, ?, ?)
+        `).run(
+          intermediateBlueprintId,
+          planId,
+          parentBlueprintId,
+          intermediateBlueprintTypeId,
+          runsNeeded,
+          1,  // lines always 1 for intermediates
+          intermediateME,
+          0,  // te_level
+          intermediateFacilityId,
+          facilitySnapshot ? JSON.stringify(facilitySnapshot) : null,
+          materialTypeId,
+          'raw_materials',  // CRITICAL: Always expand intermediates by default
+          now
+        );
+
+        console.log(`[Plans] Created intermediate ${intermediateBlueprintTypeId} (${runsNeeded} runs for ${materialQuantity * parent.lines} ${product ? product.typeName : 'units'})`);
+        createdIntermediateIds.push(intermediateBlueprintId);
       }
+
+      // Recursively detect and create nested intermediates
+      const nestedIds = await detectAndCreateIntermediates(
+        intermediateBlueprintId,  // This intermediate becomes the parent
+        planId,
+        characterId,
+        depth + 1
+      );
+      createdIntermediateIds.push(...nestedIds);
     }
 
     return createdIntermediateIds;
@@ -581,14 +681,9 @@ async function updatePlanBlueprint(planBlueprintId, updates) {
     if (result.changes > 0) {
       console.log(`Updated plan blueprint: ${planBlueprintId}`);
 
-      // If this is a top-level blueprint (not an intermediate), recalculate its intermediates
-      // This is needed when runs, lines, ME, or facility change
-      if (!blueprint.is_intermediate) {
-        await detectAndCreateIntermediates(planBlueprintId, blueprint.plan_id, blueprint.character_id);
-        console.log(`Recalculated intermediates for blueprint: ${planBlueprintId}`);
-      }
-
       // Trigger material recalculation
+      // Note: recalculatePlanMaterials() now handles intermediate structure sync internally,
+      // so we no longer need to call detectAndCreateIntermediates() here
       await recalculatePlanMaterials(blueprint.plan_id, false);
 
       // Update plan's updated_at
@@ -600,6 +695,96 @@ async function updatePlanBlueprint(planBlueprintId, updates) {
   } catch (error) {
     console.error('Error updating plan blueprint:', error);
     return false;
+  }
+}
+
+/**
+ * Bulk update multiple blueprints in a plan
+ * More efficient than individual updates - recalculates materials once at the end
+ * @param {string} planId - Plan ID
+ * @param {Array} bulkUpdates - Array of {planBlueprintId, updates}
+ * @returns {Promise<boolean>} Success status
+ */
+async function bulkUpdateBlueprints(planId, bulkUpdates) {
+  if (!bulkUpdates || bulkUpdates.length === 0) {
+    return true; // Nothing to update
+  }
+
+  try {
+    const db = getCharacterDatabase();
+
+    // Get plan to find character ID
+    const plan = db.prepare('SELECT character_id FROM manufacturing_plans WHERE plan_id = ?').get(planId);
+    if (!plan) {
+      throw new Error('Plan not found');
+    }
+
+    // Begin transaction for atomic updates
+    db.exec('BEGIN TRANSACTION');
+
+    try {
+      const allowedFields = ['runs', 'lines', 'me_level', 'te_level', 'facility_id', 'facility_snapshot', 'use_intermediates'];
+      const fieldMap = {
+        runs: 'runs',
+        lines: 'lines',
+        meLevel: 'me_level',
+        teLevel: 'te_level',
+        facilityId: 'facility_id',
+        facilitySnapshot: 'facility_snapshot',
+        useIntermediates: 'use_intermediates',
+      };
+
+      for (const { planBlueprintId, updates } of bulkUpdates) {
+        // Validate blueprint belongs to this plan
+        const blueprint = db.prepare(`
+          SELECT plan_id FROM plan_blueprints WHERE plan_blueprint_id = ?
+        `).get(planBlueprintId);
+
+        if (!blueprint || blueprint.plan_id !== planId) {
+          throw new Error(`Blueprint ${planBlueprintId} not found in plan ${planId}`);
+        }
+
+        // Build update query
+        const fields = [];
+        const values = [];
+
+        for (const [key, value] of Object.entries(updates)) {
+          const dbField = fieldMap[key];
+          if (dbField && allowedFields.includes(dbField)) {
+            fields.push(`${dbField} = ?`);
+            // Stringify facilitySnapshot if it's an object
+            if (key === 'facilitySnapshot' && value !== null) {
+              values.push(JSON.stringify(value));
+            } else {
+              values.push(value);
+            }
+          }
+        }
+
+        if (fields.length > 0) {
+          values.push(planBlueprintId);
+          const query = `UPDATE plan_blueprints SET ${fields.join(', ')} WHERE plan_blueprint_id = ?`;
+          db.prepare(query).run(...values);
+          console.log(`[Plans] Bulk updated blueprint ${planBlueprintId}`);
+        }
+      }
+
+      // Commit all updates
+      db.exec('COMMIT');
+      console.log(`[Plans] Bulk updated ${bulkUpdates.length} blueprint(s) in plan ${planId}`);
+
+      // Update plan's updated_at timestamp
+      const now = Date.now();
+      db.prepare('UPDATE manufacturing_plans SET updated_at = ? WHERE plan_id = ?').run(now, planId);
+
+      return true;
+    } catch (error) {
+      db.exec('ROLLBACK');
+      throw error;
+    }
+  } catch (error) {
+    console.error('Error bulk updating blueprints:', error);
+    throw error;
   }
 }
 
@@ -675,6 +860,7 @@ function getPlanBlueprints(planId) {
         : 'raw_materials',
       isIntermediate: bp.is_intermediate === 1,
       isBuilt: bp.is_built === 1,
+      builtRuns: bp.built_runs || 0,
       intermediateProductTypeId: bp.intermediate_product_type_id,
       addedAt: bp.added_at,
     }));
@@ -887,39 +1073,110 @@ async function markIntermediateBuiltRecursive(intermediateBlueprintId, isBuilt, 
  * @param {boolean} isBuilt - Built status
  * @returns {Promise<Object>} Result with warnings if any
  */
-async function markIntermediateBuilt(intermediateBlueprintId, isBuilt) {
+/**
+ * Update materials proportionally based on built runs delta
+ * @param {string} intermediateBlueprintId - Intermediate blueprint ID
+ * @param {Object} intermediate - Intermediate blueprint data
+ * @param {number} deltaRuns - Change in built runs (positive or negative)
+ * @param {string} planId - Plan ID
+ * @param {number} characterId - Character ID
+ */
+async function updateIntermediateMaterialsProportional(intermediateBlueprintId, intermediate, deltaRuns, planId, characterId) {
+  const db = getCharacterDatabase();
+
+  if (deltaRuns === 0) {
+    return; // No change needed
+  }
+
+  // Calculate materials for a single run
+  const facilitySnapshot = intermediate.facility_snapshot ? JSON.parse(intermediate.facility_snapshot) : null;
+
+  const materialsPerRun = await calculateBlueprintMaterials(
+    intermediate.blueprint_type_id,
+    1, // Single run to get per-run materials
+    intermediate.me_level || 0,
+    characterId,
+    facilitySnapshot,
+    false // Don't break down further - get raw materials
+  );
+
+  // For each material, update acquired quantity
+  for (const [typeId, quantityPerRun] of Object.entries(materialsPerRun)) {
+    const deltaQuantity = Math.ceil(quantityPerRun * deltaRuns);
+
+    // Get current acquired quantity
+    const current = db.prepare(`
+      SELECT manually_acquired_quantity
+      FROM plan_materials
+      WHERE plan_id = ? AND type_id = ?
+    `).get(planId, parseInt(typeId));
+
+    const currentAcquired = current?.manually_acquired_quantity || 0;
+    const newAcquired = Math.max(0, currentAcquired + deltaQuantity);
+
+    // Update material acquisition
+    db.prepare(`
+      UPDATE plan_materials
+      SET manually_acquired = CASE WHEN ? > 0 THEN 1 ELSE 0 END,
+          manually_acquired_quantity = ?,
+          acquisition_method = CASE WHEN ? > 0 THEN 'manufactured' ELSE NULL END
+      WHERE plan_id = ? AND type_id = ?
+    `).run(newAcquired, newAcquired, newAcquired, planId, parseInt(typeId));
+  }
+}
+
+async function markIntermediateBuilt(intermediateBlueprintId, builtRuns) {
   try {
     const db = getCharacterDatabase();
 
-    // Get plan and character info before marking
-    const blueprintInfo = db.prepare(`
-      SELECT pb.plan_id, mp.character_id
+    // Get intermediate details (total runs, plan_id, character_id)
+    const intermediate = db.prepare(`
+      SELECT pb.*, mp.character_id
       FROM plan_blueprints pb
       JOIN manufacturing_plans mp ON pb.plan_id = mp.plan_id
       WHERE pb.plan_blueprint_id = ?
     `).get(intermediateBlueprintId);
 
-    if (!blueprintInfo) {
+    if (!intermediate) {
       throw new Error('Intermediate blueprint not found');
     }
 
-    // Recursively mark this intermediate and all children
-    const planId = await markIntermediateBuiltRecursive(intermediateBlueprintId, isBuilt, db, true);
-
-    // Instead of excluding materials, mark them as acquired/unacquired
-    if (isBuilt) {
-      await markIntermediateMaterialsAsAcquired(intermediateBlueprintId, planId, blueprintInfo.character_id);
-    } else {
-      await unmarkIntermediateMaterialsAsAcquired(intermediateBlueprintId, planId);
+    // Validate builtRuns (0 <= builtRuns <= runs)
+    if (builtRuns < 0 || builtRuns > intermediate.runs) {
+      throw new Error(`Invalid built runs: ${builtRuns}. Must be between 0 and ${intermediate.runs}`);
     }
 
-    // NOTE: We still call recalculatePlanMaterials to ensure consistency,
-    // but the exclusion logic has been removed (materials remain in the list)
-    await recalculatePlanMaterials(planId, false);
+    // Get previous built quantity
+    const previousBuiltRuns = intermediate.built_runs || 0;
+
+    // Update built_runs and is_built (auto-sync for backward compatibility)
+    db.prepare(`
+      UPDATE plan_blueprints
+      SET built_runs = ?,
+          is_built = CASE WHEN ? >= runs THEN 1 ELSE 0 END
+      WHERE plan_blueprint_id = ?
+    `).run(builtRuns, builtRuns, intermediateBlueprintId);
+
+    // Calculate material delta (difference from previous state)
+    const delta = builtRuns - previousBuiltRuns;
+
+    if (delta !== 0) {
+      // Update materials proportionally
+      await updateIntermediateMaterialsProportional(
+        intermediateBlueprintId,
+        intermediate,
+        delta,
+        intermediate.plan_id,
+        intermediate.character_id
+      );
+    }
+
+    // Recalculate plan materials to ensure consistency
+    await recalculatePlanMaterials(intermediate.plan_id, false);
 
     // Update plan's updated_at
     const now = Date.now();
-    db.prepare('UPDATE manufacturing_plans SET updated_at = ? WHERE plan_id = ?').run(now, planId);
+    db.prepare('UPDATE manufacturing_plans SET updated_at = ? WHERE plan_id = ?').run(now, intermediate.plan_id);
 
     return {
       success: true,
@@ -1150,9 +1407,218 @@ function flattenIntermediates(intermediateComponents, currentDepth = 1) {
 }
 
 /**
- * Recalculate plan materials and products
+ * Recursively expand an intermediate blueprint into its materials
+ * @param {number} intermediateBlueprintTypeId - Blueprint type ID of the intermediate
+ * @param {number} runsNeeded - Number of runs needed (from parent's materials list)
+ * @param {object} intermediateConfig - Config from plan_blueprints (if exists)
+ * @param {object} parentFacility - Parent blueprint's facility (fallback)
+ * @param {string} characterId - Character ID for owned blueprint lookup
+ * @param {string} planId - Plan ID for looking up nested intermediate configs
+ * @param {string} parentBlueprintId - Parent blueprint ID for looking up child intermediates
+ * @param {number} depth - Current recursion depth (prevent infinite loops)
+ * @returns {object} { materials: {typeId: quantity}, intermediateProducts: [{typeId, quantity, depth}] }
+ */
+async function expandIntermediate(
+  intermediateBlueprintTypeId,
+  runsNeeded,
+  intermediateConfig,
+  parentFacility,
+  characterId,
+  planId,
+  parentBlueprintId,
+  depth = 1
+) {
+  // Check depth limit using helper
+  if (isMaxDepthExceeded(depth, 10, `expandIntermediate for ${intermediateBlueprintTypeId}`)) {
+    return { materials: {}, intermediateProducts: [] };
+  }
+
+  // Determine configuration for this intermediate
+  let meLevel = intermediateConfig?.meLevel ?? 0;
+  let teLevel = intermediateConfig?.teLevel ?? 0;
+  let facility = intermediateConfig?.facilitySnapshot ?? parentFacility;
+  let useIntermediates = intermediateConfig?.useIntermediates ?? 'raw_materials';
+
+  // Fallback: check owned blueprints for ME if not in config
+  if (!intermediateConfig && characterId) {
+    const ownedME = getOwnedBlueprintME(characterId, intermediateBlueprintTypeId);
+    if (ownedME !== null) {
+      meLevel = ownedME;
+    }
+  }
+
+  // Convert use_intermediates to boolean for calculateBlueprintMaterials
+  const shouldExpandSubIntermediates = (useIntermediates === 'raw_materials' || useIntermediates === 'build_buy');
+
+  // Calculate this intermediate's materials with useIntermediates=false
+  // (we'll manually expand sub-intermediates if needed)
+  const calculation = await calculateBlueprintMaterials(
+    intermediateBlueprintTypeId,
+    runsNeeded,
+    meLevel,
+    characterId,
+    facility,
+    false  // Always false - we manually expand below
+  );
+
+  const aggregatedMaterials = { ...calculation.materials };
+  const intermediateProducts = [];
+
+  // Track this intermediate as a product (for plan_products)
+  const product = calculation.product;
+  if (product) {
+    const baseQty = product.baseQuantity || 1;
+    const totalProductQty = baseQty * runsNeeded;
+    intermediateProducts.push({
+      typeId: product.typeID,
+      quantity: totalProductQty,
+      depth: depth
+    });
+  }
+
+  // If this intermediate should expand to raw materials, manually expand sub-intermediates
+  if (shouldExpandSubIntermediates) {
+    // Classify materials using helper function
+    const { intermediates, rawMaterials } = classifyMaterials(calculation.materials);
+
+    // Process each sub-intermediate
+    for (const intermediate of intermediates) {
+      const subBlueprintId = intermediate.blueprintTypeId;
+      const materialTypeId = intermediate.typeId;
+      const materialQuantity = intermediate.quantity;
+      const subProduct = intermediate.product;
+
+      // Calculate runs needed using helper function (no production lines for intermediates)
+      const subRunsNeeded = calculateIntermediateRuns(materialQuantity, subBlueprintId, 1);
+      const unitsPerRun = subProduct ? subProduct.quantity : 1;
+
+      console.log(`[Plans] Sub-intermediate ${subBlueprintId}: need ${materialQuantity} units @ ${unitsPerRun} per run = ${subRunsNeeded} runs (depth ${depth + 1})`);
+
+      // Look up config in plan_blueprints for this sub-intermediate
+      // Filter by parent_blueprint_id to get the correct child intermediate instance
+      const db = getCharacterDatabase();
+      const subConfig = db.prepare(`
+        SELECT plan_blueprint_id, me_level, te_level, facility_snapshot, use_intermediates, runs
+        FROM plan_blueprints
+        WHERE plan_id = ? AND blueprint_type_id = ? AND parent_blueprint_id = ? AND is_intermediate = 1
+        LIMIT 1
+      `).get(planId, subBlueprintId, parentBlueprintId);
+
+      // Recursively expand with RUNS, not units
+      const subExpansion = await expandIntermediate(
+        subBlueprintId,
+        subRunsNeeded,  // Pass calculated runs, not raw material quantity
+        subConfig ? {
+          meLevel: subConfig.me_level,
+          teLevel: subConfig.te_level,
+          facilitySnapshot: JSON.parse(subConfig.facility_snapshot),
+          useIntermediates: subConfig.use_intermediates
+        } : null,
+        facility,  // Pass our facility as fallback
+        characterId,
+        planId,  // Pass planId for nested lookups
+        subConfig ? subConfig.plan_blueprint_id : null,  // Parent blueprint ID for nested child lookups
+        depth + 1
+      );
+
+      // Remove this material from our list (it's been expanded)
+      delete aggregatedMaterials[materialTypeId];
+
+      // Add the sub-intermediate's materials to ours
+      for (const [subMatTypeId, subMatQty] of Object.entries(subExpansion.materials)) {
+        aggregatedMaterials[subMatTypeId] = (aggregatedMaterials[subMatTypeId] || 0) + subMatQty;
+      }
+
+      // Collect sub-intermediate products
+      intermediateProducts.push(...subExpansion.intermediateProducts);
+    }
+  }
+
+  return {
+    materials: aggregatedMaterials,
+    intermediateProducts: intermediateProducts
+  };
+}
+
+/**
+ * Clean up orphaned intermediate blueprints from plan_blueprints table
+ * An intermediate is orphaned if:
+ * - Its parent no longer exists, OR
+ * - Its parent exists but has use_intermediates='components'
+ *
  * @param {string} planId - Plan ID
- * @param {boolean} refreshPrices - Whether to refresh prices from market
+ */
+async function cleanupOrphanedIntermediates(planId) {
+  const db = getCharacterDatabase();
+
+  // Get all intermediate blueprints in this plan
+  const intermediates = db.prepare(`
+    SELECT plan_blueprint_id, parent_blueprint_id
+    FROM plan_blueprints
+    WHERE plan_id = ? AND is_intermediate = 1
+  `).all(planId);
+
+  if (intermediates.length === 0) {
+    return; // No intermediates to clean
+  }
+
+  // Get all valid parent blueprints with their use_intermediates setting
+  const allBlueprints = db.prepare(`
+    SELECT plan_blueprint_id, use_intermediates
+    FROM plan_blueprints
+    WHERE plan_id = ?
+  `).all(planId);
+
+  const blueprintMap = new Map(
+    allBlueprints.map(bp => [bp.plan_blueprint_id, bp.use_intermediates])
+  );
+
+  // Delete intermediates whose parent is missing or set to 'components'
+  const deleteStmt = db.prepare(`
+    DELETE FROM plan_blueprints
+    WHERE plan_blueprint_id = ?
+  `);
+
+  let deletedCount = 0;
+  for (const intermediate of intermediates) {
+    const parentUseIntermediates = blueprintMap.get(intermediate.parent_blueprint_id);
+
+    // Orphaned if parent doesn't exist OR parent uses 'components' mode
+    if (!parentUseIntermediates || parentUseIntermediates === 'components') {
+      deleteStmt.run(intermediate.plan_blueprint_id);
+      deletedCount++;
+      const reason = !parentUseIntermediates ? 'missing parent' : 'parent uses components mode';
+      console.log(`[Plans] Deleted orphaned intermediate (${reason}): ${intermediate.plan_blueprint_id}`);
+    }
+  }
+
+  if (deletedCount > 0) {
+    console.log(`[Plans] Cleaned up ${deletedCount} orphaned intermediate(s) from plan ${planId}`);
+  }
+}
+
+/**
+ * Recalculate and persist all materials and products for a manufacturing plan
+ *
+ * This function performs two phases:
+ * 1. STRUCTURE SYNC: Ensures intermediate blueprint structure is up-to-date for all top-level blueprints
+ * 2. MATERIAL CALCULATION: Computes aggregated materials and applies pricing
+ *
+ * The structure sync phase calls detectAndCreateIntermediates() for each top-level blueprint
+ * that uses intermediates (raw_materials or build_buy mode). This ensures that:
+ * - Missing intermediates are created
+ * - Existing intermediates have correct runs based on current material requirements
+ * - User customizations (ME, TE, facility) are preserved
+ * - The plan is self-healing in case of database inconsistencies
+ *
+ * Call this when:
+ * - After any blueprint changes (add, update, remove)
+ * - After marking intermediate as built/unbuilt
+ * - When refreshing market prices
+ * - Anytime intermediate structure or materials might be out of sync
+ *
+ * @param {string} planId - Plan ID
+ * @param {boolean} refreshPrices - Whether to refresh prices from market (default false)
  * @returns {Promise<boolean>} Success status
  */
 async function recalculatePlanMaterials(planId, refreshPrices = false) {
@@ -1179,7 +1645,7 @@ async function recalculatePlanMaterials(planId, refreshPrices = false) {
     // Aggregate materials and products across all blueprints
     const aggregatedMaterials = {};
     const aggregatedProducts = {};
-    const aggregatedIntermediateProducts = new Map(); // Map<typeId, {quantity, depth}>
+    const aggregatedIntermediateProducts = []; // Array of {typeId, quantity, depth}
     const blueprintCalculations = new Map(); // Store calculations to identify final products later
 
     // NOTE: Built intermediate exclusion logic has been removed.
@@ -1194,76 +1660,116 @@ async function recalculatePlanMaterials(planId, refreshPrices = false) {
     // Their products are already captured via intermediateComponents from parent blueprints
     const topLevelBlueprints = blueprints.filter(bp => !bp.isIntermediate);
 
+    // PHASE 1: Ensure intermediate structure is complete for all top-level blueprints
+    // This ensures intermediates are always up-to-date before calculating materials
+    console.log(`[Plans] Syncing intermediate structure for ${topLevelBlueprints.length} top-level blueprint(s) in plan ${planId}`);
     for (const blueprint of topLevelBlueprints) {
-      // Parse facility snapshot
+      // Only sync intermediates if blueprint uses raw_materials or build_buy mode
+      if (blueprint.useIntermediates === 'raw_materials' || blueprint.useIntermediates === 'build_buy') {
+        const createdIds = await detectAndCreateIntermediates(
+          blueprint.planBlueprintId,
+          planId,
+          plan.character_id,
+          0  // Start at depth 0
+        );
+        if (createdIds.length > 0) {
+          console.log(`[Plans] Created/updated ${createdIds.length} intermediate(s) for blueprint ${blueprint.planBlueprintId}`);
+        }
+      }
+    }
+
+    // PHASE 2: Process each top-level blueprint with manual intermediate expansion
+    for (const blueprint of topLevelBlueprints) {
       const facility = blueprint.facilitySnapshot;
 
-      // Get use_intermediates flag and convert to boolean
-      // 'raw_materials' = true (build intermediates), 'components' = false (buy from market)
-      // For backwards compatibility: 1/true = raw_materials, 0/false = components
-      let useIntermediates;
-      if (blueprint.useIntermediates === 'raw_materials') {
-        useIntermediates = true;
-      } else if (blueprint.useIntermediates === 'components') {
-        useIntermediates = false;
-      } else if (blueprint.useIntermediates === 'build_buy') {
-        // For now, treat build_buy as raw_materials until optimization is implemented
-        useIntermediates = true;
-      } else {
-        // Backwards compatibility: treat numeric/boolean values
-        useIntermediates = blueprint.useIntermediates !== 0 && blueprint.useIntermediates !== false;
-      }
-
-      // Calculate materials for this blueprint (respecting max runs per calculation)
+      // ALWAYS call calculateBlueprintMaterials with useIntermediates=false
+      // This gives us component-level materials only
       const calculation = await calculateBlueprintMaterials(
         blueprint.blueprintTypeId,
         blueprint.runs,
         blueprint.meLevel,
         plan.character_id,
         facility,
-        useIntermediates
+        false  // CRITICAL: Always false - we manually expand intermediates below
       );
 
       // Store calculation for later use (to identify final products)
       blueprintCalculations.set(blueprint.planBlueprintId, calculation);
 
-      // Aggregate materials (multiply by lines if > 1)
-      // NOTE: Materials are aggregated regardless of built status
-      // Built intermediates have their materials marked as acquired via the acquisition system
-      for (const [typeId, quantity] of Object.entries(calculation.materials)) {
-        const totalQty = quantity * blueprint.lines;
-        aggregatedMaterials[typeId] = (aggregatedMaterials[typeId] || 0) + totalQty;
-      }
+      // Check if we need to expand intermediates to raw materials
+      if (blueprint.useIntermediates === 'raw_materials' || blueprint.useIntermediates === 'build_buy') {
+        // Classify materials using helper function
+        const { intermediates, rawMaterials } = classifyMaterials(calculation.materials);
 
-      // Extract intermediate products from breakdown using flattening (if building from raw materials)
-      if (useIntermediates && calculation.breakdown && calculation.breakdown.length > 0) {
-        const mainBreakdown = calculation.breakdown[0];
-        if (mainBreakdown.intermediateComponents) {
-          // Flatten ALL intermediates at ALL depths
-          const flattenedIntermediates = flattenIntermediates(
-            mainBreakdown.intermediateComponents,
+        // Process intermediates - expand them recursively
+        for (const intermediate of intermediates) {
+          const intermediateBlueprintId = intermediate.blueprintTypeId;
+          const materialTypeId = intermediate.typeId;
+          const materialQuantity = intermediate.quantity;
+
+          // Look up config in plan_blueprints for this intermediate
+          // Filter by parent_blueprint_id to get the correct intermediate instance
+          const intermediateConfig = db.prepare(`
+            SELECT plan_blueprint_id, me_level, te_level, facility_snapshot, use_intermediates, runs
+            FROM plan_blueprints
+            WHERE plan_id = ? AND blueprint_type_id = ? AND parent_blueprint_id = ? AND is_intermediate = 1
+            LIMIT 1
+          `).get(planId, intermediateBlueprintId, blueprint.planBlueprintId);
+
+          // Calculate correct runs based on current material requirements
+          const correctRunsNeeded = calculateIntermediateRuns(materialQuantity, intermediateBlueprintId, blueprint.lines);
+
+          // Update intermediate runs if they've changed
+          if (intermediateConfig && intermediateConfig.runs !== correctRunsNeeded) {
+            db.prepare(`
+              UPDATE plan_blueprints
+              SET runs = ?
+              WHERE plan_blueprint_id = ?
+            `).run(correctRunsNeeded, intermediateConfig.plan_blueprint_id);
+            console.log(`[Plans] Updated intermediate ${intermediateBlueprintId} runs: ${intermediateConfig.runs} → ${correctRunsNeeded} (parent settings changed)`);
+          }
+
+          // Expand this intermediate recursively
+          const expansion = await expandIntermediate(
+            intermediateBlueprintId,
+            materialQuantity * blueprint.lines,  // Account for production lines
+            intermediateConfig ? {
+              meLevel: intermediateConfig.me_level,
+              teLevel: intermediateConfig.te_level,
+              facilitySnapshot: JSON.parse(intermediateConfig.facility_snapshot),
+              useIntermediates: intermediateConfig.use_intermediates
+            } : null,
+            facility,  // Parent facility as fallback
+            plan.character_id,
+            planId,  // Pass planId for nested intermediate lookups
+            intermediateConfig ? intermediateConfig.plan_blueprint_id : null,  // Parent blueprint ID for child lookups
             1  // Start at depth 1
           );
 
-          // Merge into aggregatedIntermediateProducts
-          for (const [typeId, data] of flattenedIntermediates) {
-            const totalQty = data.quantity * blueprint.lines;
-            const existingData = aggregatedIntermediateProducts.get(typeId);
-
-            // Track the MINIMUM depth (closest to final product)
-            if (!existingData || data.depth < existingData.depth) {
-              aggregatedIntermediateProducts.set(typeId, {
-                quantity: (existingData?.quantity || 0) + totalQty,
-                depth: data.depth
-              });
-            } else {
-              existingData.quantity += totalQty;
-            }
+          // Aggregate the expanded materials
+          for (const [matTypeId, matQty] of Object.entries(expansion.materials)) {
+            aggregatedMaterials[matTypeId] = (aggregatedMaterials[matTypeId] || 0) + matQty;
           }
+
+          // Collect intermediate products
+          aggregatedIntermediateProducts.push(...expansion.intermediateProducts);
+        }
+
+        // Process raw materials - add them directly
+        for (const rawMaterial of rawMaterials) {
+          const totalQty = rawMaterial.quantity * blueprint.lines;
+          aggregatedMaterials[rawMaterial.typeId] = (aggregatedMaterials[rawMaterial.typeId] || 0) + totalQty;
+        }
+      } else {
+        // use_intermediates === 'components'
+        // Don't expand - just add components as materials
+        for (const [typeId, quantity] of Object.entries(calculation.materials)) {
+          const totalQty = quantity * blueprint.lines;
+          aggregatedMaterials[typeId] = (aggregatedMaterials[typeId] || 0) + totalQty;
         }
       }
 
-      // Get product for this blueprint
+      // Get final product for this blueprint
       const product = calculation.product;
       if (product) {
         // Use baseQuantity (per run) from SDE and multiply by actual runs and lines
@@ -1428,10 +1934,24 @@ async function recalculatePlanMaterials(planId, refreshPrices = false) {
       }
 
       // Insert intermediate products (is_intermediate = 1, depth > 0)
-      // Skip any intermediate products that are final products
-      for (const [typeId, data] of aggregatedIntermediateProducts) {
+      // First, deduplicate by typeId (sum quantities, keep minimum depth)
+      const intermediateProductMap = new Map();
+      for (const item of aggregatedIntermediateProducts) {
+        const existing = intermediateProductMap.get(item.typeId);
+        if (!existing || item.depth < existing.depth) {
+          intermediateProductMap.set(item.typeId, {
+            quantity: (existing?.quantity || 0) + item.quantity,
+            depth: item.depth
+          });
+        } else {
+          existing.quantity += item.quantity;
+        }
+      }
+
+      // Insert intermediate products (skip if also a final product)
+      for (const [typeId, data] of intermediateProductMap) {
         // Skip if this type_id is a final product
-        if (finalProductTypeIds.has(parseInt(typeId))) {
+        if (finalProductTypeIds.has(typeId)) {
           console.log(`[Plans] Skipping intermediate product ${typeId} - it's a final product`);
           continue;
         }
@@ -1442,7 +1962,7 @@ async function recalculatePlanMaterials(planId, refreshPrices = false) {
         if (refreshPrices) {
           try {
             const priceResult = await calculateRealisticPrice(
-              parseInt(typeId),
+              typeId,
               marketSettings.regionId,
               marketSettings.locationId,
               marketSettings.outputProducts.priceType,
@@ -1462,8 +1982,11 @@ async function recalculatePlanMaterials(planId, refreshPrices = false) {
           }
         }
 
-        insertProduct.run(planId, parseInt(typeId), data.quantity, price, priceFrozenAt, 1, data.depth);
+        insertProduct.run(planId, typeId, data.quantity, price, priceFrozenAt, 1, data.depth);
       }
+
+      // Clean up orphaned intermediates before committing
+      await cleanupOrphanedIntermediates(planId);
 
       db.exec('COMMIT');
       console.log(`Recalculated materials and products for plan ${planId} (${Object.keys(aggregatedMaterials).length} materials, ${Object.keys(aggregatedProducts).length} products)`);
@@ -2336,6 +2859,7 @@ module.exports = {
   updatePlanCharacterDivisions,
   addBlueprintToPlan,
   updatePlanBlueprint,
+  bulkUpdateBlueprints,
   removeBlueprintFromPlan,
   getPlanBlueprints,
   getIntermediateBlueprints,

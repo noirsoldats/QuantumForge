@@ -517,6 +517,14 @@ async function handleFormSubmit(e) {
     systemId: document.getElementById('facility-system').value,
   };
 
+  // Add security status from the selected system
+  if (formData.systemId) {
+    const selectedSystem = systems.find(s => s.systemId === parseInt(formData.systemId));
+    if (selectedSystem) {
+      formData.securityStatus = selectedSystem.security;
+    }
+  }
+
   // Add structure-specific data and validate
   if (formData.facilityType === 'structure') {
     const structureTypeId = document.getElementById('structure-type').value;

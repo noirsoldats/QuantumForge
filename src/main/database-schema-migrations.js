@@ -370,14 +370,58 @@ const migrations = [
     down: (db) => {
       console.log('[Migration 004] Rollback not implemented (would require table recreation)');
     }
+  },
+  {
+    id: '006_plan_blueprints_built_runs',
+    description: 'Add built_runs column to plan_blueprints for partial quantity tracking',
+    up: (db) => {
+      console.log('[Migration 006] Adding built_runs column to plan_blueprints...');
+
+      const tableExists = db.prepare(`
+        SELECT name FROM sqlite_master
+        WHERE type='table' AND name='plan_blueprints'
+      `).get();
+
+      if (!tableExists) {
+        console.log('[Migration 006] plan_blueprints table does not exist, skipping');
+        return;
+      }
+
+      db.exec('BEGIN TRANSACTION');
+
+      try {
+        const pragma = db.pragma('table_info(plan_blueprints)');
+        const hasColumn = pragma.some(col => col.name === 'built_runs');
+
+        if (hasColumn) {
+          console.log('[Migration 006] Column already exists, skipping');
+          db.exec('COMMIT');
+          return;
+        }
+
+        // Add new column
+        db.exec('ALTER TABLE plan_blueprints ADD COLUMN built_runs INTEGER DEFAULT 0');
+
+        // Migrate existing data: if is_built=1, set built_runs to runs (fully built)
+        db.exec(`
+          UPDATE plan_blueprints
+          SET built_runs = runs
+          WHERE is_built = 1 AND is_intermediate = 1
+        `);
+
+        db.exec('COMMIT');
+        console.log('[Migration 006] Successfully added built_runs column');
+      } catch (error) {
+        db.exec('ROLLBACK');
+        console.error('[Migration 006] Migration failed:', error);
+        throw error;
+      }
+    },
+    down: (db) => {
+      console.log('[Migration 006] Rollback not implemented (would require table recreation)');
+    }
   }
   // Add future migrations here
-  // {
-  //   id: '005_add_some_column',
-  //   description: 'Add some column to some table',
-  //   up: (db) => { ... },
-  //   down: (db) => { ... }
-  // }
 ];
 
 /**
