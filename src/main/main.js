@@ -1680,6 +1680,16 @@ function setupIPCHandlers() {
     }
   });
 
+  ipcMain.handle('sde:getTypeCategoryInfo', async (event, typeIds) => {
+    try {
+      const { getTypeCategoryInfo } = require('./sde-database');
+      return await getTypeCategoryInfo(typeIds);
+    } catch (error) {
+      console.error('Error getting type category info:', error);
+      return {};
+    }
+  });
+
   ipcMain.handle('sde:getLocationName', async (event, locationId) => {
     try {
       const { getLocationName } = require('./sde-database');

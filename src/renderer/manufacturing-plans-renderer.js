@@ -469,6 +469,80 @@ async function loadBlueprints() {
   });
 }
 
+/**
+ * Categorize a material based on its category and group IDs
+ * @param {Object} categoryInfo - { categoryID, groupID }
+ * @returns {string} Category name: 'Minerals', 'Reaction Materials', 'Planetary Materials', or 'Other'
+ */
+function categorizeMaterial(categoryInfo) {
+  const { categoryID, groupID } = categoryInfo;
+
+  // Minerals: categoryID = 4 AND groupID = 18
+  if (categoryID === 4 && ([18, 422, 423].includes(groupID))) {
+    return 'Minerals';
+  }
+
+  // Reaction Materials:
+  // - categoryID = 4 AND (groupID = 427 OR groupID = 428) (moon materials + intermediates)
+  // - OR categoryID = 24 (all reaction outputs)
+  if ((categoryID === 4 && ([427, 428, 429, 967, 974, 4096].includes(groupID))) || categoryID === 24) {
+    return 'Reaction Materials';
+  }
+
+  // Planetary Materials: categoryID = 42 OR categoryID = 43
+  if (categoryID === 42 || categoryID === 43) {
+    return 'Planetary Materials';
+  }
+
+  // Salvage Materials:
+  if ((categoryID === 4 && ([754, 866].includes(groupID)))) {
+    return 'Salvage Materials';
+  }
+  // Everything else
+  return 'Other';
+}
+
+/**
+ * Group materials by category
+ * @param {Array} materials - Array of material objects
+ * @param {Object} categoryInfoMap - Map of typeId -> category info
+ * @returns {Object} Grouped materials: { 'Minerals': [...], 'Reaction Materials': [...], ... }
+ */
+function groupMaterialsByCategory(materials, categoryInfoMap) {
+  const groups = {
+    'Minerals': [],
+    'Reaction Materials': [],
+    'Planetary Materials': [],
+    'Salvage Materials': [],
+    'Other': []
+  };
+
+  for (const material of materials) {
+    const categoryInfo = categoryInfoMap[material.typeId] || {};
+    const category = categorizeMaterial(categoryInfo);
+    groups[category].push(material);
+  }
+
+  // Sort each group by quantity DESC (preserve original sorting)
+  for (const category in groups) {
+    groups[category].sort((a, b) => b.quantity - a.quantity);
+  }
+
+  return groups;
+}
+
+/**
+ * Toggle category visibility
+ * @param {string} category - Category name
+ */
+window.toggleCategory = function(category) {
+  const contentId = `category-${category.replace(/\s+/g, '-')}`;
+  const content = document.getElementById(contentId);
+  if (content) {
+    content.classList.toggle('collapsed');
+  }
+}
+
 // Load materials tab
 async function loadMaterials() {
   const includeAssets = document.getElementById('include-assets-checkbox').checked;
@@ -480,148 +554,220 @@ async function loadMaterials() {
     return;
   }
 
-  // Get material names and volumes
+  // Get material names, volumes, and category info
   const typeIds = materials.map(m => m.typeId);
-  const names = await window.electronAPI.sde.getTypeNames(typeIds);
-  const volumes = await window.electronAPI.sde.getItemVolumes(typeIds);
+  const [names, volumes, categoryInfo] = await Promise.all([
+    window.electronAPI.sde.getTypeNames(typeIds),
+    window.electronAPI.sde.getItemVolumes(typeIds),
+    window.electronAPI.sde.getTypeCategoryInfo(typeIds)
+  ]);
 
-  // Calculate total volume
-  let totalVolume = 0;
+  // Group materials by category
+  const groupedMaterials = groupMaterialsByCategory(materials, categoryInfo);
+
+  // Category display order
+  const categoryOrder = ['Minerals', 'Reaction Materials', 'Planetary Materials', 'Other'];
+
+  // Build HTML with collapsible category sections
+  let html = '';
+
+  for (const category of categoryOrder) {
+    const categoryMaterials = groupedMaterials[category];
+
+    // Skip empty categories
+    if (categoryMaterials.length === 0) {
+      continue;
+    }
+
+    // Calculate category totals
+    let categoryTotalCost = 0;
+    let categoryTotalVolume = 0;
+    let categoryItemCount = categoryMaterials.length;
+
+    categoryMaterials.forEach(m => {
+      const effectivePrice = m.customPrice !== null ? m.customPrice : m.basePrice;
+      if (effectivePrice) {
+        categoryTotalCost += effectivePrice * m.quantity;
+      }
+      const volume = volumes[m.typeId] || 0;
+      categoryTotalVolume += volume * m.quantity;
+    });
+
+    // Category header
+    html += `
+      <div class="material-category">
+        <div class="category-header" data-category="${category}">
+          <div class="category-title">
+            <svg class="category-icon" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="6 9 12 15 18 9"></polyline>
+            </svg>
+            <h4>${category}</h4>
+            <span class="category-count">(${categoryItemCount} items)</span>
+          </div>
+          <div class="category-stats">
+            <span class="category-stat">${formatNumber(categoryTotalVolume, 2)} m³</span>
+            <span class="category-stat">${formatISK(categoryTotalCost)}</span>
+          </div>
+        </div>
+        <div class="category-content" id="category-${category.replace(/\s+/g, '-')}">
+          <table>
+            <thead>
+              <tr>
+                <th>Material</th>
+                <th>Needed</th>
+                <th>Still Needed</th>
+                ${includeAssets ? '<th>Owned (Personal)</th><th>Owned (Corp)</th>' : ''}
+                <th>M³</th>
+                <th>Total M³</th>
+                <th>Price</th>
+                <th>Total Cost</th>
+                <th>Acquisition</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+    `;
+
+    // Render materials in category
+    for (const m of categoryMaterials) {
+      const name = names[m.typeId] || `Type ${m.typeId}`;
+      const volume = volumes[m.typeId] || 0;
+      const totalM3 = volume * m.quantity;
+
+      // Use custom price if set, otherwise base price
+      const effectivePrice = m.customPrice !== null ? m.customPrice : m.basePrice;
+      const price = effectivePrice ? formatISK(effectivePrice) : 'N/A';
+      const total = effectivePrice ? formatISK(effectivePrice * m.quantity) : 'N/A';
+
+      // Acquisition status - build badges array
+      const badges = [];
+
+      // 1. Manual acquisition badge
+      if (m.manuallyAcquiredQuantity > 0) {
+        const methodLabel = m.acquisitionMethod
+          ? m.acquisitionMethod.replace('_', ' ').toUpperCase()
+          : 'MANUAL';
+        const note = m.acquisitionNote || 'Manually marked as acquired';
+        badges.push(`<span class="status-badge acquired" title="${escapeHtml(note)}">${methodLabel}: ${formatNumber(m.manuallyAcquiredQuantity)}</span>`);
+      }
+
+      // 2. Purchased badge (confirmed transactions)
+      if (m.purchasedQuantity && m.purchasedQuantity > 0) {
+        const title = `${m.purchaseMatchCount || 0} confirmed transaction match(es)`;
+        badges.push(`<span class="status-badge purchased" title="${title}">PURCHASED: ${formatNumber(m.purchasedQuantity)}</span>`);
+      }
+
+      // 3. Manufactured badge (confirmed jobs)
+      if (m.manufacturedQuantity && m.manufacturedQuantity > 0) {
+        const title = `${m.manufacturingMatchCount || 0} confirmed job match(es)`;
+        badges.push(`<span class="status-badge manufactured" title="${title}">MANUFACTURED: ${formatNumber(m.manufacturedQuantity)}</span>`);
+      }
+
+      // Display badges or "Not Acquired"
+      const acquisitionDisplay = badges.length > 0
+        ? badges.join(' ')
+        : '<span class="status-badge">Not Acquired</span>';
+
+      // Calculate total acquired and still needed
+      const totalAcquired = (m.manuallyAcquiredQuantity || 0) + (m.purchasedQuantity || 0) + (m.manufacturedQuantity || 0);
+      const stillNeeded = Math.max(0, m.quantity - totalAcquired);
+      const isFullyAcquired = totalAcquired >= m.quantity;
+
+      html += `
+        <tr data-type-id="${m.typeId}" ${isFullyAcquired ? 'data-fully-acquired="true"' : ''}>
+          <td>${escapeHtml(name)}</td>
+          <td>${formatNumber(m.quantity)}</td>
+          <td>${formatNumber(stillNeeded)}</td>
+          ${includeAssets ? `
+            <td class="owned-quantity tooltip-cell">
+              ${formatNumber(m.ownedPersonal)}
+              ${m.ownedPersonalDetails && m.ownedPersonalDetails.length > 0 ? `
+                <span class="tooltip-text">
+                  ${m.ownedPersonalDetails
+                    .map(d => `<div class="tooltip-line">${escapeHtml(d.characterName)}: ${formatNumber(d.quantity)}</div>`)
+                    .join('')}
+                </span>
+              ` : ''}
+            </td>
+            <td class="owned-quantity tooltip-cell">
+              ${formatNumber(m.ownedCorp)}
+              ${m.ownedCorpDetails && m.ownedCorpDetails.length > 0 ? `
+                <span class="tooltip-text">
+                  ${m.ownedCorpDetails
+                    .map(d => `<div class="tooltip-line">${escapeHtml(d.corporationName)} - ${escapeHtml(d.divisionName)}: ${formatNumber(d.quantity)}</div>`)
+                    .join('')}
+                </span>
+              ` : ''}
+            </td>
+          ` : ''}
+          <td>${formatNumber(volume, 2)}</td>
+          <td>${formatNumber(totalM3, 2)}</td>
+          <td>
+            ${m.customPrice !== null ? '<span class="custom-price-indicator" title="Custom price set">⚙️</span> ' : ''}
+            ${price}
+          </td>
+          <td>${total}</td>
+          <td>${acquisitionDisplay}</td>
+          <td>
+            ${m.manuallyAcquiredQuantity > 0 ? `
+              <button class="secondary-button small edit-acquisition-btn"
+                data-type-id="${m.typeId}"
+                data-material-name="${escapeHtml(name)}"
+                data-quantity-needed="${m.quantity}"
+                data-already-acquired="${totalAcquired}"
+                data-manual-quantity="${m.manuallyAcquiredQuantity}"
+                data-still-needed="${Math.max(0, m.quantity - totalAcquired)}">Edit Acquisition</button>
+              <button class="secondary-button small unmark-btn" data-type-id="${m.typeId}">Remove Manual</button>
+            ` : `
+              <button class="secondary-button small mark-acquired-btn"
+                data-type-id="${m.typeId}"
+                data-material-name="${escapeHtml(name)}"
+                data-quantity-needed="${m.quantity}"
+                data-already-acquired="${totalAcquired}"
+                data-still-needed="${Math.max(0, m.quantity - totalAcquired)}">Mark Acquired</button>
+            `}
+          </td>
+        </tr>
+      `;
+    }
+
+    html += `
+            </tbody>
+          </table>
+        </div>
+      </div>
+    `;
+  }
+
+  // Calculate grand totals
+  let grandTotalVolume = 0;
   materials.forEach(m => {
     const volume = volumes[m.typeId] || 0;
-    totalVolume += volume * m.quantity;
+    grandTotalVolume += volume * m.quantity;
   });
 
-  container.innerHTML = `
-    <table>
-      <thead>
-        <tr>
-          <th>Material</th>
-          <th>Needed</th>
-          <th>Still Needed</th>
-          ${includeAssets ? '<th>Owned (Personal)</th><th>Owned (Corp)</th>' : ''}
-          <th>M³</th>
-          <th>Total M³</th>
-          <th>Price</th>
-          <th>Total Cost</th>
-          <th>Acquisition</th>
-          <th>Actions</th>
-        </tr>
-      </thead>
-      <tbody>
-        ${materials.map(m => {
-          const name = names[m.typeId] || `Type ${m.typeId}`;
-          const volume = volumes[m.typeId] || 0;
-          const totalM3 = volume * m.quantity;
-
-          // Use custom price if set, otherwise base price
-          const effectivePrice = m.customPrice !== null ? m.customPrice : m.basePrice;
-          const price = effectivePrice ? formatISK(effectivePrice) : 'N/A';
-          const total = effectivePrice ? formatISK(effectivePrice * m.quantity) : 'N/A';
-
-          // Acquisition status - build badges array
-          const badges = [];
-
-          // 1. Manual acquisition badge
-          if (m.manuallyAcquiredQuantity > 0) {
-            const methodLabel = m.acquisitionMethod
-              ? m.acquisitionMethod.replace('_', ' ').toUpperCase()
-              : 'MANUAL';
-            const note = m.acquisitionNote || 'Manually marked as acquired';
-            badges.push(`<span class="status-badge acquired" title="${escapeHtml(note)}">${methodLabel}: ${formatNumber(m.manuallyAcquiredQuantity)}</span>`);
-          }
-
-          // 2. Purchased badge (confirmed transactions)
-          if (m.purchasedQuantity && m.purchasedQuantity > 0) {
-            const title = `${m.purchaseMatchCount || 0} confirmed transaction match(es)`;
-            badges.push(`<span class="status-badge purchased" title="${title}">PURCHASED: ${formatNumber(m.purchasedQuantity)}</span>`);
-          }
-
-          // 3. Manufactured badge (confirmed jobs)
-          if (m.manufacturedQuantity && m.manufacturedQuantity > 0) {
-            const title = `${m.manufacturingMatchCount || 0} confirmed job match(es)`;
-            badges.push(`<span class="status-badge manufactured" title="${title}">MANUFACTURED: ${formatNumber(m.manufacturedQuantity)}</span>`);
-          }
-
-          // Display badges or "Not Acquired"
-          const acquisitionDisplay = badges.length > 0
-            ? badges.join(' ')
-            : '<span class="status-badge">Not Acquired</span>';
-
-          // Calculate total acquired and still needed (based on acquired, not assets)
-          const totalAcquired = (m.manuallyAcquiredQuantity || 0) + (m.purchasedQuantity || 0) + (m.manufacturedQuantity || 0);
-          const stillNeeded = Math.max(0, m.quantity - totalAcquired);
-          const isFullyAcquired = totalAcquired >= m.quantity;
-
-          return `
-            <tr data-type-id="${m.typeId}" ${isFullyAcquired ? 'data-fully-acquired="true"' : ''}>
-              <td>${escapeHtml(name)}</td>
-              <td>${formatNumber(m.quantity)}</td>
-              <td>${formatNumber(stillNeeded)}</td>
-              ${includeAssets ? `
-                <td class="owned-quantity tooltip-cell">
-                  ${formatNumber(m.ownedPersonal)}
-                  ${m.ownedPersonalDetails && m.ownedPersonalDetails.length > 0 ? `
-                    <span class="tooltip-text">
-                      ${m.ownedPersonalDetails
-                        .map(d => `<div class="tooltip-line">${escapeHtml(d.characterName)}: ${formatNumber(d.quantity)}</div>`)
-                        .join('')}
-                    </span>
-                  ` : ''}
-                </td>
-                <td class="owned-quantity tooltip-cell">
-                  ${formatNumber(m.ownedCorp)}
-                  ${m.ownedCorpDetails && m.ownedCorpDetails.length > 0 ? `
-                    <span class="tooltip-text">
-                      ${m.ownedCorpDetails
-                        .map(d => `<div class="tooltip-line">${escapeHtml(d.corporationName)} - ${escapeHtml(d.divisionName)}: ${formatNumber(d.quantity)}</div>`)
-                        .join('')}
-                    </span>
-                  ` : ''}
-                </td>
-              ` : ''}
-              <td>${formatNumber(volume, 2)}</td>
-              <td>${formatNumber(totalM3, 2)}</td>
-              <td>
-                ${m.customPrice !== null ? '<span class="custom-price-indicator" title="Custom price set">⚙️</span> ' : ''}
-                ${price}
-              </td>
-              <td>${total}</td>
-              <td>${acquisitionDisplay}</td>
-              <td>
-                ${m.manuallyAcquiredQuantity > 0 ? `
-                  <button class="secondary-button small edit-acquisition-btn"
-                    data-type-id="${m.typeId}"
-                    data-material-name="${escapeHtml(name)}"
-                    data-quantity-needed="${m.quantity}"
-                    data-already-acquired="${totalAcquired}"
-                    data-manual-quantity="${m.manuallyAcquiredQuantity}"
-                    data-still-needed="${Math.max(0, m.quantity - totalAcquired)}">Edit Acquisition</button>
-                  <button class="secondary-button small unmark-btn" data-type-id="${m.typeId}">Remove Manual</button>
-                ` : `
-                  <button class="secondary-button small mark-acquired-btn"
-                    data-type-id="${m.typeId}"
-                    data-material-name="${escapeHtml(name)}"
-                    data-quantity-needed="${m.quantity}"
-                    data-already-acquired="${totalAcquired}"
-                    data-still-needed="${Math.max(0, m.quantity - totalAcquired)}">Mark Acquired</button>
-                `}
-              </td>
-            </tr>
-          `;
-        }).join('')}
-      </tbody>
-      <tfoot>
-        <tr>
-          <td colspan="${includeAssets ? '6' : '4'}" style="text-align: right; font-weight: bold;">Total Volume:</td>
-          <td style="font-weight: bold;">${formatNumber(totalVolume, 2)} m³</td>
-          <td colspan="3"></td>
-        </tr>
-      </tfoot>
-    </table>
+  html += `
+    <div class="materials-footer">
+      <div class="footer-stats">
+        <span class="footer-stat"><strong>Total Items:</strong> ${materials.length}</span>
+        <span class="footer-stat"><strong>Total Volume:</strong> ${formatNumber(grandTotalVolume, 2)} m³</span>
+      </div>
+    </div>
   `;
 
+  container.innerHTML = html;
+
   // Attach event listeners after rendering
+  // Category header click handlers
+  container.querySelectorAll('.category-header').forEach(header => {
+    header.addEventListener('click', () => {
+      const category = header.dataset.category;
+      if (category) {
+        window.toggleCategory(category);
+      }
+    });
+  });
+
   container.querySelectorAll('.mark-acquired-btn').forEach(btn => {
     btn.addEventListener('click', () => {
       const typeId = parseInt(btn.dataset.typeId);

@@ -1010,6 +1010,72 @@ async function getItemVolumes(typeIds) {
 }
 
 /**
+ * Get category and group information for multiple item types
+ * @param {number[]} typeIds - Array of type IDs
+ * @returns {Promise<Object>} Map of typeId -> { categoryID, groupID, categoryName, groupName }
+ */
+async function getTypeCategoryInfo(typeIds) {
+  try {
+    const database = await getDatabase();
+
+    return new Promise((resolve, reject) => {
+      if (!typeIds || typeIds.length === 0) {
+        resolve({});
+        return;
+      }
+
+      const placeholders = typeIds.map(() => '?').join(',');
+      database.all(
+        `SELECT
+          t.typeID,
+          g.groupID,
+          g.categoryID,
+          g.groupName,
+          c.categoryName
+         FROM invTypes t
+         LEFT JOIN invGroups g ON t.groupID = g.groupID
+         LEFT JOIN invCategories c ON g.categoryID = c.categoryID
+         WHERE t.typeID IN (${placeholders})`,
+        typeIds,
+        (err, rows) => {
+          if (err) {
+            console.error('Error querying type category info:', err);
+            reject(err);
+          } else {
+            const categoryMap = {};
+            rows.forEach(row => {
+              categoryMap[row.typeID] = {
+                categoryID: row.categoryID || null,
+                groupID: row.groupID || null,
+                categoryName: row.categoryName || 'Unknown',
+                groupName: row.groupName || 'Unknown'
+              };
+            });
+
+            // Fill in missing types with defaults
+            typeIds.forEach(id => {
+              if (!categoryMap[id]) {
+                categoryMap[id] = {
+                  categoryID: null,
+                  groupID: null,
+                  categoryName: 'Unknown',
+                  groupName: 'Unknown'
+                };
+              }
+            });
+
+            resolve(categoryMap);
+          }
+        }
+      );
+    });
+  } catch (error) {
+    console.error('Error getting type category info:', error);
+    return {};
+  }
+}
+
+/**
  * Get location name by location ID
  * @param {number} locationId - Location ID (station or structure)
  * @returns {Promise<string|null>} Location name or null if not found
@@ -1146,6 +1212,7 @@ module.exports = {
   getSystemSecurityStatus,
   getItemVolume,
   getItemVolumes,
+  getTypeCategoryInfo,
   getLocationName,
   detectLocationType,
   getSystemNameFromStation,

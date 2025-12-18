@@ -72,6 +72,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getSystemSecurityStatus: (systemId) => ipcRenderer.invoke('sde:getSystemSecurityStatus', systemId),
     getItemVolume: (typeId) => ipcRenderer.invoke('sde:getItemVolume', typeId),
     getItemVolumes: (typeIds) => ipcRenderer.invoke('sde:getItemVolumes', typeIds),
+    getTypeCategoryInfo: (typeIds) => ipcRenderer.invoke('sde:getTypeCategoryInfo', typeIds),
     getLocationName: (locationId) => ipcRenderer.invoke('sde:getLocationName', locationId),
   },
 
