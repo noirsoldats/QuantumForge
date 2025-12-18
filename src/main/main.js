@@ -347,9 +347,13 @@ app.whenReady().then(async () => {
   }
 
   // Migrate global division settings to per-character settings
-  const { migrateGlobalDivisionsToCharacters } = require('./settings-manager');
+  const { migrateGlobalDivisionsToCharacters, migrateAutoUpdateCharacterDataSetting } = require('./settings-manager');
   console.log('[App] Running division settings migration...');
   migrateGlobalDivisionsToCharacters();
+
+  // Migrate auto-update character data setting from boolean to object
+  console.log('[App] Running auto-update setting migration...');
+  migrateAutoUpdateCharacterDataSetting();
 
   // Migrate existing plans to have industry settings
   const { migrateExistingPlansToSettings } = require('./character-database');

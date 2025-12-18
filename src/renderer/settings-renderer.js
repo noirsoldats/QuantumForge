@@ -17,10 +17,27 @@ async function loadSettings() {
 
 // Populate UI with loaded settings
 function populateSettings() {
-  // General settings
-  const autoUpdateCharacterData = document.getElementById('auto-update-character-data');
-  if (autoUpdateCharacterData) {
-    autoUpdateCharacterData.checked = currentSettings.general?.autoUpdateCharacterData !== false;
+  // General settings - auto-update character data (handle both old boolean and new object format)
+  const autoUpdateSetting = currentSettings.general?.autoUpdateCharacterData;
+  const autoUpdateSkills = document.getElementById('auto-update-skills');
+  const autoUpdateBlueprints = document.getElementById('auto-update-blueprints');
+  const autoUpdateAssets = document.getElementById('auto-update-assets');
+
+  if (typeof autoUpdateSetting === 'boolean') {
+    // Legacy boolean - apply to all checkboxes
+    if (autoUpdateSkills) autoUpdateSkills.checked = autoUpdateSetting;
+    if (autoUpdateBlueprints) autoUpdateBlueprints.checked = autoUpdateSetting;
+    if (autoUpdateAssets) autoUpdateAssets.checked = autoUpdateSetting;
+  } else if (typeof autoUpdateSetting === 'object' && autoUpdateSetting !== null) {
+    // New object format
+    if (autoUpdateSkills) autoUpdateSkills.checked = autoUpdateSetting.skills !== false;
+    if (autoUpdateBlueprints) autoUpdateBlueprints.checked = autoUpdateSetting.blueprints !== false;
+    if (autoUpdateAssets) autoUpdateAssets.checked = autoUpdateSetting.assets !== false;
+  } else {
+    // Default to all enabled
+    if (autoUpdateSkills) autoUpdateSkills.checked = true;
+    if (autoUpdateBlueprints) autoUpdateBlueprints.checked = true;
+    if (autoUpdateAssets) autoUpdateAssets.checked = true;
   }
 
   const themeSelect = document.getElementById('theme-select');
@@ -118,13 +135,29 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // Settings handlers - Auto-save on change
 
-  // Auto-update character data
-  const autoUpdateCharacterData = document.getElementById('auto-update-character-data');
-  if (autoUpdateCharacterData) {
-    autoUpdateCharacterData.addEventListener('change', (e) => {
-      console.log('Auto-update character data:', e.target.checked);
-      saveSetting('general', 'autoUpdateCharacterData', e.target.checked);
-    });
+  // Auto-update character data - individual checkboxes
+  const autoUpdateSkills = document.getElementById('auto-update-skills');
+  const autoUpdateBlueprints = document.getElementById('auto-update-blueprints');
+  const autoUpdateAssets = document.getElementById('auto-update-assets');
+
+  async function saveAutoUpdateSettings() {
+    const value = {
+      skills: autoUpdateSkills?.checked !== false,
+      blueprints: autoUpdateBlueprints?.checked !== false,
+      assets: autoUpdateAssets?.checked !== false
+    };
+    await saveSetting('general', 'autoUpdateCharacterData', value);
+    console.log('Auto-update settings saved:', value);
+  }
+
+  if (autoUpdateSkills) {
+    autoUpdateSkills.addEventListener('change', saveAutoUpdateSettings);
+  }
+  if (autoUpdateBlueprints) {
+    autoUpdateBlueprints.addEventListener('change', saveAutoUpdateSettings);
+  }
+  if (autoUpdateAssets) {
+    autoUpdateAssets.addEventListener('change', saveAutoUpdateSettings);
   }
 
   // Theme selection

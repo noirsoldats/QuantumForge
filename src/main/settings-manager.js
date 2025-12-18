@@ -14,7 +14,11 @@ const defaultSettings = {
     theme: 'dark',
     desktopNotifications: true,
     updatesNotification: true,
-    autoUpdateCharacterData: true,
+    autoUpdateCharacterData: {
+      skills: true,
+      blueprints: true,
+      assets: true
+    },
     firstLaunchCompleted: false,
     wizardVersion: null,
     wizardCompletedAt: null,
@@ -1423,6 +1427,49 @@ function migrateGlobalDivisionsToCharacters() {
 }
 
 /**
+ * Migrate autoUpdateCharacterData from boolean to object
+ * One-time migration on app startup
+ * @returns {boolean} Success status
+ */
+function migrateAutoUpdateCharacterDataSetting() {
+  try {
+    const settings = loadSettings();
+
+    // Check if migration needed
+    const currentValue = settings.general?.autoUpdateCharacterData;
+
+    // Already migrated (is an object)
+    if (typeof currentValue === 'object' && currentValue !== null) {
+      console.log('[Settings Migration] autoUpdateCharacterData already migrated');
+      return true;
+    }
+
+    // Migrate boolean to object
+    if (typeof currentValue === 'boolean') {
+      console.log('[Settings Migration] Migrating autoUpdateCharacterData from boolean to object');
+
+      settings.general = settings.general || {};
+      settings.general.autoUpdateCharacterData = {
+        skills: currentValue,
+        blueprints: currentValue,
+        assets: currentValue  // Default to same as skills/blueprints
+      };
+
+      saveSettings(settings);
+      console.log('[Settings Migration] Migration complete:', settings.general.autoUpdateCharacterData);
+      return true;
+    }
+
+    // No migration needed (undefined or null - will use defaults)
+    console.log('[Settings Migration] No migration needed for autoUpdateCharacterData');
+    return true;
+  } catch (error) {
+    console.error('[Settings Migration] Error migrating autoUpdateCharacterData:', error);
+    return false;
+  }
+}
+
+/**
  * Get default manufacturing characters
  * @returns {number[]} Array of character IDs
  */
@@ -1505,6 +1552,7 @@ module.exports = {
   updateCharacterDivisionNames,
   getDivisionNamesCacheStatus,
   migrateGlobalDivisionsToCharacters,
+  migrateAutoUpdateCharacterDataSetting,
   getDefaultManufacturingCharacters,
   setDefaultManufacturingCharacters,
 };

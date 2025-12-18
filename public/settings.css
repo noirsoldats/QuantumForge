@@ -163,6 +163,33 @@ body {
   font-size: 0.85em;
 }
 
+/* Checkbox Group */
+.setting-checkboxes {
+  display: flex;
+  gap: 1rem;
+  align-items: start;
+  flex-direction: column;
+}
+
+.checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  cursor: pointer;
+  font-size: 0.9rem;
+  color: #e0e0e0;
+}
+
+.checkbox-label input[type="checkbox"] {
+  cursor: pointer;
+  width: 1.1rem;
+  height: 1.1rem;
+}
+
+.checkbox-label span {
+  user-select: none;
+}
+
 /* Toggle Switch */
 .toggle {
   position: relative;

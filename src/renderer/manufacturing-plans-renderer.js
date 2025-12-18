@@ -3050,6 +3050,9 @@ function showConfirmDialog(message, title = 'Confirm Action', confirmText = 'Con
 document.addEventListener('DOMContentLoaded', () => {
   // Use event delegation for dynamically added tooltip cells
   document.addEventListener('mouseenter', (e) => {
+    // Ensure e.target is an Element (not a text node or document)
+    if (!e.target || typeof e.target.closest !== 'function') return;
+
     const tooltipCell = e.target.closest('.tooltip-cell');
     if (!tooltipCell) return;
 

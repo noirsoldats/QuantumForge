@@ -731,12 +731,32 @@ async function runCharacterDataRefresh(splashWindow) {
     const { getCharacters, getSkillsCacheStatus, getBlueprintsCacheStatus, getSetting, updateCharacterSkills, updateCharacterBlueprints } = require('./settings-manager');
     const { fetchCharacterSkills } = require('./esi-skills');
     const { fetchCharacterBlueprints } = require('./esi-blueprints');
+    const { fetchCharacterAssets, fetchCorporationAssets, saveAssets, getAssetsCacheStatus } = require('./esi-assets');
 
-    // Check if auto-update is enabled
-    const autoUpdateEnabled = getSetting('general', 'autoUpdateCharacterData');
+    // Check if auto-update is enabled (handle both old boolean and new object format)
+    const autoUpdateSetting = getSetting('general', 'autoUpdateCharacterData');
+    let autoUpdateEnabled = {
+      skills: false,
+      blueprints: false,
+      assets: false
+    };
 
-    if (autoUpdateEnabled === false) {
-      console.log('[Startup] Auto-update character data is disabled, skipping');
+    // Handle legacy boolean format
+    if (typeof autoUpdateSetting === 'boolean') {
+      autoUpdateEnabled.skills = autoUpdateSetting;
+      autoUpdateEnabled.blueprints = autoUpdateSetting;
+      autoUpdateEnabled.assets = autoUpdateSetting;
+    } else if (typeof autoUpdateSetting === 'object' && autoUpdateSetting !== null) {
+      // New object format
+      autoUpdateEnabled = {
+        skills: autoUpdateSetting.skills !== false,
+        blueprints: autoUpdateSetting.blueprints !== false,
+        assets: autoUpdateSetting.assets !== false
+      };
+    }
+
+    if (!autoUpdateEnabled.skills && !autoUpdateEnabled.blueprints && !autoUpdateEnabled.assets) {
+      console.log('[Startup] All auto-update options disabled, skipping');
       splashWindow.webContents.send('startup:progress', {
         task: 'characterData',
         status: 'Auto-update disabled',
@@ -763,15 +783,23 @@ async function runCharacterDataRefresh(splashWindow) {
     for (const character of characters) {
       const skillsCache = getSkillsCacheStatus(character.characterId);
       const blueprintsCache = getBlueprintsCacheStatus(character.characterId);
+      const characterAssetsCache = getAssetsCacheStatus(character.characterId, false);
+      const corpAssetsCache = character.corporationId
+        ? getAssetsCacheStatus(character.characterId, true)
+        : { isCached: true };
 
-      const needsSkillsRefresh = !skillsCache.isCached;
-      const needsBlueprintsRefresh = !blueprintsCache.isCached;
+      const needsSkillsRefresh = autoUpdateEnabled.skills && !skillsCache.isCached;
+      const needsBlueprintsRefresh = autoUpdateEnabled.blueprints && !blueprintsCache.isCached;
+      const needsCharacterAssetsRefresh = autoUpdateEnabled.assets && !characterAssetsCache.isCached;
+      const needsCorpAssetsRefresh = autoUpdateEnabled.assets && character.corporationId && !corpAssetsCache.isCached;
 
-      if (needsSkillsRefresh || needsBlueprintsRefresh) {
+      if (needsSkillsRefresh || needsBlueprintsRefresh || needsCharacterAssetsRefresh || needsCorpAssetsRefresh) {
         charactersNeedingRefresh.push({
           character,
           needsSkillsRefresh,
           needsBlueprintsRefresh,
+          needsCharacterAssetsRefresh,
+          needsCorpAssetsRefresh,
         });
       }
     }
@@ -792,22 +820,32 @@ async function runCharacterDataRefresh(splashWindow) {
     let failed = 0;
     const total = charactersNeedingRefresh.length;
 
-    for (const { character, needsSkillsRefresh, needsBlueprintsRefresh } of charactersNeedingRefresh) {
+    for (const { character, needsSkillsRefresh, needsBlueprintsRefresh, needsCharacterAssetsRefresh, needsCorpAssetsRefresh } of charactersNeedingRefresh) {
       const charName = character.characterName || character.name || `Character ${character.characterId}`;
 
       try {
+        // Calculate total steps for this character for progress tracking
+        let totalSteps = 0;
+        if (needsSkillsRefresh) totalSteps++;
+        if (needsBlueprintsRefresh) totalSteps++;
+        if (needsCharacterAssetsRefresh) totalSteps++;
+        if (needsCorpAssetsRefresh) totalSteps++;
+
+        let currentStep = 0;
+
         // Refresh skills if needed
         if (needsSkillsRefresh) {
           console.log(`[Startup] Refreshing skills for ${charName}`);
           splashWindow.webContents.send('startup:progress', {
             task: 'characterData',
             status: `Fetching skills for ${charName}...`,
-            percentage: Math.round((completed / total) * 100),
+            percentage: Math.round(((completed + (currentStep / totalSteps)) / total) * 100),
             complete: null,
           });
 
           const skillsData = await fetchCharacterSkills(character.characterId);
           updateCharacterSkills(character.characterId, skillsData);
+          currentStep++;
         }
 
         // Refresh blueprints if needed
@@ -816,12 +854,43 @@ async function runCharacterDataRefresh(splashWindow) {
           splashWindow.webContents.send('startup:progress', {
             task: 'characterData',
             status: `Fetching blueprints for ${charName}...`,
-            percentage: Math.round(((completed + 0.5) / total) * 100),
+            percentage: Math.round(((completed + (currentStep / totalSteps)) / total) * 100),
             complete: null,
           });
 
           const blueprintsData = await fetchCharacterBlueprints(character.characterId);
           updateCharacterBlueprints(character.characterId, blueprintsData);
+          currentStep++;
+        }
+
+        // Refresh character assets if needed
+        if (needsCharacterAssetsRefresh) {
+          console.log(`[Startup] Refreshing assets for ${charName}`);
+          splashWindow.webContents.send('startup:progress', {
+            task: 'characterData',
+            status: `Fetching assets for ${charName}...`,
+            percentage: Math.round(((completed + (currentStep / totalSteps)) / total) * 100),
+            complete: null,
+          });
+
+          const characterAssetsData = await fetchCharacterAssets(character.characterId);
+          saveAssets(characterAssetsData);
+          currentStep++;
+        }
+
+        // Refresh corporation assets if needed
+        if (needsCorpAssetsRefresh) {
+          console.log(`[Startup] Refreshing corporation assets for ${charName}`);
+          splashWindow.webContents.send('startup:progress', {
+            task: 'characterData',
+            status: `Fetching corporation assets for ${charName}...`,
+            percentage: Math.round(((completed + (currentStep / totalSteps)) / total) * 100),
+            complete: null,
+          });
+
+          const corpAssetsData = await fetchCorporationAssets(character.characterId, character.corporationId);
+          saveAssets(corpAssetsData);
+          currentStep++;
         }
 
         completed++;

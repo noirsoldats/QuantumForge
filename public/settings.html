@@ -55,12 +55,22 @@
             <div class="setting-item">
               <div class="setting-info">
                 <label>Auto-Update Character Data on Launch</label>
-                <span class="setting-description">Automatically refresh skills and blueprints when cache expires</span>
+                <span class="setting-description">Automatically refresh data when cache expires</span>
               </div>
-              <label class="toggle">
-                <input type="checkbox" id="auto-update-character-data" checked>
-                <span class="toggle-slider"></span>
-              </label>
+              <div class="setting-checkboxes">
+                <label class="checkbox-label">
+                  <input type="checkbox" id="auto-update-skills" checked>
+                  <span>Skills</span>
+                </label>
+                <label class="checkbox-label">
+                  <input type="checkbox" id="auto-update-blueprints" checked>
+                  <span>Blueprints</span>
+                </label>
+                <label class="checkbox-label">
+                  <input type="checkbox" id="auto-update-assets" checked>
+                  <span>Assets</span>
+                </label>
+              </div>
             </div>
 
             <div class="setting-item">
