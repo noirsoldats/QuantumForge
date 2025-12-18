@@ -173,6 +173,18 @@ function createTables() {
     CREATE INDEX IF NOT EXISTS idx_cost_indices_fetched ON cost_indices(fetched_at);
   `);
 
+  // Server status cache (EVE server status)
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS server_status (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      players INTEGER NOT NULL,
+      server_version TEXT,
+      start_time TEXT,
+      vip INTEGER NOT NULL,
+      last_updated INTEGER NOT NULL
+    );
+  `);
+
   // Seed default trade hubs
   seedDefaultLocations();
 }

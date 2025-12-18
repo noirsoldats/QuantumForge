@@ -232,6 +232,15 @@ async function loadCharacters() {
       characters.forEach(char => {
         const isDefault = char.characterId === defaultCharacterId;
 
+        // Assets button handler
+        const assetsBtn = document.getElementById(`assets-${char.characterId}`);
+        if (assetsBtn) {
+          assetsBtn.addEventListener('click', () => {
+            console.log('Opening assets window for character:', char.characterId);
+            window.electronAPI.assets.openWindow(char.characterId);
+          });
+        }
+
         // Skills button handler
         const skillsBtn = document.getElementById(`skills-${char.characterId}`);
         if (skillsBtn) {
@@ -295,6 +304,13 @@ function createCharacterCard(character, isDefault = false) {
         </div>
       </div>
       <div class="character-actions">
+        <button
+          class="text-button"
+          id="assets-${character.characterId}"
+          title="Open Assets Manager"
+        >
+          Assets
+        </button>
         <button
           class="text-button"
           id="skills-${character.characterId}"

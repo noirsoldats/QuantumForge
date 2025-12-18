@@ -559,8 +559,26 @@ async function loadMaterials() {
               <td>${formatNumber(m.quantity)}</td>
               <td>${formatNumber(stillNeeded)}</td>
               ${includeAssets ? `
-                <td>${formatNumber(m.ownedPersonal)}</td>
-                <td>${formatNumber(m.ownedCorp)}</td>
+                <td class="owned-quantity tooltip-cell">
+                  ${formatNumber(m.ownedPersonal)}
+                  ${m.ownedPersonalDetails && m.ownedPersonalDetails.length > 0 ? `
+                    <span class="tooltip-text">
+                      ${m.ownedPersonalDetails
+                        .map(d => `<div class="tooltip-line">${escapeHtml(d.characterName)}: ${formatNumber(d.quantity)}</div>`)
+                        .join('')}
+                    </span>
+                  ` : ''}
+                </td>
+                <td class="owned-quantity tooltip-cell">
+                  ${formatNumber(m.ownedCorp)}
+                  ${m.ownedCorpDetails && m.ownedCorpDetails.length > 0 ? `
+                    <span class="tooltip-text">
+                      ${m.ownedCorpDetails
+                        .map(d => `<div class="tooltip-line">${escapeHtml(d.corporationName)} - ${escapeHtml(d.divisionName)}: ${formatNumber(d.quantity)}</div>`)
+                        .join('')}
+                    </span>
+                  ` : ''}
+                </td>
               ` : ''}
               <td>${formatNumber(volume, 2)}</td>
               <td>${formatNumber(totalM3, 2)}</td>
@@ -2566,3 +2584,26 @@ function showConfirmDialog(message, title = 'Confirm Action', confirmText = 'Con
     });
   });
 }
+
+// Position tooltips dynamically for fixed positioning
+document.addEventListener('DOMContentLoaded', () => {
+  // Use event delegation for dynamically added tooltip cells
+  document.addEventListener('mouseenter', (e) => {
+    const tooltipCell = e.target.closest('.tooltip-cell');
+    if (!tooltipCell) return;
+
+    const tooltip = tooltipCell.querySelector('.tooltip-text');
+    if (!tooltip) return;
+
+    // Get the bounding rect of the cell
+    const rect = tooltipCell.getBoundingClientRect();
+
+    // Position tooltip below the cell, centered horizontally
+    const tooltipLeft = rect.left + (rect.width / 2);
+    const tooltipTop = rect.bottom + 8; // 8px gap below cell
+
+    tooltip.style.left = `${tooltipLeft}px`;
+    tooltip.style.top = `${tooltipTop}px`;
+    tooltip.style.transform = 'translateX(-50%)';
+  }, true); // Use capture phase to catch events early
+});

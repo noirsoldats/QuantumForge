@@ -1036,6 +1036,87 @@ tr:hover {
   opacity: 1;
 }
 
+/* Tooltip wrapper for table cells */
+.tooltip-cell {
+  position: relative;
+  cursor: help;
+}
+
+.tooltip-cell:hover {
+  background-color: rgba(255, 255, 255, 0.05);
+}
+
+/* Tooltip text container - larger for asset details */
+.tooltip-cell .tooltip-text {
+  visibility: hidden;
+  min-width: 250px;
+  max-width: 400px;
+  background-color: #1e1e2e;
+  color: #ffffff;
+  text-align: left;
+  border-radius: 6px;
+  padding: 12px;
+  position: fixed;
+  z-index: 10000;
+  opacity: 0;
+  transition: opacity 0.3s;
+  font-size: 12px;
+  border: 1px solid #3a3a4e;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+  pointer-events: none;
+
+  /* Allow scrolling if many entries */
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+/* Tooltip arrow */
+.tooltip-cell .tooltip-text::after {
+  content: "";
+  position: absolute;
+  bottom: 100%;
+  left: 50%;
+  margin-left: -5px;
+  border-width: 5px;
+  border-style: solid;
+  border-color: transparent transparent #1e1e2e transparent;
+}
+
+/* Show tooltip on hover */
+.tooltip-cell:hover .tooltip-text {
+  visibility: visible;
+  opacity: 1;
+}
+
+/* Individual tooltip lines */
+.tooltip-line {
+  padding: 4px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.tooltip-line:last-child {
+  border-bottom: none;
+}
+
+/* Custom scrollbar for tooltip */
+.tooltip-cell .tooltip-text::-webkit-scrollbar {
+  width: 6px;
+}
+
+.tooltip-cell .tooltip-text::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 3px;
+}
+
+.tooltip-cell .tooltip-text::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 3px;
+}
+
+.tooltip-cell .tooltip-text::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.3);
+}
+
 /* Editable Blueprint Cells */
 .editable-cell {
   position: relative;

@@ -130,7 +130,7 @@ function initializeCharacterDatabase() {
   // Assets table (for Phase 4)
   database.exec(`
     CREATE TABLE IF NOT EXISTS assets (
-      item_id TEXT PRIMARY KEY,
+      item_id TEXT,
       character_id INTEGER NOT NULL,
       type_id INTEGER NOT NULL,
       location_id INTEGER NOT NULL,
@@ -142,6 +142,7 @@ function initializeCharacterDatabase() {
       is_corporation INTEGER DEFAULT 0,
       last_updated INTEGER NOT NULL,
       cache_expires_at INTEGER,
+      PRIMARY KEY (character_id, item_id),
       FOREIGN KEY (character_id) REFERENCES characters(character_id) ON DELETE CASCADE
     )
   `);

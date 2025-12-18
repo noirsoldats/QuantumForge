@@ -288,7 +288,89 @@ const migrations = [
       console.log('[Migration 004] Rollback not implemented (would require table recreation)');
     }
   },
+  {
+    id: '005_fix_asset_table_primary_key',
+    description: 'Fix Assets table primary key constraint',
+    up: (db) => {
+      console.log('[Migration 005] Fixing Assets table primary key constraint...');
+      try {
+        // Check if migration needed (test if composite key exists)
+        const tableInfo = db.prepare("PRAGMA table_info(assets)").all();
+        const pkColumns = tableInfo.filter(col => col.pk > 0).map(col => col.name);
 
+        // If already composite key (character_id, item_id), skip migration
+        if (pkColumns.length === 2 && pkColumns.includes('character_id') && pkColumns.includes('item_id')) {
+          console.log('[Character Database] Assets table already migrated to v2');
+          return;
+        }
+
+        console.log('[Character Database] Migrating assets table to composite primary key...');
+
+        // Disable foreign keys BEFORE transaction
+        db.pragma('foreign_keys = OFF');
+
+        db.exec('BEGIN TRANSACTION;');
+        // Step 1: Create new assets_dg_tmp table with composite PK
+        db.exec(`create table assets_dg_tmp
+        (
+            item_id           TEXT,
+            character_id      INTEGER not null
+                references characters
+                    on delete cascade,
+            type_id           INTEGER not null,
+            location_id       INTEGER not null,
+            location_flag     TEXT,
+            location_type_id  INTEGER,
+            quantity          INTEGER not null,
+            is_singleton      INTEGER default 0,
+            is_blueprint_copy INTEGER,
+            is_corporation    INTEGER default 0,
+            last_updated      INTEGER not null,
+            cache_expires_at  INTEGER,
+            primary key (item_id, character_id)
+        );`);
+
+        // Step 2: Copy data from old assets table to new assets_new table
+        db.exec(`insert into assets_dg_tmp(item_id, character_id, type_id, location_id, location_flag, location_type_id, quantity,
+                                           is_singleton, is_blueprint_copy, is_corporation, last_updated, cache_expires_at)
+                 select item_id,
+                        character_id,
+                        type_id,
+                        location_id,
+                        location_flag,
+                        location_type_id,
+                        quantity,
+                        is_singleton,
+                        is_blueprint_copy,
+                        is_corporation,
+                        last_updated,
+                        cache_expires_at
+                 from assets;`);
+        // Step 3: Drop old assets table
+        db.exec(`drop table assets;`);
+        // Step 4: Rename new assets_new table to assets
+        db.exec(`alter table assets_dg_tmp rename to assets;`);
+        // Step 5: Recreate indexes
+        db.exec(`create index idx_assets_character on assets (character_id);`);
+        db.exec(`create index idx_assets_location on assets (location_id);`);
+        db.exec(`create index idx_assets_type on assets (type_id);`);
+
+        // Re-enable foreign keys AFTER transaction
+        db.pragma('foreign_keys = ON');
+
+        console.log('[Character Database] Assets table migration complete');
+        db.exec('COMMIT');
+        console.log('[Migration 005] Successfully migrated Assets table to composite primary key');
+      } catch (error) {
+        console.error('[Character Database] Migration failed:', error);
+        db.exec('ROLLBACK');
+        throw error;
+      }
+    },
+    down: (db) => {
+      console.log('[Migration 004] Rollback not implemented (would require table recreation)');
+    }
+  }
   // Add future migrations here
   // {
   //   id: '005_add_some_column',

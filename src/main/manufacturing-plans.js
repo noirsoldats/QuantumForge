@@ -1628,6 +1628,8 @@ async function getPlanMaterials(planId, includeAssets = false) {
       // Aggregate assets across all selected characters
       const personalAssetMap = {};  // typeId -> quantity
       const corpAssetMap = {};      // typeId -> quantity
+      const personalAssetDetails = {}; // typeId -> array of { characterId, characterName, quantity }
+      const corpAssetDetails = {};     // typeId -> array of { corporationId, corporationName, divisionId, divisionName, quantity }
       const processedCorps = new Set(); // Track corporations to avoid double-counting
 
       for (const characterId of characterIds) {
@@ -1643,7 +1645,25 @@ async function getPlanMaterials(planId, includeAssets = false) {
         // Fetch personal assets for this character
         const personalAssets = getAssets(characterId, false);
         for (const asset of personalAssets) {
+          // Aggregate totals (existing logic)
           personalAssetMap[asset.typeId] = (personalAssetMap[asset.typeId] || 0) + asset.quantity;
+
+          // NEW: Preserve per-character details
+          if (!personalAssetDetails[asset.typeId]) {
+            personalAssetDetails[asset.typeId] = [];
+          }
+
+          // Find existing entry for this character, or create new one
+          let charEntry = personalAssetDetails[asset.typeId].find(e => e.characterId === characterId);
+          if (!charEntry) {
+            charEntry = {
+              characterId: characterId,
+              characterName: character.characterName,
+              quantity: 0
+            };
+            personalAssetDetails[asset.typeId].push(charEntry);
+          }
+          charEntry.quantity += asset.quantity;
         }
 
         // Fetch corporation assets (with division filtering and deduplication)
@@ -1661,7 +1681,32 @@ async function getPlanMaterials(planId, includeAssets = false) {
           for (const asset of corpAssets) {
             // Check if asset is in an enabled division
             if (isAssetInEnabledDivision(asset, charEnabledDivisions)) {
+              // Aggregate totals (existing logic)
               corpAssetMap[asset.typeId] = (corpAssetMap[asset.typeId] || 0) + asset.quantity;
+
+              // NEW: Preserve per-division details
+              if (!corpAssetDetails[asset.typeId]) {
+                corpAssetDetails[asset.typeId] = [];
+              }
+
+              // Extract division ID from location_flag (e.g., "CorpSAG2" -> division 2)
+              const divisionId = extractDivisionId(asset.locationFlag);
+
+              // Find existing entry for this corp/division, or create new one
+              let corpEntry = corpAssetDetails[asset.typeId].find(
+                e => e.corporationId === corpId && e.divisionId === divisionId
+              );
+              if (!corpEntry) {
+                corpEntry = {
+                  corporationId: corpId,
+                  corporationName: character.corporationName || `Corporation ${corpId}`,
+                  divisionId: divisionId,
+                  divisionName: getDivisionName(characterId, divisionId),
+                  quantity: 0
+                };
+                corpAssetDetails[asset.typeId].push(corpEntry);
+              }
+              corpEntry.quantity += asset.quantity;
             }
           }
         }
@@ -1671,6 +1716,8 @@ async function getPlanMaterials(planId, includeAssets = false) {
       for (const material of result) {
         material.ownedPersonal = personalAssetMap[material.typeId] || 0;
         material.ownedCorp = corpAssetMap[material.typeId] || 0;
+        material.ownedPersonalDetails = personalAssetDetails[material.typeId] || [];
+        material.ownedCorpDetails = corpAssetDetails[material.typeId] || [];
       }
     }
 
@@ -1713,6 +1760,39 @@ function isAssetInEnabledDivision(asset, enabledDivisions) {
 
   // Check if this division is enabled
   return enabledDivisions.includes(divisionId);
+}
+
+/**
+ * Extract division ID from location flag
+ * @param {string} locationFlag - Location flag (e.g., "CorpSAG2")
+ * @returns {number|null} Division ID (1-7) or null
+ */
+function extractDivisionId(locationFlag) {
+  if (!locationFlag) return null;
+
+  const match = locationFlag.match(/CorpSAG(\d)/);
+  if (match && match[1]) {
+    return parseInt(match[1], 10);
+  }
+
+  return null;
+}
+
+/**
+ * Get division name for a character
+ * @param {number} characterId - Character ID
+ * @param {number} divisionId - Division ID (1-7)
+ * @returns {string} Division name
+ */
+function getDivisionName(characterId, divisionId) {
+  const { getCharacterDivisionSettings } = require('./settings-manager');
+  const settings = getCharacterDivisionSettings(characterId);
+
+  if (settings && settings.divisionNames && settings.divisionNames[divisionId]) {
+    return settings.divisionNames[divisionId];
+  }
+
+  return `Division ${divisionId}`;
 }
 
 /**

@@ -14,13 +14,21 @@ const CALL_KEY = 'universe_server_status';
 async function fetchServerStatus(forceRefresh = false) {
   // Check if we can fetch (rate limiting)
   if (!forceRefresh && !canFetchServerStatus()) {
-    // Return rate limit message - caller should use last known status
-    const lastFetch = getLastServerStatusFetchTime();
+    console.log('[Server Status] Rate limited, returning cached data');
+    // Return cached data instead of error
+    const cachedData = getCachedServerStatus();
+    if (cachedData) {
+      return {
+        success: true,
+        data: cachedData,
+        cached: true,
+        message: 'Using cached data (rate limited)'
+      };
+    }
+    // If no cache exists, return error
     return {
       success: false,
-      error: 'Rate limited - using cached data',
-      lastFetch,
-      cached: true
+      error: 'Rate limited - no cached data available',
     };
   }
 
@@ -68,8 +76,14 @@ async function fetchServerStatus(forceRefresh = false) {
       success: true,
     };
 
-    // Update fetch metadata for rate limiting
+    // Store server status in database
     const db = getMarketDatabase();
+    db.prepare(`
+      INSERT OR REPLACE INTO server_status (id, players, server_version, start_time, vip, last_updated)
+      VALUES (1, ?, ?, ?, ?, ?)
+    `).run(data.players, data.server_version, data.start_time, data.vip ? 1 : 0, now);
+
+    // Update fetch metadata for rate limiting
     db.prepare(`
       INSERT OR REPLACE INTO fetch_metadata (key, last_fetch, expires_at)
       VALUES (?, ?, ?)
@@ -79,7 +93,7 @@ async function fetchServerStatus(forceRefresh = false) {
     const responseSize = JSON.stringify(data).length;
     recordESICallSuccess(CALL_KEY, now + CACHE_TTL, null, responseSize, startTime);
 
-    console.log(`[ESI Server Status] Fetched: ${data.players} players online, status: ${serverStatus}`);
+    console.log(`[Server Status] Fetched fresh data from ESI (${data.players} players online)`);
     return result;
 
   } catch (error) {
@@ -105,7 +119,44 @@ function canFetchServerStatus() {
   if (!result) return true;
 
   const now = Date.now();
-  return now >= result.expires_at;
+  if (now < result.expires_at) {
+    const secondsAgo = Math.floor((now - result.last_fetch) / 1000);
+    console.log(`[Server Status] Rate limited (last fetch ${secondsAgo}s ago)`);
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Get cached server status from database
+ * @returns {Object|null} Cached server status or null
+ */
+function getCachedServerStatus() {
+  try {
+    const db = getMarketDatabase();
+
+    // Get cached status from database
+    const cached = db.prepare(`
+      SELECT * FROM server_status
+      WHERE id = 1
+      LIMIT 1
+    `).get();
+
+    if (!cached) {
+      return null;
+    }
+
+    return {
+      players: cached.players,
+      serverVersion: cached.server_version,
+      startTime: cached.start_time,
+      vip: cached.vip === 1,
+      lastUpdated: cached.last_updated,
+    };
+  } catch (error) {
+    console.error('[Server Status] Error getting cached status:', error);
+    return null;
+  }
 }
 
 /**
@@ -143,5 +194,6 @@ async function retryFetch(fetchFn, maxRetries = 3, initialDelay = 1000) {
 
 module.exports = {
   fetchServerStatus,
+  getCachedServerStatus,
   getLastServerStatusFetchTime,
 };

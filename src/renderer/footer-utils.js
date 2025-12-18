@@ -12,7 +12,7 @@ let footerUpdateIntervals = {
 
 // Constants
 const CACHE_KEY = 'quantum_forge_server_status_cache';
-const MIN_FETCH_INTERVAL = 30 * 1000; // 30 seconds minimum between fetches
+const MIN_FETCH_INTERVAL = 60 * 1000; // 60 seconds minimum between fetches (match backend)
 
 /**
  * Get cached server status from sessionStorage
@@ -112,6 +112,66 @@ function startEveTimeClock() {
 }
 
 /**
+ * Update server status display
+ * @param {Object} data - Server status data
+ * @param {boolean} isCached - Whether data is from cache
+ * @param {number} ageSeconds - Age of cached data in seconds
+ */
+function updateServerStatusDisplay(data, isCached = false, ageSeconds = 0) {
+  const iconElement = document.getElementById('server-status-icon');
+  const textElement = document.getElementById('server-status-text');
+  const statusItem = document.getElementById('server-status-item');
+  const playersElement = document.getElementById('players-online');
+
+  if (!iconElement || !textElement || !statusItem) return;
+
+  // Update player count
+  if (playersElement) {
+    playersElement.textContent = data.players ? data.players.toLocaleString() : '--';
+  }
+
+  // Remove all status classes
+  iconElement.classList.remove('status-online', 'status-offline', 'status-restarting', 'status-loading', 'status-error');
+
+  const serverStatus = data.vip ? 'restarting' : (data.players !== undefined ? 'online' : 'offline');
+  iconElement.classList.add(`status-${serverStatus}`);
+
+  // Build title with cache indicator
+  let title = `Server Status: ${serverStatus.charAt(0).toUpperCase() + serverStatus.slice(1)}`;
+  if (data.players !== undefined) {
+    title += ` (${data.players.toLocaleString()} players)`;
+  }
+  if (isCached && ageSeconds > 0) {
+    title += ` [cached, ${ageSeconds}s old]`;
+  }
+
+  // Update SVG icon based on status
+  if (serverStatus === 'online') {
+    iconElement.innerHTML = `
+      <circle cx="12" cy="12" r="10"></circle>
+      <path d="M9 12l2 2 4-4"></path>
+    `;
+    textElement.textContent = 'Online';
+  } else if (serverStatus === 'restarting') {
+    iconElement.innerHTML = `
+      <circle cx="12" cy="12" r="10"></circle>
+      <line x1="12" y1="8" x2="12" y2="12"></line>
+      <line x1="12" y1="16" x2="12.01" y2="16"></line>
+    `;
+    textElement.textContent = 'Restarting';
+  } else {
+    iconElement.innerHTML = `
+      <circle cx="12" cy="12" r="10"></circle>
+      <line x1="15" y1="9" x2="9" y2="15"></line>
+      <line x1="9" y1="9" x2="15" y2="15"></line>
+    `;
+    textElement.textContent = 'Offline';
+  }
+
+  statusItem.title = title;
+}
+
+/**
  * Update server status and player count
  */
 async function updateServerStatus() {
@@ -120,83 +180,59 @@ async function updateServerStatus() {
     const cached = getCachedServerStatus();
 
     // Check if we can use cached data
-    let status;
     if (cached && cached.data) {
       const timeSinceLastFetch = now - cached.timestamp;
 
       if (timeSinceLastFetch < MIN_FETCH_INTERVAL) {
         // Use cached data
-        status = cached.data;
-        console.log(`[Footer] Using cached server status (${Math.round(timeSinceLastFetch / 1000)}s old, cache valid for ${Math.round((MIN_FETCH_INTERVAL - timeSinceLastFetch) / 1000)}s more)`);
-      } else {
-        // Cache expired, fetch fresh data
-        console.log(`[Footer] Cache expired (${Math.round(timeSinceLastFetch / 1000)}s old), fetching fresh server status...`);
-        status = await window.electronAPI.status.fetch();
-        setCachedServerStatus(status);
+        const ageSeconds = Math.floor(timeSinceLastFetch / 1000);
+        console.log(`[Footer] Using cached server status (${ageSeconds}s old)`);
+        updateServerStatusDisplay(cached.data, true, ageSeconds);
+        return;
       }
-    } else {
-      // No cache exists, fetch fresh data
-      console.log('[Footer] No cache found, fetching fresh server status...');
-      status = await window.electronAPI.status.fetch();
-      setCachedServerStatus(status);
     }
 
-    // Update player count
-    const playersElement = document.getElementById('players-online');
-    if (playersElement && status.success) {
-      playersElement.textContent = status.players ? status.players.toLocaleString() : '--';
-    }
+    // Fetch fresh data from backend
+    const result = await window.electronAPI.status.fetch();
 
-    // Update server status icon and tooltip
-    const iconElement = document.getElementById('server-status-icon');
-    const textElement = document.getElementById('server-status-text');
-    const statusItem = document.getElementById('server-status-item');
+    if (!result.success) {
+      console.error('Failed to fetch server status:', result.error);
 
-    if (iconElement && textElement && statusItem) {
-      // Remove all status classes
-      iconElement.classList.remove('status-online', 'status-offline', 'status-restarting', 'status-loading');
+      // Check if we have cached data in sessionStorage as fallback
+      if (cached && cached.data) {
+        const ageSeconds = Math.floor((now - cached.timestamp) / 1000);
+        console.log(`Using sessionStorage fallback (${ageSeconds}s old)`);
+        updateServerStatusDisplay(cached.data, true, ageSeconds);
+        return;
+      }
 
-      if (status.success) {
-        const serverStatus = status.serverStatus || 'offline';
-        iconElement.classList.add(`status-${serverStatus}`);
+      // No fallback available, show error
+      const iconElement = document.getElementById('server-status-icon');
+      const textElement = document.getElementById('server-status-text');
+      const statusItem = document.getElementById('server-status-item');
 
-        // Update SVG icon based on status
-        if (serverStatus === 'online') {
-          iconElement.innerHTML = `
-            <circle cx="12" cy="12" r="10"></circle>
-            <path d="M9 12l2 2 4-4"></path>
-          `;
-          textElement.textContent = 'Online';
-          statusItem.title = `Server Status: Online (${status.players} players)`;
-        } else if (serverStatus === 'restarting') {
-          iconElement.innerHTML = `
-            <circle cx="12" cy="12" r="10"></circle>
-            <line x1="12" y1="8" x2="12" y2="12"></line>
-            <line x1="12" y1="16" x2="12.01" y2="16"></line>
-          `;
-          textElement.textContent = 'Restarting';
-          statusItem.title = 'Server Status: VIP Mode (Restarting/Maintenance)';
-        } else {
-          iconElement.innerHTML = `
-            <circle cx="12" cy="12" r="10"></circle>
-            <line x1="15" y1="9" x2="9" y2="15"></line>
-            <line x1="9" y1="9" x2="15" y2="15"></line>
-          `;
-          textElement.textContent = 'Offline';
-          statusItem.title = 'Server Status: Offline';
-        }
-      } else {
-        // Error state
-        iconElement.classList.add('status-offline');
+      if (iconElement && textElement && statusItem) {
+        iconElement.classList.remove('status-online', 'status-offline', 'status-restarting', 'status-loading');
+        iconElement.classList.add('status-error');
         iconElement.innerHTML = `
           <circle cx="12" cy="12" r="10"></circle>
           <line x1="12" y1="8" x2="12" y2="12"></line>
           <line x1="12" y1="16" x2="12.01" y2="16"></line>
         `;
         textElement.textContent = 'Error';
-        statusItem.title = `Server Status: Error (${status.error || 'Unknown error'})`;
+        statusItem.title = `Server Status: Error (${result.error || 'Unknown error'})`;
       }
+      return;
     }
+
+    const serverData = result.data || result;
+
+    // Update display
+    updateServerStatusDisplay(serverData, result.cached || false, 0);
+
+    // Cache the successful result
+    setCachedServerStatus(serverData);
+
   } catch (error) {
     console.error('[Footer] Error updating server status:', error);
   }
