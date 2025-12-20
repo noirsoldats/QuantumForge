@@ -1114,7 +1114,7 @@ async function recalculateManufacturedMaterials(planId, characterId) {
 
   // Get all intermediate blueprints with built_runs > 0
   const builtIntermediates = db.prepare(`
-    SELECT plan_blueprint_id, blueprint_type_id, runs, built_runs, me_level, facility_snapshot
+    SELECT plan_blueprint_id, blueprint_type_id, runs, built_runs, me_level, facility_snapshot, use_intermediates
     FROM plan_blueprints
     WHERE plan_id = ? AND is_intermediate = 1 AND built_runs > 0
     ORDER BY plan_blueprint_id
@@ -1135,6 +1135,12 @@ async function recalculateManufacturedMaterials(planId, characterId) {
     const facilitySnapshot = intermediate.facility_snapshot ?
       JSON.parse(intermediate.facility_snapshot) : null;
 
+    // Determine how to expand materials based on blueprint's use_intermediates setting
+    // This ensures that if an intermediate is configured to expand to raw materials,
+    // and it has sub-intermediates, those sub-materials are also marked as acquired
+    const useIntermediates = intermediate.use_intermediates || 'raw_materials';
+    const shouldExpandToRaw = (useIntermediates === 'raw_materials' || useIntermediates === 'build_buy');
+
     // Calculate materials for the FULL built_runs quantity
     // Important: Must calculate for full runs, not multiply single-run materials,
     // because ME reductions and rounding happen per-run in Eve Online
@@ -1144,10 +1150,10 @@ async function recalculateManufacturedMaterials(planId, characterId) {
       intermediate.me_level || 0,
       characterId,
       facilitySnapshot,
-      false // Don't break down further - get raw materials
+      shouldExpandToRaw // Expand based on blueprint's configuration
     );
 
-    console.log(`  - Intermediate ${intermediate.blueprint_type_id}: ${intermediate.built_runs}/${intermediate.runs} runs built`);
+    console.log(`  - Intermediate ${intermediate.blueprint_type_id}: ${intermediate.built_runs}/${intermediate.runs} runs built (mode: ${useIntermediates}, expand: ${shouldExpandToRaw})`);
 
     // Extract materials from the calculation result
     const materials = calculation.materials || {};

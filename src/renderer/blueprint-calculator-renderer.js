@@ -247,7 +247,7 @@ function handleBlueprintSearch(e) {
 
   searchTimeout = setTimeout(async () => {
     try {
-      const blueprints = await window.electronAPI.calculator.searchBlueprints(searchTerm, 20);
+      const blueprints = await window.electronAPI.calculator.searchBlueprints(searchTerm, 100);
       displaySearchResults(blueprints);
     } catch (error) {
       console.error('Error searching blueprints:', error);
