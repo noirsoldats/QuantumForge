@@ -1068,60 +1068,174 @@ async function markIntermediateBuiltRecursive(intermediateBlueprintId, isBuilt, 
 }
 
 /**
- * Mark an intermediate blueprint as built or unbuilt
- * @param {string} intermediateBlueprintId - Intermediate blueprint ID
- * @param {boolean} isBuilt - Built status
- * @returns {Promise<Object>} Result with warnings if any
- */
-/**
- * Update materials proportionally based on built runs delta
- * @param {string} intermediateBlueprintId - Intermediate blueprint ID
- * @param {Object} intermediate - Intermediate blueprint data
- * @param {number} deltaRuns - Change in built runs (positive or negative)
+ * Clear all 'manufactured' acquisition data for a plan
+ * Preserves acquisitions from other sources (manual, purchased, etc.)
  * @param {string} planId - Plan ID
- * @param {number} characterId - Character ID
+ * @returns {number} Number of materials cleared
  */
-async function updateIntermediateMaterialsProportional(intermediateBlueprintId, intermediate, deltaRuns, planId, characterId) {
+function clearManufacturedAcquisitions(planId) {
   const db = getCharacterDatabase();
 
-  if (deltaRuns === 0) {
-    return; // No change needed
+  // Get count for logging
+  const count = db.prepare(`
+    SELECT COUNT(*) as count
+    FROM plan_materials
+    WHERE plan_id = ? AND acquisition_method = 'manufactured'
+  `).get(planId).count;
+
+  if (count === 0) {
+    console.log(`[Plans] No 'manufactured' acquisitions to clear for plan ${planId}`);
+    return 0;
   }
 
-  // Calculate materials for a single run
-  const facilitySnapshot = intermediate.facility_snapshot ? JSON.parse(intermediate.facility_snapshot) : null;
+  console.log(`[Plans] Clearing 'manufactured' acquisitions for ${count} material(s)`);
 
-  const materialsPerRun = await calculateBlueprintMaterials(
-    intermediate.blueprint_type_id,
-    1, // Single run to get per-run materials
-    intermediate.me_level || 0,
-    characterId,
-    facilitySnapshot,
-    false // Don't break down further - get raw materials
-  );
+  // Clear 'manufactured' acquisition data only
+  db.prepare(`
+    UPDATE plan_materials
+    SET manually_acquired_quantity = 0,
+        manually_acquired = 0,
+        acquisition_method = NULL,
+        acquisition_note = NULL
+    WHERE plan_id = ? AND acquisition_method = 'manufactured'
+  `).run(planId);
 
-  // For each material, update acquired quantity
-  for (const [typeId, quantityPerRun] of Object.entries(materialsPerRun)) {
-    const deltaQuantity = Math.ceil(quantityPerRun * deltaRuns);
+  return count;
+}
 
-    // Get current acquired quantity
-    const current = db.prepare(`
-      SELECT manually_acquired_quantity
+/**
+ * Recalculate manufactured material acquisitions from all built intermediates
+ * This function accumulates materials from ALL intermediates with built_runs > 0
+ * @param {string} planId - Plan ID
+ * @param {number} characterId - Character ID for skill/blueprint calculations
+ */
+async function recalculateManufacturedMaterials(planId, characterId) {
+  const db = getCharacterDatabase();
+
+  // Get all intermediate blueprints with built_runs > 0
+  const builtIntermediates = db.prepare(`
+    SELECT plan_blueprint_id, blueprint_type_id, runs, built_runs, me_level, facility_snapshot
+    FROM plan_blueprints
+    WHERE plan_id = ? AND is_intermediate = 1 AND built_runs > 0
+    ORDER BY plan_blueprint_id
+  `).all(planId);
+
+  if (builtIntermediates.length === 0) {
+    console.log(`[Plans] No built intermediates for plan ${planId}`);
+    return;
+  }
+
+  console.log(`[Plans] Recalculating manufactured materials for ${builtIntermediates.length} built intermediate(s)`);
+
+  // Accumulator for all manufactured materials across ALL intermediates
+  const totalManufacturedMaterials = {};
+
+  // Calculate materials for each built intermediate
+  for (const intermediate of builtIntermediates) {
+    const facilitySnapshot = intermediate.facility_snapshot ?
+      JSON.parse(intermediate.facility_snapshot) : null;
+
+    // Calculate materials for the FULL built_runs quantity
+    // Important: Must calculate for full runs, not multiply single-run materials,
+    // because ME reductions and rounding happen per-run in Eve Online
+    const calculation = await calculateBlueprintMaterials(
+      intermediate.blueprint_type_id,
+      intermediate.built_runs, // Calculate for actual built runs
+      intermediate.me_level || 0,
+      characterId,
+      facilitySnapshot,
+      false // Don't break down further - get raw materials
+    );
+
+    console.log(`  - Intermediate ${intermediate.blueprint_type_id}: ${intermediate.built_runs}/${intermediate.runs} runs built`);
+
+    // Extract materials from the calculation result
+    const materials = calculation.materials || {};
+
+    // Accumulate materials across all built intermediates
+    for (const [typeId, quantity] of Object.entries(materials)) {
+      const typeIdInt = parseInt(typeId);
+
+      if (isNaN(typeIdInt)) {
+        console.warn(`    WARNING: Invalid material typeId '${typeId}' in blueprint ${intermediate.blueprint_type_id} - skipping`);
+        continue;
+      }
+
+      totalManufacturedMaterials[typeIdInt] =
+        (totalManufacturedMaterials[typeIdInt] || 0) + quantity;
+
+      console.log(`    - Material ${typeIdInt}: ${quantity} total for ${intermediate.built_runs} runs`);
+    }
+  }
+
+  console.log(`[Plans] Updating ${Object.keys(totalManufacturedMaterials).length} material(s) as manufactured`);
+
+  // Update plan_materials with accumulated manufactured quantities
+  for (const [typeId, manufacturedQty] of Object.entries(totalManufacturedMaterials)) {
+    // Convert typeId to integer (Object.entries returns string keys)
+    const typeIdInt = parseInt(typeId);
+
+    if (isNaN(typeIdInt)) {
+      console.warn(`  - Invalid typeId ${typeId} - skipping`);
+      continue;
+    }
+
+    // Get current material record
+    const existing = db.prepare(`
+      SELECT manually_acquired_quantity, acquisition_method
       FROM plan_materials
       WHERE plan_id = ? AND type_id = ?
-    `).get(planId, parseInt(typeId));
+    `).get(planId, typeIdInt);
 
-    const currentAcquired = current?.manually_acquired_quantity || 0;
-    const newAcquired = Math.max(0, currentAcquired + deltaQuantity);
+    if (!existing) {
+      // Material doesn't exist - shouldn't happen after recalculatePlanMaterials
+      console.warn(`  - Material ${typeIdInt} not found in plan_materials - skipping`);
+      continue;
+    }
 
-    // Update material acquisition
+    // Get quantity from non-manufactured sources
+    // (should be 0 since we just cleared manufactured, but handle edge cases)
+    const nonManufacturedQty = existing.acquisition_method === 'manufactured' ?
+      0 : (existing.manually_acquired_quantity || 0);
+
+    const totalAcquired = nonManufacturedQty + manufacturedQty;
+
+    // Determine final acquisition method
+    let finalMethod;
+    let finalNote;
+
+    if (nonManufacturedQty > 0 && manufacturedQty > 0) {
+      // Mixed sources
+      finalMethod = 'mixed';
+      finalNote = `Manufactured: ${manufacturedQty}, ${existing.acquisition_method}: ${nonManufacturedQty}`;
+    } else if (manufacturedQty > 0) {
+      // Only manufactured
+      finalMethod = 'manufactured';
+      finalNote = 'Auto-acquired from built intermediate components';
+    } else {
+      // Only other source (preserve existing)
+      finalMethod = existing.acquisition_method;
+      finalNote = existing.acquisition_note;
+    }
+
+    // Update material with manufactured acquisition
     db.prepare(`
       UPDATE plan_materials
-      SET manually_acquired = CASE WHEN ? > 0 THEN 1 ELSE 0 END,
+      SET manually_acquired = ?,
           manually_acquired_quantity = ?,
-          acquisition_method = CASE WHEN ? > 0 THEN 'manufactured' ELSE NULL END
+          acquisition_method = ?,
+          acquisition_note = ?
       WHERE plan_id = ? AND type_id = ?
-    `).run(newAcquired, newAcquired, newAcquired, planId, parseInt(typeId));
+    `).run(
+      totalAcquired > 0 ? 1 : 0,
+      totalAcquired,
+      finalMethod,
+      finalNote,
+      planId,
+      typeIdInt
+    );
+
+    console.log(`  - Material ${typeIdInt}: manufactured=${manufacturedQty}, other=${nonManufacturedQty}, total=${totalAcquired}`);
   }
 }
 
@@ -1146,10 +1260,12 @@ async function markIntermediateBuilt(intermediateBlueprintId, builtRuns) {
       throw new Error(`Invalid built runs: ${builtRuns}. Must be between 0 and ${intermediate.runs}`);
     }
 
-    // Get previous built quantity
+    // Store previous for logging
     const previousBuiltRuns = intermediate.built_runs || 0;
 
-    // Update built_runs and is_built (auto-sync for backward compatibility)
+    console.log(`[Plans] Updating intermediate ${intermediateBlueprintId} built_runs: ${previousBuiltRuns} → ${builtRuns}`);
+
+    // Update built_runs in database
     db.prepare(`
       UPDATE plan_blueprints
       SET built_runs = ?,
@@ -1157,33 +1273,31 @@ async function markIntermediateBuilt(intermediateBlueprintId, builtRuns) {
       WHERE plan_blueprint_id = ?
     `).run(builtRuns, builtRuns, intermediateBlueprintId);
 
-    // Calculate material delta (difference from previous state)
-    const delta = builtRuns - previousBuiltRuns;
+    // CRITICAL CHANGE: Clear ALL 'manufactured' acquisitions for the entire plan
+    // This ensures we recalculate from scratch based on current blueprint configs
+    clearManufacturedAcquisitions(intermediate.plan_id);
 
-    if (delta !== 0) {
-      // Update materials proportionally
-      await updateIntermediateMaterialsProportional(
-        intermediateBlueprintId,
-        intermediate,
-        delta,
-        intermediate.plan_id,
-        intermediate.character_id
-      );
-    }
+    // Recalculate ALL manufactured materials from ALL built intermediates
+    // This handles multiple intermediates producing the same material correctly
+    await recalculateManufacturedMaterials(intermediate.plan_id, intermediate.character_id);
 
-    // Recalculate plan materials to ensure consistency
+    // Recalculate plan materials to ensure overall consistency
+    // This will preserve non-'manufactured' acquisitions (manual, purchased, etc.)
     await recalculatePlanMaterials(intermediate.plan_id, false);
 
-    // Update plan's updated_at
+    // Update plan's updated_at timestamp
     const now = Date.now();
-    db.prepare('UPDATE manufacturing_plans SET updated_at = ? WHERE plan_id = ?').run(now, intermediate.plan_id);
+    db.prepare('UPDATE manufacturing_plans SET updated_at = ? WHERE plan_id = ?')
+      .run(now, intermediate.plan_id);
+
+    console.log(`[Plans] Successfully updated built quantity for intermediate ${intermediateBlueprintId}`);
 
     return {
       success: true,
-      warnings: [],
+      warnings: []
     };
   } catch (error) {
-    console.error('Error marking intermediate as built:', error);
+    console.error('[Plans] Error marking intermediate built:', error);
     throw error;
   }
 }
@@ -1807,10 +1921,15 @@ async function recalculatePlanMaterials(planId, refreshPrices = false) {
       }
 
       // Always capture acquisition data (regardless of refreshPrices)
+      // EXCLUDE 'manufactured' acquisitions - they will be recalculated from built intermediates
+      // This ensures that when blueprint configs change (ME, facility, etc.),
+      // user must re-mark intermediates as built with the new configuration
       const acquisitionRecords = db.prepare(`
         SELECT type_id, manually_acquired, manually_acquired_quantity, acquisition_method, acquisition_note
         FROM plan_materials
         WHERE plan_id = ?
+          AND acquisition_method IS NOT NULL
+          AND acquisition_method != 'manufactured'
       `).all(planId);
 
       for (const rec of acquisitionRecords) {
@@ -1990,6 +2109,11 @@ async function recalculatePlanMaterials(planId, refreshPrices = false) {
 
       db.exec('COMMIT');
       console.log(`Recalculated materials and products for plan ${planId} (${Object.keys(aggregatedMaterials).length} materials, ${Object.keys(aggregatedProducts).length} products)`);
+
+      // Recalculate manufactured materials from built intermediates
+      // This is done AFTER the transaction commits to ensure materials table is updated
+      // Note: We only recalculate if there are built intermediates (otherwise this is a no-op)
+      await recalculateManufacturedMaterials(planId, plan.character_id);
 
       return true;
     } catch (error) {
