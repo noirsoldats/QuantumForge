@@ -248,6 +248,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
     clearCaches: () => ipcRenderer.invoke('calculator:clearCaches'),
   },
 
+  // Reactions Calculator API
+  reactions: {
+    searchReactions: (searchTerm, limit) => ipcRenderer.invoke('reactions:searchReactions', searchTerm, limit),
+    calculateMaterials: (reactionTypeId, runs, characterId, facilityId) =>
+      ipcRenderer.invoke('reactions:calculateMaterials', reactionTypeId, runs, characterId, facilityId),
+    getReactionProduct: (reactionTypeId) => ipcRenderer.invoke('reactions:getReactionProduct', reactionTypeId),
+    getTypeName: (typeId) => ipcRenderer.invoke('reactions:getTypeName', typeId),
+    getReactionTime: (reactionTypeId) => ipcRenderer.invoke('reactions:getReactionTime', reactionTypeId),
+    clearCaches: () => ipcRenderer.invoke('reactions:clearCaches'),
+  },
+
   // Cost Indices API
   costIndices: {
     fetch: () => ipcRenderer.invoke('costIndices:fetch'),
@@ -268,7 +279,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getSystemsByRegion: (regionId) => ipcRenderer.invoke('facilities:getSystemsByRegion', regionId),
     getCostIndices: (systemId) => ipcRenderer.invoke('facilities:getCostIndices', systemId),
     getStructureTypes: () => ipcRenderer.invoke('facilities:getStructureTypes'),
-    getStructureRigs: () => ipcRenderer.invoke('facilities:getStructureRigs'),
+    getStructureRigs: (structureType = null) => ipcRenderer.invoke('facilities:getStructureRigs', structureType),
     getStructureBonuses: (typeId) => ipcRenderer.invoke('facilities:getStructureBonuses', typeId),
     getRigEffects: (typeId) => ipcRenderer.invoke('facilities:getRigEffects', typeId),
   },

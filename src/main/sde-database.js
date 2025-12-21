@@ -666,23 +666,23 @@ async function getStructureTypes() {
     const db = await getDatabase();
 
     return new Promise((resolve, reject) => {
-      // Query for only Engineering Complexes (used for manufacturing)
-      // Citadels and Refineries cannot be used for manufacturing
+      // Query for Engineering Complexes (manufacturing) and Refineries (reactions/reprocessing)
       const query = `
-        SELECT DISTINCT t.typeID, t.typeName
+        SELECT
+          t.typeID,
+          t.typeName,
+          g.groupName,
+          g.groupID
         FROM invTypes t
-        WHERE t.typeName IN (
-          'Raitaru',
-          'Azbel',
-          'Sotiyo'
-        )
-        AND t.published = 1
+        JOIN invGroups g ON t.groupID = g.groupID
+        WHERE g.groupID IN (1404, 1406)
+          AND t.published = 1
         ORDER BY
-          CASE t.typeName
-            WHEN 'Raitaru' THEN 1
-            WHEN 'Azbel' THEN 2
-            WHEN 'Sotiyo' THEN 3
-          END
+          CASE g.groupID
+            WHEN 1404 THEN 1
+            WHEN 1406 THEN 2
+          END,
+          t.typeName
       `;
 
       db.all(query, [], (err, rows) => {
@@ -690,24 +690,27 @@ async function getStructureTypes() {
           console.error('Error querying structure types:', err);
           reject(err);
         } else {
-          console.log(`Found ${rows.length} Engineering Complex structure types`);
+          console.log(`Found ${rows.length} structure types (Engineering Complexes + Refineries)`);
           resolve(rows.map(row => {
-            // All returned structures are Engineering Complexes
-            // Only categorize by size
+            // Determine structure type and size
+            const structureType = row.groupID === 1404 ? 'engineering' : 'refinery';
             let size = '';
 
-            if (row.typeName === 'Raitaru') {
-              size = 'Medium';
-            } else if (row.typeName === 'Azbel') {
-              size = 'Large';
-            } else if (row.typeName === 'Sotiyo') {
-              size = 'X-Large';
+            // Detect size from name patterns
+            if (row.typeName.includes('Raitaru') || row.typeName.includes('Athanor')) {
+              size = 'M';
+            } else if (row.typeName.includes('Azbel') || row.typeName.includes('Tatara')) {
+              size = 'L';
+            } else if (row.typeName.includes('Sotiyo')) {
+              size = 'XL';
             }
 
             return {
               typeId: row.typeID,
-              typeName: row.typeName,
-              category: 'Engineering Complex',
+              name: row.typeName,
+              groupName: row.groupName,
+              groupId: row.groupID,
+              structureType: structureType,
               size: size
             };
           }));
@@ -721,26 +724,43 @@ async function getStructureTypes() {
 }
 
 /**
- * Get structure rigs (Engineering Rigs)
+ * Get structure rigs (Engineering and Refinery Rigs)
+ * @param {string} filterByStructureType - Optional filter: 'engineering' or 'refinery'
  * @returns {Promise<Array>} Array of structure rigs
  */
-async function getStructureRigs() {
+async function getStructureRigs(filterByStructureType = null) {
   try {
     const db = await getDatabase();
 
     return new Promise((resolve, reject) => {
-      // Query for structure rigs - specifically Engineering Rigs for manufacturing
-      const query = `
-        SELECT DISTINCT t.typeID, t.typeName, g.groupName
-        FROM invTypes t
-        JOIN invGroups g ON t.groupID = g.groupID
-        WHERE (
-          g.groupName LIKE '%Structure%Rig%'
-          OR g.groupName LIKE '%Engineering Rig%'
-          OR (g.categoryID = 66 AND g.groupName LIKE '%Rig%')
-        )
+      // Base query for all structure rigs
+      let whereClause = `
+        WHERE g.categoryID = 66
         AND t.published = 1
         AND t.typeName NOT LIKE '%Blueprint%'
+        AND t.typeName LIKE 'Standup%'
+        AND (
+          g.groupName LIKE 'Structure Engineering Rig%'
+          OR g.groupName LIKE 'Structure Resource Rig%'
+          OR g.groupName LIKE 'Structure%Reactor Rig%'
+        )
+      `;
+
+      // Add structure type filtering if specified
+      if (filterByStructureType === 'engineering') {
+        whereClause += ` AND g.groupName LIKE 'Structure Engineering Rig%'`;
+      } else if (filterByStructureType === 'refinery') {
+        whereClause += ` AND (
+          g.groupName LIKE 'Structure Resource Rig%'
+          OR g.groupName LIKE 'Structure%Reactor Rig%'
+        )`;
+      }
+
+      const query = `
+        SELECT DISTINCT t.typeID, t.typeName, g.groupName, g.groupID
+        FROM invTypes t
+        JOIN invGroups g ON t.groupID = g.groupID
+        ${whereClause}
         ORDER BY t.typeName
       `;
 
@@ -749,27 +769,36 @@ async function getStructureRigs() {
           console.error('Error querying structure rigs:', err);
           reject(err);
         } else {
-          console.log(`Found ${rows.length} structure rigs`);
+          const filterDesc = filterByStructureType ? ` (${filterByStructureType})` : '';
+          console.log(`Found ${rows.length} structure rigs${filterDesc}`);
+
           resolve(rows.map(row => {
-            // Determine rig size from group name
-            // Structure rig sizes in SDE: Medium=2, Large=3, X-Large=4
-            // Structure Engineering Rig M = size 2 (for Medium structures)
-            // Structure Engineering Rig L = size 3 (for Large structures)
-            // Structure Engineering Rig XL = size 4 (for X-Large structures)
+            // Determine rig size from type name (primary) and group name (fallback)
             let rigSize = 0;
-            if (row.groupName.includes(' M ') || row.groupName.includes('Rig M -')) {
-              rigSize = 2;
-            } else if (row.groupName.includes(' L ') || row.groupName.includes('Rig L -')) {
-              rigSize = 3;
-            } else if (row.groupName.includes(' XL ') || row.groupName.includes('Rig XL -')) {
+            if (row.typeName.includes('XL-Set') || row.groupName.includes(' XL ') || row.groupName.includes('Rig XL -')) {
               rigSize = 4;
+            } else if (row.typeName.includes('L-Set') || row.groupName.includes(' L ') || row.groupName.includes('Rig L -')) {
+              rigSize = 3;
+            } else if (row.typeName.includes('M-Set') || row.groupName.includes(' M ') || row.groupName.includes('Rig M -')) {
+              rigSize = 2;
             }
+
+            // Determine rig category based on group name
+            let rigCategory = 'engineering';
+            if (row.groupName.includes('Resource Rig') ||
+                row.groupName.includes('Reactor Rig')) {
+              rigCategory = 'refinery';
+            }
+
+            const sizeLabel = rigSize === 2 ? 'M' : rigSize === 3 ? 'L' : rigSize === 4 ? 'XL' : 'Unknown';
 
             return {
               typeId: row.typeID,
-              typeName: row.typeName,
+              name: row.typeName,
               groupName: row.groupName,
-              rigSize: rigSize
+              rigSize: rigSize,
+              rigCategory: rigCategory,
+              sizeLabel: sizeLabel
             };
           }));
         }
@@ -790,10 +819,13 @@ async function getStructureBonuses(typeId) {
   try {
     const db = await getDatabase();
 
-    // First get the structure name and rig size
+    // Get structure info including group for determining type
     const structure = await new Promise((resolve, reject) => {
       db.get(
-        'SELECT typeName FROM invTypes WHERE typeID = ?',
+        `SELECT t.typeName, g.groupID, g.groupName
+         FROM invTypes t
+         JOIN invGroups g ON t.groupID = g.groupID
+         WHERE t.typeID = ?`,
         [typeId],
         (err, row) => {
           if (err) {
@@ -808,6 +840,9 @@ async function getStructureBonuses(typeId) {
     if (!structure) {
       return {};
     }
+
+    const structureName = structure.typeName;
+    const isRefinery = structure.groupID === 1406;
 
     // Get rig size from dgmTypeAttributes
     const rigSize = await new Promise((resolve, reject) => {
@@ -826,30 +861,47 @@ async function getStructureBonuses(typeId) {
       );
     });
 
-    // Hardcoded bonuses for Upwell Engineering Complexes
-    // Different cost reduction and time efficiency based on structure size
-    const structureName = structure.typeName;
-    let costReduction = 0.0;
-    let timeEfficiency = 15.0;
+    // Hardcoded bonuses for Upwell Structures
+    let materialEfficiency, timeEfficiency, costReduction;
 
-    // Engineering Complex bonuses by size
+    // Engineering Complex bonuses (Manufacturing)
     if (structureName === 'Raitaru') {
-      costReduction = 3.0;   // Medium: 3% job cost reduction
-      timeEfficiency = 15.0; // Medium: 15% time reduction
+      materialEfficiency = 1.0;
+      timeEfficiency = 15.0;
+      costReduction = 3.0;
     } else if (structureName === 'Azbel') {
-      costReduction = 4.0;   // Large: 4% job cost reduction
-      timeEfficiency = 20.0; // Large: 20% time reduction
+      materialEfficiency = 1.0;
+      timeEfficiency = 20.0;
+      costReduction = 4.0;
     } else if (structureName === 'Sotiyo') {
-      costReduction = 5.0;   // X-Large: 5% job cost reduction
-      timeEfficiency = 30.0; // X-Large: 30% time reduction
+      materialEfficiency = 1.0;
+      timeEfficiency = 30.0;
+      costReduction = 5.0;
+    }
+    // Refinery bonuses (Reactions/Reprocessing)
+    else if (structureName === 'Athanor') {
+      materialEfficiency = 2.0;  // Reaction material reduction
+      timeEfficiency = 20.0;     // Reaction time reduction
+      costReduction = 3.0;
+    } else if (structureName === 'Tatara') {
+      materialEfficiency = 2.0;  // Reaction material reduction
+      timeEfficiency = 25.0;     // Reaction time reduction
+      costReduction = 4.0;
+    } else {
+      // Default for unknown structures
+      materialEfficiency = 0.0;
+      timeEfficiency = 0.0;
+      costReduction = 0.0;
     }
 
     const bonuses = {
-      materialEfficiency: 1.0,  // 1% material reduction (all structures)
+      materialEfficiency: materialEfficiency,
       timeEfficiency: timeEfficiency,
       costReduction: costReduction,
       rigSize: rigSize || 0,
-      structureName: structureName
+      structureName: structureName,
+      structureType: isRefinery ? 'refinery' : 'engineering',
+      groupId: structure.groupID
     };
 
     return bonuses;
@@ -883,8 +935,15 @@ async function getRigEffects(typeId) {
           dat.displayName LIKE '%Bonus%'
           OR dat.displayName LIKE '%bonus%'
           OR dat.displayName LIKE 'Bonus to%'
+          OR dat.attributeName LIKE '%Bonus%'
+          OR dat.attributeName LIKE '%bonus%'
+          OR dat.attributeName LIKE '%MaterialModifier%'
+          OR dat.attributeName LIKE '%TimeModifier%'
+          OR dat.attributeName LIKE '%CostModifier%'
+          OR dat.attributeName LIKE '%rigSize%'
+          OR dat.attributeID IN (2713, 2714, 2356, 2357)
         )
-        ORDER BY dat.displayName
+        ORDER BY dat.displayName, dat.attributeName
       `;
 
       db.all(query, [typeId], (err, rows) => {

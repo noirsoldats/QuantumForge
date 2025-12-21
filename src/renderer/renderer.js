@@ -146,6 +146,15 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
   }
 
+  // Reactions Calculator card handler
+  const reactionsCalculatorCard = document.getElementById('reactions-calculator-card');
+  if (reactionsCalculatorCard) {
+    reactionsCalculatorCard.addEventListener('click', () => {
+      console.log('Opening Reactions Calculator');
+      window.location.href = 'reactions-calculator.html';
+    });
+  }
+
   // Load default character avatar
   await loadDefaultCharacterAvatar();
 

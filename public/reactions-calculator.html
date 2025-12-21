@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://images.evetech.net">
+  <title>Reactions Calculator - Quantum Forge</title>
+  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="reactions-calculator.css">
+</head>
+<body>
+  <div id="calculator-app">
+    <!-- Settings Button -->
+    <button id="settings-btn" class="settings-icon" title="Settings">
+      <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="3"></circle>
+        <path d="M12 1v6m0 6v6m0-18a10 10 0 0 1 10 10m-10 10a10 10 0 0 1-10-10m8.5-8.5l3 3m-11 11l3 3m11-11l-3 3m-11-11l-3 3m15 5h-6m-6 0H1"></path>
+        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+      </svg>
+    </button>
+
+    <!-- Character Avatar & Menu -->
+    <div id="character-avatar-container" class="character-avatar-container" style="display: none;">
+      <button id="character-avatar-btn" class="character-avatar-icon" title="Character Menu">
+        <img id="character-avatar-img" src="" alt="Default Character" />
+      </button>
+      <div id="character-menu" class="character-menu" style="display: none;">
+        <div class="character-menu-header" id="character-menu-name">Character Name</div>
+        <button class="character-menu-item" id="menu-skills">
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"></path>
+            <path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"></path>
+          </svg>
+          Skills Manager
+        </button>
+        <button class="character-menu-item" id="menu-blueprints">
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+            <polyline points="14 2 14 8 20 8"></polyline>
+            <line x1="16" y1="13" x2="8" y2="13"></line>
+            <line x1="16" y1="17" x2="8" y2="17"></line>
+            <polyline points="10 9 9 9 8 9"></polyline>
+          </svg>
+          Blueprint Manager
+        </button>
+        <button class="character-menu-item" id="menu-assets">
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="2" y="7" width="20" height="14" rx="2" ry="2"></rect>
+            <path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"></path>
+          </svg>
+          Asset Manager
+        </button>
+      </div>
+    </div>
+
+    <!-- Header -->
+    <header class="app-header">
+      <button id="back-btn" class="back-button" title="Back to Main">
+        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <line x1="19" y1="12" x2="5" y2="12"></line>
+          <polyline points="12 19 5 12 12 5"></polyline>
+        </svg>
+        Back
+      </button>
+      <h1>Reactions Calculator</h1>
+    </header>
+
+    <main class="calculator-main">
+      <!-- Search Section -->
+      <div class="search-section">
+        <button id="update-data-btn" class="update-data-button" title="Update Market Prices and Cost Indices">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polyline points="23 4 23 10 17 10"></polyline>
+            <polyline points="1 20 1 14 7 14"></polyline>
+            <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+          </svg>
+          Update Data
+        </button>
+
+        <div class="search-container">
+          <input
+            type="text"
+            id="reaction-search"
+            class="search-input"
+            placeholder="Search for a reaction formula..."
+            autocomplete="off"
+          />
+          <div id="search-results" class="search-results hidden"></div>
+        </div>
+      </div>
+
+      <!-- Reaction Display -->
+      <div id="reaction-display" class="reaction-display hidden">
+        <div class="reaction-header">
+          <div class="reaction-title-section">
+            <h2 id="reaction-name">Reaction Name</h2>
+            <div class="reaction-info">
+              <span class="info-item">
+                <strong>Produces:</strong> <span id="product-name">Product</span> × <span id="base-quantity">100</span>
+              </span>
+              <span class="info-item">
+                <strong>Cycle Time:</strong> <span id="reaction-time">3600</span>s
+              </span>
+            </div>
+          </div>
+
+          <div class="reaction-controls">
+            <div class="control-group">
+              <label for="runs">Reaction Runs</label>
+              <input type="number" id="runs" class="control-input" value="1" min="1" step="1">
+            </div>
+
+            <div class="control-group">
+              <label for="facility-select">Refinery Facility</label>
+              <select id="facility-select" class="control-input">
+                <option value="">No Facility (No Bonuses)</option>
+              </select>
+            </div>
+
+            <button id="calculate-btn" class="primary-button">Calculate Materials</button>
+          </div>
+        </div>
+
+        <!-- Materials Display (NO TABS - single view with tree) -->
+        <div id="materials-display" class="materials-display hidden">
+          <!-- Facility Bonuses -->
+          <div id="facility-bonuses" class="facility-bonuses" style="display: none;">
+            <h3>Refinery Facility Bonuses</h3>
+            <div id="facility-bonuses-content" class="bonuses-grid"></div>
+          </div>
+
+          <!-- Production Time -->
+          <div id="production-time-section" class="production-time-section" style="display: none;">
+            <h3>Production Time</h3>
+            <div class="time-display">
+              <div class="time-item">
+                <span class="time-label">Base Time:</span>
+                <span class="time-value" id="base-time">--</span>
+              </div>
+              <div class="time-item">
+                <span class="time-label">Total Time (with bonuses):</span>
+                <span class="time-value highlight" id="total-time">--</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Tree Visualization -->
+          <div class="materials-tree">
+            <h3>Reaction Chain (Expanded to Raw Materials)</h3>
+            <div id="reaction-tree" class="tree-container"></div>
+          </div>
+
+          <!-- Raw Materials Summary -->
+          <div class="materials-summary">
+            <h3>Total Raw Materials Needed</h3>
+            <div id="total-materials" class="material-list"></div>
+          </div>
+
+          <!-- Pricing Information -->
+          <div id="pricing-display" class="pricing-display" style="display: none;">
+            <h3>Reaction Costs & Profitability</h3>
+            <div id="pricing-content" class="pricing-grid"></div>
+          </div>
+        </div>
+
+        <!-- Loading Indicator -->
+        <div id="loading-indicator" class="loading-indicator hidden">
+          <div class="spinner"></div>
+          <p>Calculating reaction tree...</p>
+        </div>
+      </div>
+
+      <!-- Empty State -->
+      <div id="empty-state" class="empty-state">
+        <svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="opacity: 0.3;">
+          <circle cx="12" cy="12" r="10"></circle>
+          <line x1="2" y1="12" x2="22" y2="12"></line>
+          <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path>
+        </svg>
+        <p>Search for a reaction formula to get started</p>
+        <small>Try searching for "Rolled Tungsten", "Ferrofluid", or "Fulleride"</small>
+      </div>
+    </main>
+
+    <!-- Status Footer -->
+    <footer id="status-footer" class="status-footer">
+      <div class="footer-content">
+        <div class="footer-item" id="character-count-item">
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
+            <circle cx="12" cy="7" r="4"></circle>
+          </svg>
+          <span id="character-count">0</span> <span class="label">Characters</span>
+        </div>
+
+        <div class="footer-item" id="eve-time-item">
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="10"></circle>
+            <polyline points="12 6 12 12 16 14"></polyline>
+          </svg>
+          <span id="eve-time">--:--:--</span> <span class="label">EVE Time</span>
+        </div>
+
+        <div class="footer-item" id="players-online-item">
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+            <circle cx="9" cy="7" r="4"></circle>
+            <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
+            <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
+          </svg>
+          <span id="players-online">--</span> <span class="label">Players</span>
+        </div>
+
+        <div class="footer-item" id="server-status-item" title="Server Status: Loading...">
+          <svg id="server-status-icon" class="status-icon status-loading" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="10"></circle>
+            <line x1="12" y1="8" x2="12" y2="12"></line>
+            <line x1="12" y1="16" x2="12.01" y2="16"></line>
+          </svg>
+          <span id="server-status-text" class="label">Loading</span>
+        </div>
+
+        <div class="footer-item footer-clickable" id="esi-status-item" title="ESI Status: Loading...">
+          <svg id="esi-status-icon" class="status-icon status-loading" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="10"></circle>
+            <path d="M12 6v6l4 2"></path>
+          </svg>
+          <span id="esi-status-text" class="label">ESI Status</span>
+        </div>
+      </div>
+    </footer>
+  </div>
+
+  <script src="../src/renderer/footer-utils.js"></script>
+  <script src="../src/renderer/reactions-calculator-renderer.js"></script>
+</body>
+</html>

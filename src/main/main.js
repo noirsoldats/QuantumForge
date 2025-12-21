@@ -1286,6 +1286,64 @@ function setupIPCHandlers() {
     return await findBestDecryptor(inventionData, materialPrices, productPrice, skills, facilityToUse, strategy, volume);
   });
 
+  // ============================================================================
+  // Reactions Calculator IPC Handlers
+  // ============================================================================
+
+  const {
+    searchReactions,
+    calculateReactionMaterials,
+    getReactionProduct,
+    getTypeName: getReactionTypeName,
+    getReactionTime,
+    clearReactionCache
+  } = require('./reaction-calculator');
+
+  ipcMain.handle('reactions:searchReactions', (event, searchTerm, limit) => {
+    return searchReactions(searchTerm, limit);
+  });
+
+  ipcMain.handle('reactions:calculateMaterials', async (event, reactionTypeId, runs, characterId, facilityId) => {
+    // Get facility if facilityId is provided
+    let facility = null;
+    if (facilityId) {
+      const { getManufacturingFacility } = require('./settings-manager');
+      facility = getManufacturingFacility(facilityId);
+
+      // Get system security status from SDE if we have a systemId
+      if (facility && facility.systemId) {
+        const { getSystemSecurityStatus } = require('./sde-database');
+        facility.securityStatus = await getSystemSecurityStatus(facility.systemId);
+      }
+
+      // Get structure bonuses if this is a player structure (Refinery)
+      if (facility && facility.structureTypeId) {
+        const { getStructureBonuses } = require('./sde-database');
+        const bonuses = await getStructureBonuses(facility.structureTypeId);
+        facility.structureBonuses = bonuses;
+      }
+    }
+
+    return await calculateReactionMaterials(reactionTypeId, runs, characterId, facility);
+  });
+
+  ipcMain.handle('reactions:getReactionProduct', (event, reactionTypeId) => {
+    return getReactionProduct(reactionTypeId);
+  });
+
+  ipcMain.handle('reactions:getTypeName', (event, typeId) => {
+    return getReactionTypeName(typeId);
+  });
+
+  ipcMain.handle('reactions:getReactionTime', (event, reactionTypeId) => {
+    return getReactionTime(reactionTypeId);
+  });
+
+  ipcMain.handle('reactions:clearCaches', () => {
+    clearReactionCache();
+    return { success: true };
+  });
+
   // Handle IPC for market data operations
   ipcMain.handle('market:getSettings', () => {
     return getMarketSettings();
@@ -1475,8 +1533,8 @@ function setupIPCHandlers() {
     return await getStructureTypes();
   });
 
-  ipcMain.handle('facilities:getStructureRigs', async () => {
-    return await getStructureRigs();
+  ipcMain.handle('facilities:getStructureRigs', async (event, structureType = null) => {
+    return await getStructureRigs(structureType);
   });
 
   ipcMain.handle('facilities:getStructureBonuses', async (event, typeId) => {

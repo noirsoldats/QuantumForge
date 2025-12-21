@@ -131,19 +131,39 @@ function populateStructureTypesDropdown() {
 
   console.log('Populating structure types dropdown with', structureTypes.length, 'structures');
 
-  // All structures are Engineering Complexes now
-  // Create a single optgroup
-  const optgroup = document.createElement('optgroup');
-  optgroup.label = 'Engineering Complexes';
+  // Group structures by type
+  const engineeringStructures = structureTypes.filter(s => s.structureType === 'engineering');
+  const refineryStructures = structureTypes.filter(s => s.structureType === 'refinery');
 
-  structureTypes.forEach(structure => {
-    const option = document.createElement('option');
-    option.value = structure.typeId;
-    option.textContent = `${structure.typeName} (${structure.size})`;
-    optgroup.appendChild(option);
-  });
+  // Add Engineering Complex group
+  if (engineeringStructures.length > 0) {
+    const engineeringGroup = document.createElement('optgroup');
+    engineeringGroup.label = 'Engineering Complexes (Manufacturing)';
 
-  structureTypeSelect.appendChild(optgroup);
+    engineeringStructures.forEach(structure => {
+      const option = document.createElement('option');
+      option.value = structure.typeId;
+      option.textContent = `${structure.name} (${structure.size}-Set)`;
+      engineeringGroup.appendChild(option);
+    });
+
+    structureTypeSelect.appendChild(engineeringGroup);
+  }
+
+  // Add Refinery group
+  if (refineryStructures.length > 0) {
+    const refineryGroup = document.createElement('optgroup');
+    refineryGroup.label = 'Refineries (Reactions/Reprocessing)';
+
+    refineryStructures.forEach(structure => {
+      const option = document.createElement('option');
+      option.value = structure.typeId;
+      option.textContent = `${structure.name} (${structure.size}-Set)`;
+      refineryGroup.appendChild(option);
+    });
+
+    structureTypeSelect.appendChild(refineryGroup);
+  }
 }
 
 // Populate rig dropdowns
@@ -167,7 +187,9 @@ function populateRigsDropdowns(filterBySize = null) {
       rigsToShow.forEach(rig => {
         const option = document.createElement('option');
         option.value = rig.typeId;
-        option.textContent = rig.typeName;
+        // Show category badge for clarity
+        const categoryBadge = rig.rigCategory === 'refinery' ? '[R]' : '[E]';
+        option.textContent = `${categoryBadge} ${rig.name}`;
         rigSelect.appendChild(option);
       });
 
@@ -352,7 +374,14 @@ async function handleStructureTypeChange(e) {
     const bonuses = await window.electronAPI.facilities.getStructureBonuses(structureTypeId);
     displayStructureBonuses(bonuses);
 
-    // Filter rig dropdowns based on structure rig size
+    // Get structure type from bonuses
+    const structureType = bonuses.structureType; // 'engineering' or 'refinery'
+
+    // Reload rigs filtered by structure type
+    console.log('Fetching rigs for structure type:', structureType);
+    structureRigs = await window.electronAPI.facilities.getStructureRigs(structureType);
+
+    // Then filter by size
     if (bonuses.rigSize) {
       console.log('Filtering rigs for structure rig size:', bonuses.rigSize);
       populateRigsDropdowns(bonuses.rigSize);
@@ -376,7 +405,16 @@ function displayStructureBonuses(bonuses) {
   const teBonus = bonuses.timeEfficiency ? -bonuses.timeEfficiency : 0;
   const costBonus = bonuses.costReduction ? -bonuses.costReduction : 0;
 
+  // Determine structure type label
+  const structureTypeLabel = bonuses.structureType === 'refinery'
+    ? 'Refinery (Reactions/Reprocessing)'
+    : 'Engineering Complex (Manufacturing)';
+
   display.innerHTML = `
+    <div class="bonus-item" style="grid-column: 1 / -1; margin-bottom: 0.5rem;">
+      <div class="bonus-label" style="font-weight: 600;">${bonuses.structureName}</div>
+      <div class="bonus-value" style="font-size: 0.85rem; color: #a0a0b0;">${structureTypeLabel}</div>
+    </div>
     <div class="bonus-item">
       <div class="bonus-label">Material Efficiency</div>
       <div class="bonus-value">${meBonus}%</div>
@@ -424,7 +462,7 @@ function displayRigEffects(rigIds, effects) {
 
   const rigData = rigIds.map(rigId => {
     const rig = structureRigs.find(r => r.typeId === parseInt(rigId));
-    return rig || { typeName: 'Unknown Rig' };
+    return rig || { name: 'Unknown Rig' };
   });
 
   display.innerHTML = rigData.map((rig, index) => {
@@ -434,18 +472,40 @@ function displayRigEffects(rigIds, effects) {
     const formattedEffects = rigEffects
       .filter(effect => {
         // Filter to only relevant manufacturing bonuses
-        const name = effect.displayName.toLowerCase();
+        if (!effect.displayName && !effect.attributeName) return false;
+        const name = (effect.displayName || effect.attributeName || '').toLowerCase();
+
+        // Exclude rig size and some meta attributes
+        if (name.includes('rig size') ||
+            name.includes('tech level') ||
+            name.includes('calibration') ||
+            name.includes('can be fitted')) {
+          return false;
+        }
+
         return name.includes('bonus') ||
                name.includes('reduction') ||
-               name.includes('multiplier');
+               name.includes('multiplier') ||
+               name.includes('material') ||
+               name.includes('time') ||
+               name.includes('cost');
       })
       .map(effect => {
-        let label = effect.displayName;
+        let label = effect.displayName || effect.attributeName || 'Unknown';
         let value = effect.value;
 
-        // Format the value as a percentage if it makes sense
-        if (label.includes('Reduction') || label.includes('Bonus')) {
-          // Negative values are reductions, positive are bonuses
+        // Format the value based on type
+        const lowerLabel = label.toLowerCase();
+
+        if (lowerLabel.includes('multiplier')) {
+          // Multipliers are shown as multiplier values (e.g., 1.1x)
+          value = `${value}x`;
+        } else if (lowerLabel.includes('reduction') ||
+                   lowerLabel.includes('bonus') ||
+                   lowerLabel.includes('time') ||
+                   lowerLabel.includes('material')) {
+          // Bonuses/reductions are shown as percentages
+          // Negative values mean reduction (good), positive mean increase (usually bad)
           const sign = value < 0 ? '' : '+';
           value = `${sign}${value}%`;
         }
@@ -462,7 +522,7 @@ function displayRigEffects(rigIds, effects) {
 
     return `
       <div class="rig-effect-item">
-        <div class="rig-effect-name">${rig.typeName}</div>
+        <div class="rig-effect-name">${rig.name || 'Unknown Rig'}</div>
         <div class="rig-effect-bonuses">
           ${effectsHTML}
         </div>

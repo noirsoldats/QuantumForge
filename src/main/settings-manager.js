@@ -1068,6 +1068,18 @@ function addManufacturingFacility(facility) {
     throw new Error('Facility usage is required.');
   }
 
+  // Validate usage type
+  const validUsageTypes = [
+    'default', 'components', 'subsystems', 't3-ships',
+    'capitals', 'super-capitals', 't2-invention', 't3-invention',
+    'copy', 'boosters', 'reactions',
+    'reactions-basic', 'reactions-advanced', 'reactions-composite',
+    'reprocessing', 'reprocessing-moon'
+  ];
+  if (!validUsageTypes.includes(facility.usage)) {
+    throw new Error(`Invalid facility usage: ${facility.usage}`);
+  }
+
   if (!facility.facilityType) {
     throw new Error('Facility type is required.');
   }
