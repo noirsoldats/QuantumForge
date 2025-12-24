@@ -200,8 +200,29 @@ async function loadPlanDetails() {
   document.getElementById('plan-created').textContent = `Created: ${created.toLocaleDateString()} ${created.toLocaleTimeString()}`;
   document.getElementById('plan-description').value = plan.description || '';
 
+  // Update reactions tab visibility
+  await updateReactionsTabVisibility();
+
   // Load current tab content
   await loadTabContent(activeTab);
+}
+
+/**
+ * Update Reactions tab visibility based on settings and reactions presence
+ */
+async function updateReactionsTabVisibility() {
+  if (!selectedPlanId) return;
+
+  try {
+    const planSettings = await window.electronAPI.plans.getIndustrySettings(selectedPlanId);
+    const reactions = await window.electronAPI.plans.getReactions(selectedPlanId);
+
+    const reactionsTab = document.getElementById('reactions-tab-button');
+    const showTab = planSettings.reactionsAsIntermediates;
+    reactionsTab.style.display = showTab ? 'block' : 'none';
+  } catch (error) {
+    console.error('Error updating reactions tab visibility:', error);
+  }
 }
 
 // Show empty state
@@ -246,6 +267,9 @@ async function loadTabContent(tabName) {
       break;
     case 'products':
       await loadProducts();
+      break;
+    case 'reactions':
+      await loadReactions();
       break;
     case 'jobs':
       await loadJobs();
@@ -331,7 +355,7 @@ async function loadBlueprints() {
   html += '<th>Blueprint</th><th>Runs</th><th>Lines</th><th>ME</th><th>TE</th>';
   html += '<th>Facility</th><th>';
   html += 'Build Plan';
-  html += '<span class="info-icon" title="Raw Materials: Build all components from blueprints&#10;Components: Buy all components from market&#10;Build/Buy: Optimize between building and buying (coming soon)">ⓘ</span>';
+  html += '<span class="info-icon" title="Raw Materials: Expand all intermediate blueprints to raw materials&#10;Buy Components: Purchase component-level materials from market&#10;Buy Intermediate: Purchase the finished intermediate product directly from market&#10;Build/Buy: AI-optimized building vs buying (coming in a future update)">ⓘ</span>';
   html += '</th><th>Actions</th>';
   html += '</tr></thead><tbody>';
 
@@ -368,11 +392,12 @@ async function loadBlueprints() {
           </select>
         </td>
         <td class="editable-cell" data-field="useIntermediates">
-          <span class="cell-value">${blueprint.useIntermediates === 'raw_materials' ? 'Raw Materials' : blueprint.useIntermediates === 'components' ? 'Components' : 'Build/Buy'}</span>
+          <span class="cell-value">${blueprint.useIntermediates === 'raw_materials' ? 'Raw Materials' : blueprint.useIntermediates === 'components' ? 'Buy Components' : blueprint.useIntermediates === 'buy' ? 'Buy Intermediate' : blueprint.useIntermediates === 'build_buy' ? 'Build/Buy' : 'Raw Materials'}</span>
           <select class="cell-input" style="display: none;">
-            <option value="raw_materials" ${blueprint.useIntermediates === 'raw_materials' ? 'selected' : ''}>Raw Materials</option>
-            <option value="components" ${blueprint.useIntermediates === 'components' ? 'selected' : ''}>Components</option>
-            <option value="build_buy" ${blueprint.useIntermediates === 'build_buy' ? 'selected' : ''} disabled>Build/Buy (Coming Soon)</option>
+            <option value="raw_materials" ${(!blueprint.useIntermediates || blueprint.useIntermediates === 'raw_materials') ? 'selected' : ''}>Raw Materials</option>
+            <option value="components" ${blueprint.useIntermediates === 'components' ? 'selected' : ''}>Buy Components</option>
+            <option value="buy" ${blueprint.useIntermediates === 'buy' ? 'selected' : ''}>Buy Intermediate</option>
+            <option value="build_buy" ${blueprint.useIntermediates === 'build_buy' ? 'selected' : ''} disabled>Build/Buy (Coming in a future update)</option>
           </select>
         </td>
         <td class="blueprint-actions">
@@ -439,7 +464,19 @@ async function loadBlueprints() {
                 ${facilities.map(f => `<option value="${f.id}" ${f.id === intFacilityId ? 'selected' : ''}>${escapeHtml(f.name)}</option>`).join('')}
               </select>
             </td>
-            <td><span style="color: #72767d;">Raw Materials</span></td>
+            <td class="editable-cell" data-field="useIntermediates">
+              <span class="cell-value">
+                ${intermediate.useIntermediates === 'components' ? 'Buy Components' :
+                  intermediate.useIntermediates === 'buy' ? 'Buy Intermediate' :
+                  intermediate.useIntermediates === 'build_buy' ? 'Build/Buy' : 'Raw Materials'}
+              </span>
+              <select class="cell-input" style="display: none;">
+                <option value="raw_materials" ${(!intermediate.useIntermediates || intermediate.useIntermediates === 'raw_materials') ? 'selected' : ''}>Raw Materials</option>
+                <option value="components" ${intermediate.useIntermediates === 'components' ? 'selected' : ''}>Buy Components</option>
+                <option value="buy" ${intermediate.useIntermediates === 'buy' ? 'selected' : ''}>Buy Intermediate</option>
+                <option value="build_buy" ${intermediate.useIntermediates === 'build_buy' ? 'selected' : ''} disabled>Build/Buy (Coming in a future update)</option>
+              </select>
+            </td>
             <td class="blueprint-actions">
               <button class="secondary-button small toggle-built-btn" data-action="toggle-built" data-is-built="${intermediate.isBuilt ? '1' : '0'}">
                 ${intermediate.builtRuns > 0 ? 'Edit Built Qty' : 'Mark Built'}
@@ -513,6 +550,12 @@ function categorizeMaterial(categoryInfo) {
   if ((categoryID === 4 && ([754, 866].includes(groupID)))) {
     return 'Salvage Materials';
   }
+
+  // Gas Cloud Materials: groupID = 711 (Harvestable Cloud)
+  if (groupID === 711) {
+    return 'Gas Cloud Materials';
+  }
+
   // Everything else
   return 'Other';
 }
@@ -528,6 +571,7 @@ function groupMaterialsByCategory(materials, categoryInfoMap) {
     'Minerals': [],
     'Reaction Materials': [],
     'Planetary Materials': [],
+    'Gas Cloud Materials': [],
     'Salvage Materials': [],
     'Other': []
   };
@@ -581,7 +625,7 @@ async function loadMaterials() {
   const groupedMaterials = groupMaterialsByCategory(materials, categoryInfo);
 
   // Category display order
-  const categoryOrder = ['Minerals', 'Reaction Materials', 'Planetary Materials', 'Other'];
+  const categoryOrder = ['Minerals', 'Reaction Materials', 'Planetary Materials', 'Gas Cloud Materials', 'Salvage Materials', 'Other'];
 
   // Build HTML with collapsible category sections
   let html = '';
@@ -1106,6 +1150,425 @@ async function loadProducts() {
 
   container.innerHTML = html;
 }
+
+/**
+ * Load and display reactions for the current plan
+ */
+async function loadReactions() {
+  const container = document.getElementById('reactions-container');
+
+  try {
+    // Get reactions from the plan
+    const reactions = await window.electronAPI.plans.getReactions(selectedPlanId);
+
+    if (reactions.length === 0) {
+      container.innerHTML = `
+        <div class="empty-state">
+          <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+            <circle cx="12" cy="12" r="10"></circle>
+            <path d="M12 6v6l4 2"></path>
+          </svg>
+          <h3 style="margin-top: 16px; color: var(--text-primary);">No Reactions Required</h3>
+          <p style="margin-top: 8px;">This manufacturing plan does not require any reaction materials.</p>
+          <div style="max-width: 500px; margin-top: 16px; padding: 16px; background: var(--bg-secondary); border-radius: 8px; border-left: 3px solid #7289da;">
+            <p style="margin: 0 0 12px 0; font-weight: 600; color: var(--text-primary);">What are reactions?</p>
+            <p style="margin: 0 0 8px 0; font-size: 14px; color: var(--text-secondary);">
+              Reactions are industrial processes that convert moon goo and other materials into intermediate components like:
+            </p>
+            <ul style="margin: 8px 0; padding-left: 20px; font-size: 14px; color: var(--text-secondary);">
+              <li>Fernite Carbide</li>
+              <li>Hypersynaptic Fibers</li>
+              <li>Nanotransistors</li>
+              <li>Fullerides and other advanced materials</li>
+            </ul>
+            <p style="margin: 8px 0 0 0; font-size: 14px; color: var(--text-secondary);">
+              Your blueprint uses manufactured components instead, so no reactions are needed.
+            </p>
+          </div>
+        </div>
+      `;
+      return;
+    }
+
+    let html = '';
+
+    // Reactions are already aggregated in the backend (one record per reaction type)
+    // No frontend aggregation needed
+    for (const reaction of reactions) {
+      try {
+        // Get reaction calculation with runs
+        const calculation = await window.electronAPI.reactions.calculateMaterials(
+          reaction.reactionTypeId,
+          reaction.runs,
+          null, // characterId
+          reaction.facilityId
+        );
+
+        html += await renderReactionTree(reaction, calculation);
+      } catch (error) {
+        console.error('Error calculating reaction:', error);
+        html += `
+          <div class="reaction-item error">
+            <p>Error calculating reaction ${reaction.reactionTypeId}: ${error.message}</p>
+          </div>
+        `;
+      }
+    }
+
+    container.innerHTML = html || '<div class="loading">No reaction data available</div>';
+
+    // Show save facilities button if there are reactions
+    const saveFacilitiesBtn = document.getElementById('save-reaction-facilities-btn');
+    if (saveFacilitiesBtn) {
+      saveFacilitiesBtn.style.display = reactions.length > 0 ? 'inline-flex' : 'none';
+    }
+
+    // Attach event listeners for reaction actions
+    attachReactionEventListeners();
+
+  } catch (error) {
+    console.error('Error loading reactions:', error);
+    container.innerHTML = `
+      <div class="error-state">
+        <p>Error loading reactions: ${error.message}</p>
+      </div>
+    `;
+    // Hide save facilities button on error
+    const saveFacilitiesBtn = document.getElementById('save-reaction-facilities-btn');
+    if (saveFacilitiesBtn) {
+      saveFacilitiesBtn.style.display = 'none';
+    }
+  }
+}
+
+/**
+ * Render a reaction with its tree visualization
+ * Reactions are already aggregated in backend, so no aggregation needed here
+ */
+async function renderReactionTree(reaction, calculation) {
+  const product = calculation.product;
+  const productName = product ? product.typeName : `Type ${reaction.reactionTypeId}`;
+
+  // Build status badge
+  let builtBadge = '';
+  if (reaction.builtRuns > 0) {
+    const percentage = Math.round((reaction.builtRuns / reaction.runs) * 100);
+    const statusClass = reaction.builtRuns >= reaction.runs ? 'fully-built' : 'partially-built';
+    builtBadge = ` <span class="status-badge ${statusClass}">${formatNumber(reaction.builtRuns)}/${formatNumber(reaction.runs)} Built (${percentage}%)</span>`;
+  }
+
+  // Build facility dropdown
+  let facilityOptions = '<option value="">No facility</option>';
+  facilities.forEach(facility => {
+    // Use string comparison to handle type mismatches
+    const selected = String(reaction.facilityId) === String(facility.id) ? 'selected' : '';
+    facilityOptions += `<option value="${facility.id}" ${selected}>${escapeHtml(facility.name)}</option>`;
+  });
+
+  // Build header with reaction info
+  let html = `
+    <div class="reaction-item" data-reaction-id="${reaction.planBlueprintId}">
+      <div class="reaction-header">
+        <div class="reaction-info">
+          <h4>${escapeHtml(productName)}${builtBadge}</h4>
+          <div class="reaction-meta">
+            <span>Runs: ${formatNumber(reaction.runs)}</span>
+            <label style="margin-left: 16px;">
+              <span style="margin-right: 8px;">Facility:</span>
+              <select class="reaction-facility-select" data-reaction-id="${reaction.planBlueprintId}" style="padding: 4px 8px; background: var(--bg-secondary); color: var(--text-primary); border: 1px solid var(--border-color); border-radius: 4px;">
+                ${facilityOptions}
+              </select>
+            </label>
+          </div>
+        </div>
+        <div class="reaction-actions">
+          <button class="secondary-button small" data-action="mark-built" data-reaction-id="${reaction.planBlueprintId}" data-runs="${reaction.runs}">
+            ${reaction.builtRuns > 0 ? 'Edit Built Qty' : 'Mark Built'}
+          </button>
+        </div>
+      </div>
+      <div class="reaction-tree">
+  `;
+
+  // Render the tree if available
+  if (calculation.tree && calculation.tree.length > 0) {
+    html += renderTreeNodes(calculation.tree, product);
+  } else {
+    html += '<p class="empty-hint">No tree data available</p>';
+  }
+
+  html += `
+      </div>
+    </div>
+  `;
+
+  return html;
+}
+
+/**
+ * Render tree nodes recursively (similar to reactions-calculator)
+ */
+function renderTreeNodes(nodes, finalProduct) {
+  let html = '';
+
+  for (const node of nodes) {
+    const depth = node.depth || 0;
+    const depthClass = `depth-${Math.min(depth, 8)}`;
+
+    // Determine node type
+    let nodeClass = 'tree-node';
+    let badge = '';
+
+    if (node.typeID === finalProduct?.typeID && depth === 0) {
+      nodeClass += ' tree-node-product';
+      badge = '<span class="badge badge-product">PRODUCT</span>';
+    } else if (node.isIntermediate) {
+      nodeClass += ' tree-node-intermediate';
+      badge = '<span class="badge badge-intermediate">INTERMEDIATE</span>';
+    } else {
+      nodeClass += ' tree-node-raw';
+      badge = '<span class="badge badge-raw">RAW</span>';
+    }
+
+    html += `
+      <div class="${nodeClass} ${depthClass}">
+        <div class="tree-node-content">
+          <span class="tree-node-icon">
+            ${node.isIntermediate ? '⊕' : (depth === 0 ? '●' : '■')}
+          </span>
+          <span class="tree-node-name">${escapeHtml(node.typeName || `Type ${node.typeID}`)}</span>
+          <span class="tree-node-quantity">×${formatNumber(node.quantity)}</span>
+          ${badge}
+        </div>
+    `;
+
+    // Render children recursively if present
+    if (node.children && node.children.length > 0) {
+      html += renderTreeNodes(node.children, finalProduct);
+    }
+
+    html += '</div>';
+  }
+
+  return html;
+}
+
+/**
+ * Attach event listeners for reaction buttons
+ */
+function attachReactionEventListeners() {
+  // Refresh prices button
+  const refreshBtn = document.getElementById('refresh-reaction-prices-btn');
+  if (refreshBtn) {
+    refreshBtn.onclick = async () => {
+      await window.electronAPI.plans.recalculateMaterials(selectedPlanId, true);
+      await loadReactions();
+      showToast('Reaction prices refreshed', 'success');
+    };
+  }
+
+  // Save facilities button
+  const saveFacilitiesBtn = document.getElementById('save-reaction-facilities-btn');
+  if (saveFacilitiesBtn) {
+    saveFacilitiesBtn.onclick = async () => {
+      const container = document.getElementById('reactions-container');
+      const selects = container.querySelectorAll('.reaction-facility-select');
+
+      try {
+        showLoading('Updating facilities and recalculating reactions...');
+
+        // Get all facility updates
+        const updates = [];
+        for (const select of selects) {
+          const reactionId = select.dataset.reactionId;
+          const facilityId = select.value || null;
+
+          // Get facility snapshot if facility selected
+          let facilitySnapshot = null;
+          if (facilityId) {
+            // Use string comparison to handle type mismatches
+            const facility = facilities.find(f => String(f.id) === String(facilityId));
+            if (facility) {
+              facilitySnapshot = facility;
+              console.log('[Reactions] Saving facility snapshot for reaction:', {
+                reactionId,
+                id: facility.id,
+                name: facility.name,
+                hasRigs: !!facility.rigs,
+                rigCount: facility.rigs?.length || 0,
+                structureTypeId: facility.structureTypeId,
+                snapshotSize: JSON.stringify(facility).length
+              });
+            } else {
+              console.warn('[Reactions] Facility not found for ID:', facilityId, 'Available:', facilities.map(f => f.id));
+            }
+          }
+
+          updates.push({
+            reactionId,
+            facilityId,
+            facilitySnapshot
+          });
+        }
+
+        // Update all reactions (without triggering recalculation for each)
+        for (const update of updates) {
+          await window.electronAPI.plans.updateReaction(update.reactionId, {
+            facilityId: update.facilityId,
+            facilitySnapshot: update.facilitySnapshot,
+            skipRecalculation: true // Don't recalculate for each update
+          });
+        }
+
+        // Clear reaction cache to ensure new facility bonuses are applied
+        await window.electronAPI.reactions.clearCaches();
+
+        // Recalculate once after all updates
+        await window.electronAPI.plans.recalculateMaterials(selectedPlanId, false);
+
+        await loadReactions();
+        showToast(`Updated ${updates.length} reaction(s) successfully`, 'success');
+      } catch (error) {
+        console.error('Error saving reaction facilities:', error);
+        showToast('Failed to save facilities: ' + error.message, 'error');
+      } finally {
+        hideLoading();
+      }
+    };
+  }
+
+  // Attach event listeners to reaction action buttons
+  const container = document.getElementById('reactions-container');
+  if (container) {
+    container.querySelectorAll('[data-action="mark-built"]').forEach(btn => {
+      const reactionId = btn.dataset.reactionId;
+      const runs = parseInt(btn.dataset.runs);
+      btn.addEventListener('click', () => showMarkReactionBuiltModal(reactionId, runs));
+    });
+  }
+}
+
+/**
+ * Show modal to mark a reaction as built
+ */
+window.showMarkReactionBuiltModal = async function(planBlueprintId, totalRuns) {
+  try {
+    // Get reaction data
+    const reactions = await window.electronAPI.plans.getReactions(selectedPlanId);
+    const reaction = reactions.find(r => r.planBlueprintId === planBlueprintId);
+
+    if (!reaction) {
+      showToast('Reaction not found', 'error');
+      return;
+    }
+
+    // Get product name from SDE
+    let productName = `Type ${reaction.reactionTypeId}`;
+    try {
+      const typeInfo = await window.electronAPI.sde.getTypeInfo(reaction.reactionTypeId);
+      if (typeInfo) {
+        productName = typeInfo.typeName;
+      }
+    } catch (error) {
+      console.error('Error fetching product name:', error);
+    }
+
+    const builtRuns = reaction.builtRuns || 0;
+
+    // Create modal dynamically
+    const modal = document.createElement('div');
+    modal.className = 'modal-overlay';
+    modal.innerHTML = `
+      <div class="modal-content mark-built-modal">
+        <div class="modal-header">
+          <h3>Mark Reaction as Built</h3>
+          <button class="close-modal" aria-label="Close">&times;</button>
+        </div>
+        <div class="modal-body">
+          <p><strong>${escapeHtml(productName)}</strong></p>
+          <p>Total Runs Needed: <strong>${totalRuns}</strong></p>
+
+          <label for="reaction-built-runs-input">Runs Already Built:</label>
+          <input
+            type="number"
+            id="reaction-built-runs-input"
+            min="0"
+            max="${totalRuns}"
+            value="${builtRuns}"
+            step="1"
+          />
+
+          <div class="built-progress">
+            <div class="progress-bar">
+              <div class="progress-fill" id="reaction-built-progress-fill" style="width: ${Math.round((builtRuns / totalRuns) * 100)}%"></div>
+            </div>
+            <span id="reaction-built-percentage">${Math.round((builtRuns / totalRuns) * 100)}%</span>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="secondary-button cancel-btn">Cancel</button>
+          <button class="primary-button save-btn">Save</button>
+        </div>
+      </div>
+    `;
+
+    document.body.appendChild(modal);
+
+    // Update progress bar when input changes
+    const input = modal.querySelector('#reaction-built-runs-input');
+    const progressFill = modal.querySelector('#reaction-built-progress-fill');
+    const progressText = modal.querySelector('#reaction-built-percentage');
+
+    input.addEventListener('input', () => {
+      const value = parseInt(input.value) || 0;
+      const percentage = Math.round((value / totalRuns) * 100);
+      progressFill.style.width = `${percentage}%`;
+      progressText.textContent = `${percentage}%`;
+    });
+
+    // Close button
+    modal.querySelector('.close-modal').addEventListener('click', () => {
+      modal.remove();
+    });
+
+    // Cancel button
+    modal.querySelector('.cancel-btn').addEventListener('click', () => {
+      modal.remove();
+    });
+
+    // Click outside to close
+    modal.addEventListener('click', (e) => {
+      if (e.target === modal) {
+        modal.remove();
+      }
+    });
+
+    // Save button
+    modal.querySelector('.save-btn').addEventListener('click', async () => {
+      const builtRunsValue = parseInt(input.value);
+
+      if (isNaN(builtRunsValue) || builtRunsValue < 0 || builtRunsValue > totalRuns) {
+        showToast(`Please enter a valid number of runs between 0 and ${totalRuns}`, 'error');
+        return;
+      }
+
+      try {
+        await window.electronAPI.plans.markReactionBuilt(planBlueprintId, builtRunsValue);
+        modal.remove();
+        await loadReactions();
+        showToast('Reaction marked as built', 'success');
+      } catch (error) {
+        console.error('Error marking reaction as built:', error);
+        showToast('Failed to mark reaction as built: ' + error.message, 'error');
+      }
+    });
+
+    modal.style.display = 'flex';
+  } catch (error) {
+    console.error('Error showing mark reaction built modal:', error);
+    showToast('Failed to show modal: ' + error.message, 'error');
+  }
+};
 
 // Show create plan modal
 function showCreatePlanModal() {
@@ -1900,10 +2363,18 @@ window.saveIntermediateBlueprintEdit = async function(intermediateBlueprintId) {
         } else {
           updates.facilitySnapshot = null;
         }
-      } else {
-        updates[field] = parseInt(input.value);
+      } else if (field === 'useIntermediates') {
+        // String field - don't parse as integer
+        updates.useIntermediates = input.value;
+        console.log(`[DEBUG] Setting useIntermediates to: ${input.value}`);
+      } else if (field === 'meLevel') {
+        updates.meLevel = parseInt(input.value);
+      } else if (field === 'teLevel') {
+        updates.teLevel = parseInt(input.value);
       }
     });
+
+    console.log('[DEBUG] Updates object:', updates);
 
     showLoading('Updating intermediate blueprint...');
     await window.electronAPI.plans.updateIntermediateBlueprint(intermediateBlueprintId, updates);

@@ -160,6 +160,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getAllIntermediates: (planId) => ipcRenderer.invoke('plans:getAllIntermediates', planId),
     updateIntermediateBlueprint: (intermediateBlueprintId, updates) => ipcRenderer.invoke('plans:updateIntermediateBlueprint', intermediateBlueprintId, updates),
     markIntermediateBuilt: (intermediateBlueprintId, builtRuns) => ipcRenderer.invoke('plans:markIntermediateBuilt', intermediateBlueprintId, builtRuns),
+    // Reaction functions
+    getReactions: (planId) => ipcRenderer.invoke('plans:getReactions', planId),
+    markReactionBuilt: (planBlueprintId, builtRuns) => ipcRenderer.invoke('plans:markReactionBuilt', planBlueprintId, builtRuns),
     getMaterials: (planId, includeAssets) => ipcRenderer.invoke('plans:getMaterials', planId, includeAssets),
     getProducts: (planId) => ipcRenderer.invoke('plans:getProducts', planId),
     getSummary: (planId) => ipcRenderer.invoke('plans:getSummary', planId),

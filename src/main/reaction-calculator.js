@@ -810,7 +810,14 @@ async function calculateReactionMaterials(reactionTypeId, runs = 1, characterId 
  * @returns {string} Cache key
  */
 function getReactionCacheKey(reactionTypeId, runs, facility, characterId) {
-  const facilityKey = facility ? `${facility.id}_${facility.structureTypeId}` : 'none';
+  // Include rigs in cache key to differentiate facility configurations
+  let facilityKey = 'none';
+  if (facility) {
+    const rigsKey = facility.rigs && facility.rigs.length > 0
+      ? facility.rigs.sort().join(',')
+      : 'norigs';
+    facilityKey = `${facility.id}_${facility.structureTypeId}_${rigsKey}`;
+  }
   const charKey = characterId || 'none';
   return `${reactionTypeId}_${runs}_${facilityKey}_${charKey}`;
 }

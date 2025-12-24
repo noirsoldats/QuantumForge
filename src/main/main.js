@@ -1052,6 +1052,17 @@ function setupIPCHandlers() {
     return await markIntermediateBuilt(intermediateBlueprintId, builtRuns);
   });
 
+  // Reaction management in plans
+  ipcMain.handle('plans:getReactions', (event, planId) => {
+    const { getReactions } = require('./manufacturing-plans');
+    return getReactions(planId);
+  });
+
+  ipcMain.handle('plans:markReactionBuilt', async (event, planBlueprintId, builtRuns) => {
+    const { markReactionBuilt } = require('./manufacturing-plans');
+    return await markReactionBuilt(planBlueprintId, builtRuns);
+  });
+
   ipcMain.handle('plans:getMaterials', async (event, planId, includeAssets) => {
     return await getPlanMaterials(planId, includeAssets);
   });

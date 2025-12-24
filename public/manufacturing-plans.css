@@ -1881,3 +1881,165 @@ tr[data-editing="true"] {
   font-size: 11px;
   font-weight: 600;
 }
+
+/* ============================================================================
+   REACTIONS TAB STYLING
+   ============================================================================ */
+
+/* Reaction Items */
+.reaction-item {
+  margin-bottom: 24px;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--bg-primary);
+}
+
+.reaction-item.error {
+  border-color: #f04747;
+  background: rgba(240, 71, 71, 0.1);
+  padding: 16px;
+}
+
+.reaction-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border-color);
+}
+
+.reaction-info h4 {
+  margin: 0 0 8px 0;
+  color: var(--text-primary);
+  font-size: 15px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.reaction-meta {
+  display: flex;
+  gap: 16px;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.reaction-meta span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.reaction-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.reaction-tree {
+  padding: 16px;
+}
+
+/* Tree Visualization */
+.tree-node {
+  margin: 4px 0;
+  padding: 8px 12px;
+  border-radius: 4px;
+  transition: background-color 0.2s;
+}
+
+.tree-node:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.tree-node-content {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.tree-node-icon {
+  font-size: 16px;
+  min-width: 20px;
+  text-align: center;
+}
+
+.tree-node-name {
+  flex: 1;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.tree-node-quantity {
+  color: var(--text-secondary);
+  font-family: 'Courier New', monospace;
+  font-size: 13px;
+}
+
+/* Node Types */
+.tree-node-product {
+  background: linear-gradient(90deg, rgba(88, 101, 242, 0.15), transparent);
+  border-left: 3px solid #5865f2;
+}
+
+.tree-node-intermediate {
+  border-left: 3px solid #43b581;
+}
+
+.tree-node-raw {
+  border-left: 3px solid #7289da;
+}
+
+/* Depth Indentation */
+.depth-0 { padding-left: 12px; }
+.depth-1 { padding-left: 52px; }
+.depth-2 { padding-left: 92px; }
+.depth-3 { padding-left: 132px; }
+.depth-4 { padding-left: 172px; }
+.depth-5 { padding-left: 212px; }
+.depth-6 { padding-left: 252px; }
+.depth-7 { padding-left: 292px; }
+.depth-8 { padding-left: 332px; }
+
+/* Node Badges */
+.badge {
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.badge-product {
+  background: #5865f2;
+  color: white;
+}
+
+.badge-intermediate {
+  background: #43b581;
+  color: white;
+}
+
+.badge-raw {
+  background: #7289da;
+  color: white;
+}
+
+/* Empty States */
+.empty-hint {
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-style: italic;
+  margin: 8px 0;
+}
+
+.empty-state-hint {
+  color: var(--text-secondary);
+  font-size: 13px;
+  margin-top: 8px;
+  max-width: 400px;
+  text-align: center;
+}

@@ -528,7 +528,7 @@ async function calculateBlueprintMaterials(blueprintTypeId, runs = 1, meLevel = 
  * @param {number} limit - Maximum results to return
  * @returns {Array} Array of matching blueprints
  */
-function searchBlueprints(searchTerm, limit = 20) {
+function searchBlueprints(searchTerm, limit = 100) {
     try {
         const dbPath = getSDEPath();
         const db     = new Database(dbPath, {readonly: true});

@@ -386,6 +386,41 @@ function initializeCharacterDatabase() {
     console.error('[Character Database] Migration error:', error);
   }
 
+  // Migration: Add reaction support to plan_blueprints
+  // blueprint_type column differentiates 'manufacturing' from 'reaction'
+  // reaction_type_id stores the reactionTypeId for reactions (NULL for manufacturing)
+  try {
+    const columns = database.pragma('table_info(plan_blueprints)');
+    const hasBlueprintType = columns.some(col => col.name === 'blueprint_type');
+    const hasReactionTypeId = columns.some(col => col.name === 'reaction_type_id');
+    const hasBuiltRuns = columns.some(col => col.name === 'built_runs');
+
+    if (!hasBlueprintType) {
+      console.log('[Character Database] Adding blueprint_type column to plan_blueprints table');
+      database.exec(`ALTER TABLE plan_blueprints ADD COLUMN blueprint_type TEXT NOT NULL DEFAULT 'manufacturing'`);
+    }
+
+    if (!hasReactionTypeId) {
+      console.log('[Character Database] Adding reaction_type_id column to plan_blueprints table');
+      database.exec(`ALTER TABLE plan_blueprints ADD COLUMN reaction_type_id INTEGER`);
+    }
+
+    if (!hasBuiltRuns) {
+      console.log('[Character Database] Adding built_runs column to plan_blueprints table');
+      database.exec(`ALTER TABLE plan_blueprints ADD COLUMN built_runs INTEGER DEFAULT 0`);
+    }
+
+    // Create index for blueprint_type to efficiently filter reactions vs manufacturing
+    if (hasBlueprintType) {
+      console.log('[Character Database] Creating index for blueprint_type column');
+      database.exec(`
+        CREATE INDEX IF NOT EXISTS idx_plan_blueprints_type ON plan_blueprints(blueprint_type);
+      `);
+    }
+  } catch (error) {
+    console.error('[Character Database] Reaction support migration error:', error);
+  }
+
   // Migration: Create character_settings table for per-character settings
   try {
     const tableExists = database.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='character_settings'").all();
