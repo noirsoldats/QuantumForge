@@ -240,6 +240,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getOwnedBlueprintME: (characterId, blueprintTypeId) => ipcRenderer.invoke('calculator:getOwnedBlueprintME', characterId, blueprintTypeId),
     getRigBonuses: (rigTypeId) => ipcRenderer.invoke('calculator:getRigBonuses', rigTypeId),
     getAllBlueprints: (limit) => ipcRenderer.invoke('calculator:getAllBlueprints', limit),
+    getAllReactions: (limit) => ipcRenderer.invoke('calculator:getAllReactions', limit),
     // Invention API
     getInventionData: (blueprintTypeId) => ipcRenderer.invoke('calculator:getInventionData', blueprintTypeId),
     getAllDecryptors: () => ipcRenderer.invoke('calculator:getAllDecryptors'),

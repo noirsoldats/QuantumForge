@@ -604,6 +604,57 @@ function getAllBlueprints(limit = null) {
 }
 
 /**
+ * Get all reactions from SDE
+ * @param {number} limit - Maximum number of reactions to return (default: no limit)
+ * @returns {Array} Array of reaction objects with type info
+ */
+function getAllReactions(limit = null) {
+    try {
+        console.log('[getAllReactions] Starting query...');
+        const dbPath = getSDEPath();
+        const db     = new Database(dbPath, {readonly: true});
+
+        let query = `
+            SELECT DISTINCT
+                t.typeID as blueprintTypeId,
+                t.typeName as itemName,
+                iap.productTypeID as productTypeId,
+                p.typeName as productName,
+                g.groupName as productGroupName,
+                c.categoryName as productCategoryName,
+                COALESCE(mt.metaGroupID, 0) as productMetaGroupID
+            FROM invTypes t
+            INNER JOIN industryActivityProducts iap ON t.typeID = iap.typeID AND iap.activityID = 11
+            INNER JOIN invTypes p ON iap.productTypeID = p.typeID
+            INNER JOIN invGroups g ON p.groupID = g.groupID
+            INNER JOIN invCategories c ON g.categoryID = c.categoryID
+            LEFT JOIN invMetaTypes mt ON p.typeID = mt.typeID
+            WHERE t.published = 1
+              AND p.published = 1
+            ORDER BY t.typeName
+        `;
+
+        if (limit) {
+            query += ` LIMIT ${limit}`;
+        }
+
+        console.log('[getAllReactions] Executing query...');
+        const reactions = db.prepare(query).all();
+        console.log(`[getAllReactions] Query returned ${reactions.length} reactions`);
+        if (reactions.length > 0) {
+            console.log('[getAllReactions] First reaction:', reactions[0]);
+        }
+
+        db.close();
+        return reactions;
+    } catch (error) {
+        console.error('Error getting all reactions:', error);
+        console.error('Error stack:', error.stack);
+        return [];
+    }
+}
+
+/**
  * Get invention data for a blueprint
  * @param {number} blueprintTypeId - T1 Blueprint type ID
  * @param {Database} db - Optional database connection to reuse
@@ -1310,6 +1361,7 @@ module.exports = {
     calculateBlueprintMaterials,
     searchBlueprints,
     getAllBlueprints,
+    getAllReactions,
     getDefaultFacility,
     getProductGroupId,
     // Invention functions

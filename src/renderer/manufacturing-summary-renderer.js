@@ -188,6 +188,7 @@ function saveColumnConfig() {
 // Initialize the page
 document.addEventListener('DOMContentLoaded', async () => {
   await loadFacilities();
+  await loadReactionFacilities();
   await loadCharacters();
   await loadSpeculativeInventionSettings();
   setupEventListeners();
@@ -268,6 +269,46 @@ async function loadFacilities() {
   } catch (error) {
     console.error('Error loading facilities:', error);
   }
+}
+
+// Load reaction facilities into dropdown (refineries only)
+async function loadReactionFacilities() {
+  try {
+    const facilities = await window.electronAPI.facilities.getFacilities();
+
+    // Filter for refineries only (Athanor: 35835, Tatara: 35836)
+    const refineries = facilities.filter(f => {
+      const isRefinery = f.structureTypeId === 35835 || f.structureTypeId === 35836;
+      const hasReactionUsage = f.usage && f.usage.includes('reaction');
+      return isRefinery || hasReactionUsage;
+    });
+
+    const select = document.getElementById('reaction-facility-select');
+    select.innerHTML = '<option value="">No Facility</option>';
+
+    refineries.forEach(facility => {
+      const option = document.createElement('option');
+      option.value = facility.id;
+      option.textContent = facility.name;
+      select.appendChild(option);
+    });
+
+    console.log(`Loaded ${refineries.length} reaction facilities`);
+  } catch (error) {
+    console.error('Error loading reaction facilities:', error);
+  }
+}
+
+/**
+ * Get selected reaction facility
+ * @returns {Promise<Object|null>} Facility object or null
+ */
+async function getSelectedReactionFacility() {
+  const facilityId = document.getElementById('reaction-facility-select').value;
+  if (!facilityId) return null;
+
+  const facilities = await window.electronAPI.facilities.getFacilities();
+  return facilities.find(f => f.id === facilityId) || null;
 }
 
 // Get current filter selections from main UI
@@ -457,44 +498,60 @@ async function calculateSummary() {
   hideResults();
 
   try {
-    // Get blueprints based on filter
-    const blueprints = await getBlueprintsByFilter();
-
-    if (!blueprints || blueprints.length === 0) {
-      showEmptyState();
-      hideLoading();
-      return;
-    }
-
     // Get current filters from main UI
     const currentFilters = getCurrentFilters();
+    console.log('[calculateSummary] Current filters:', currentFilters);
 
-    // Filter blueprints BEFORE starting calculations
-    const filteredBlueprints = blueprints.filter(blueprint => {
-      const techLevel = determineTechLevel(blueprint);
-      const category = determineCategory(blueprint);
-      return currentFilters.tech.includes(techLevel) && currentFilters.category.includes(category);
-    });
+    calculatedData = [];
 
-    if (filteredBlueprints.length === 0) {
+    // Determine if we need to load blueprints or reactions
+    const needsBlueprints = currentFilters.category.some(cat => cat !== 'Reactions');
+    const needsReactions = currentFilters.category.includes('Reactions');
+
+    console.log('[calculateSummary] Needs blueprints:', needsBlueprints);
+    console.log('[calculateSummary] Needs reactions:', needsReactions);
+
+    let filteredBlueprints = [];
+
+    // Load and filter blueprints if needed
+    if (needsBlueprints) {
+      const blueprints = await getBlueprintsByFilter();
+
+      if (blueprints && blueprints.length > 0) {
+        // Filter blueprints BEFORE starting calculations
+        filteredBlueprints = blueprints.filter(blueprint => {
+          const techLevel = determineTechLevel(blueprint);
+          const category = determineCategory(blueprint);
+          return currentFilters.tech.includes(techLevel) && currentFilters.category.includes(category);
+        });
+        console.log(`[calculateSummary] Filtered to ${filteredBlueprints.length} blueprints`);
+      }
+    }
+
+    // Check if we have any data to process
+    if (filteredBlueprints.length === 0 && !needsReactions) {
       showEmptyState();
       hideLoading();
       return;
     }
 
     allBlueprints = filteredBlueprints;
-    calculatedData = [];
-
-    // Calculate data for each blueprint
-    showLoading(`Calculating profitability for ${filteredBlueprints.length} blueprints...`);
 
     const facility = await window.electronAPI.facilities.getFacility(facilityId);
     const svrPeriod = parseInt(document.getElementById('svr-period').value);
     const defaultCharacter = await window.electronAPI.esi.getDefaultCharacter();
 
-    // Get owned blueprints list based on current filter and character selection
-    let ownedBlueprintsList = null;
-    if (currentFilter === 'owned' || currentFilter === 'corp') {
+    // Parallel batch processing configuration
+    const BATCH_SIZE = 6; // Process 6 items concurrently
+    let processedCount = 0;
+
+    // PROCESS BLUEPRINTS (if any)
+    if (filteredBlueprints.length > 0) {
+      showLoading(`Calculating profitability for ${filteredBlueprints.length} blueprints...`);
+
+      // Get owned blueprints list based on current filter and character selection
+      let ownedBlueprintsList = null;
+      if (currentFilter === 'owned' || currentFilter === 'corp') {
       // Determine which character(s) to use for blueprint ME/TE data
       let characterIds = [];
 
@@ -544,64 +601,123 @@ async function calculateSummary() {
             )
           );
         });
+        }
+      }
+
+      // Start timing for all calculations
+      const calculationStartTime = performance.now();
+
+      // Invention tracking counters
+      let t1BlueprintsFound = 0;
+      let inventionDataCalculated = 0;
+      let inventionErrors = 0;
+
+      const totalBlueprints = filteredBlueprints.length;
+
+      // Process blueprints in batches
+      for (let i = 0; i < totalBlueprints; i += BATCH_SIZE) {
+        const batch = filteredBlueprints.slice(i, Math.min(i + BATCH_SIZE, totalBlueprints));
+
+        // Update loading message
+        showLoading(`Calculating... ${processedCount}/${totalBlueprints}`);
+
+        // Calculate batch in parallel using Promise.allSettled
+        const batchPromises = batch.map(blueprint =>
+          calculateBlueprintData(blueprint, facility, svrPeriod, defaultCharacter, ownedBlueprintsList)
+            .catch(error => {
+              console.error(`Error calculating blueprint ${blueprint.typeName}:`, error);
+              return null; // Return null on error
+            })
+        );
+
+        const batchResults = await Promise.allSettled(batchPromises);
+
+        // Process results
+        batchResults.forEach(result => {
+          if (result.status === 'fulfilled' && result.value) {
+            calculatedData.push(result.value);
+            processedCount++;
+          } else if (result.status === 'rejected') {
+            console.error('Blueprint calculation rejected:', result.reason);
+          }
+        });
+
+        // Small delay to allow UI to update
+        await new Promise(resolve => setTimeout(resolve, 0));
+      }
+
+      // Calculate and log total elapsed time
+      const totalElapsedTime = performance.now() - calculationStartTime;
+      const avgTimePerBlueprint = processedCount > 0 ? totalElapsedTime / processedCount : 0;
+      console.log(`[Manufacturing Summary] Calculated ${processedCount} blueprints in ${totalElapsedTime.toFixed(2)}ms (${(totalElapsedTime / 1000).toFixed(2)}s)`);
+      console.log(`[Manufacturing Summary] Average time per blueprint: ${avgTimePerBlueprint.toFixed(2)}ms`);
+
+      // Count invention results
+      const inventionResults = calculatedData.filter(d => d.inventionStatus).length;
+      console.log(`[INVENTION SUMMARY] Speculative Invention enabled: ${speculativeInventionSettings.enabled}`);
+      console.log(`[INVENTION SUMMARY] Blueprints with invention data: ${inventionResults}/${processedCount}`);
+    } // End of blueprint processing block
+
+    // LOAD REACTIONS (if "Reactions" category is selected)
+    console.log('[calculateSummary] Current filters:', currentFilters);
+    console.log('[calculateSummary] Checking if Reactions category is selected:', currentFilters.category.includes('Reactions'));
+
+    if (currentFilters.category.includes('Reactions')) {
+      console.log('[Reactions] Loading reactions...');
+      const reactions = await getReactionsByFilter();
+      console.log(`[Reactions] getReactionsByFilter returned ${reactions ? reactions.length : 0} reactions`);
+
+      if (reactions && reactions.length > 0) {
+        // Filter reactions by tech level
+        console.log('[Reactions] Filtering by tech level. Current tech filters:', currentFilters.tech);
+        const filteredReactions = reactions.filter(r => {
+          const techLevel = determineTechLevel(r);
+          console.log(`[Reactions] Reaction ${r.itemName} has tech level: ${techLevel}`);
+          return currentFilters.tech.includes(techLevel);
+        });
+
+        console.log(`[Reactions] Found ${filteredReactions.length} filtered reactions after tech filtering`);
+
+        // Get reaction facility
+        const reactionFacility = await getSelectedReactionFacility();
+        console.log('[Reactions] Selected facility:', reactionFacility);
+
+        // Calculate reactions in parallel batches
+        const totalReactions = filteredReactions.length;
+        let processedReactions = 0;
+
+        for (let i = 0; i < totalReactions; i += BATCH_SIZE) {
+          const batch = filteredReactions.slice(i, Math.min(i + BATCH_SIZE, totalReactions));
+
+          // Update loading message
+          showLoading(`Calculating reactions... ${processedReactions}/${totalReactions}`);
+
+          // Calculate batch in parallel
+          const batchPromises = batch.map(reaction =>
+            calculateReactionData(reaction, reactionFacility, svrPeriod, defaultCharacter)
+              .catch(error => {
+                console.error(`Error calculating reaction ${reaction.itemName}:`, error);
+                return null;
+              })
+          );
+
+          const batchResults = await Promise.allSettled(batchPromises);
+
+          // Process results
+          batchResults.forEach(result => {
+            if (result.status === 'fulfilled' && result.value) {
+              calculatedData.push(result.value);
+              processedReactions++;
+            }
+          });
+
+          // Small delay to allow UI to update
+          await new Promise(resolve => setTimeout(resolve, 0));
+        }
+
+        console.log(`[Reactions] Calculated ${processedReactions} reactions`);
       }
     }
-
-    // Start timing for all calculations
-    const calculationStartTime = performance.now();
-
-    // Invention tracking counters
-    let t1BlueprintsFound = 0;
-    let inventionDataCalculated = 0;
-    let inventionErrors = 0;
-
-    // Parallel batch processing configuration
-    const BATCH_SIZE = 6; // Process 6 blueprints concurrently
-    const totalBlueprints = filteredBlueprints.length;
-    let processedCount = 0;
-
-    // Process blueprints in batches
-    for (let i = 0; i < totalBlueprints; i += BATCH_SIZE) {
-      const batch = filteredBlueprints.slice(i, Math.min(i + BATCH_SIZE, totalBlueprints));
-
-      // Update loading message
-      showLoading(`Calculating... ${processedCount}/${totalBlueprints}`);
-
-      // Calculate batch in parallel using Promise.allSettled
-      const batchPromises = batch.map(blueprint =>
-        calculateBlueprintData(blueprint, facility, svrPeriod, defaultCharacter, ownedBlueprintsList)
-          .catch(error => {
-            console.error(`Error calculating blueprint ${blueprint.typeName}:`, error);
-            return null; // Return null on error
-          })
-      );
-
-      const batchResults = await Promise.allSettled(batchPromises);
-
-      // Process results
-      batchResults.forEach(result => {
-        if (result.status === 'fulfilled' && result.value) {
-          calculatedData.push(result.value);
-          processedCount++;
-        } else if (result.status === 'rejected') {
-          console.error('Blueprint calculation rejected:', result.reason);
-        }
-      });
-
-      // Small delay to allow UI to update
-      await new Promise(resolve => setTimeout(resolve, 0));
-    }
-
-    // Calculate and log total elapsed time
-    const totalElapsedTime = performance.now() - calculationStartTime;
-    const avgTimePerBlueprint = processedCount > 0 ? totalElapsedTime / processedCount : 0;
-    console.log(`[Manufacturing Summary] Calculated ${processedCount} blueprints in ${totalElapsedTime.toFixed(2)}ms (${(totalElapsedTime / 1000).toFixed(2)}s)`);
-    console.log(`[Manufacturing Summary] Average time per blueprint: ${avgTimePerBlueprint.toFixed(2)}ms`);
-
-    // Count invention results
-    const inventionResults = calculatedData.filter(d => d.inventionStatus).length;
-    console.log(`[INVENTION SUMMARY] Speculative Invention enabled: ${speculativeInventionSettings.enabled}`);
-    console.log(`[INVENTION SUMMARY] Blueprints with invention data: ${inventionResults}/${processedCount}`);
 
     // Apply market filters
     applyMarketFilters();
@@ -782,6 +898,121 @@ async function getBlueprintsByFilter() {
   }
 
   return blueprints;
+}
+
+/**
+ * Get reactions based on current filter settings
+ * @returns {Promise<Array>} Array of reaction objects
+ */
+async function getReactionsByFilter() {
+  const filterType = document.querySelector('input[name="blueprint-filter"]:checked').value;
+  console.log(`[getReactionsByFilter] Filter type: ${filterType}`);
+
+  try {
+    let reactions = [];
+
+    if (filterType === 'all') {
+      // Get all reactions from SDE
+      console.log('[getReactionsByFilter] Fetching all reactions from SDE...');
+      reactions = await window.electronAPI.calculator.getAllReactions();
+      console.log(`[getReactionsByFilter] Got ${reactions ? reactions.length : 0} reactions from SDE`);
+      if (reactions && reactions.length > 0) {
+        console.log('[getReactionsByFilter] First reaction:', reactions[0]);
+      }
+
+    } else if (filterType === 'owned' || filterType === 'corp') {
+      // Determine which character(s) to use
+      let characterIds = [];
+
+      if (currentCharacterFilter === 'all') {
+        // Get all characters
+        const allCharacters = await window.electronAPI.esi.getCharacters();
+        characterIds = allCharacters.map(c => c.characterId);
+      } else if (currentCharacterFilter === 'default') {
+        // Get default character only
+        const defaultChar = await window.electronAPI.esi.getDefaultCharacter();
+        if (!defaultChar) {
+          // No default character, but don't alert - reactions are optional
+          console.log('No default character set for reaction filtering');
+          return [];
+        }
+        characterIds = [defaultChar.characterId];
+      } else if (currentCharacterFilter === 'specific') {
+        // Get specific selected character
+        if (!selectedCharacterId) {
+          console.log('No character selected for reaction filtering');
+          return [];
+        }
+        characterIds = [selectedCharacterId];
+      }
+
+      // Collect reaction formulas from all selected characters
+      const allOwnedReactions = [];
+      for (const charId of characterIds) {
+        try {
+          const charBlueprints = await window.electronAPI.blueprints.getAll(charId);
+          // Filter for reaction formulas (blueprints with activityID=11 or isReaction flag)
+          const reactionFormulas = charBlueprints.filter(bp => {
+            // Check if it's a reaction formula
+            // Reactions are indicated by activityID=11 in the SDE
+            // We'll check the blueprint's typeId against SDE reactions
+            return bp.activityID === 11;
+          });
+          allOwnedReactions.push(...reactionFormulas);
+        } catch (error) {
+          console.error(`Error fetching blueprints for character ${charId}:`, error);
+        }
+      }
+
+      // Filter based on owned vs corp
+      let filteredReactions;
+      if (filterType === 'owned') {
+        // Character reaction formulas only (not corporation)
+        filteredReactions = allOwnedReactions.filter(bp => {
+          const isCorp = bp.isCorporation || (
+            bp.locationFlag && (
+              bp.locationFlag.startsWith('CorpSAG') ||
+              bp.locationFlag.startsWith('CorpDeliveries')
+            )
+          );
+          return !isCorp;
+        });
+      } else {
+        // Corporation reaction formulas only
+        filteredReactions = allOwnedReactions.filter(bp => {
+          return bp.isCorporation || (
+            bp.locationFlag && (
+              bp.locationFlag.startsWith('CorpSAG') ||
+              bp.locationFlag.startsWith('CorpDeliveries')
+            )
+          );
+        });
+      }
+
+      // Get full reaction data from SDE
+      const allReactions = await window.electronAPI.calculator.getAllReactions();
+      reactions = allReactions.filter(r => filteredReactions.some(owned => owned.typeId === r.blueprintTypeId));
+
+      // Add ownership info
+      reactions = reactions.map(r => {
+        const owned = filteredReactions.find(bp => bp.typeId === r.blueprintTypeId);
+        return {
+          ...r,
+          isOwned: true,
+          ownerCharacterId: owned?.characterId || characterIds[0],
+          locationInfo: owned?.location || 'Unknown',
+          bpType: owned?.runs === -1 ? 'BPO' : 'BPC'
+        };
+      });
+    }
+
+    console.log(`Loaded ${reactions.length} reactions`);
+    return reactions;
+
+  } catch (error) {
+    console.error('Error loading reactions:', error);
+    return [];
+  }
 }
 
 // Calculate data for a speculative invention blueprint (T2 that isn't owned)
@@ -1192,6 +1423,174 @@ async function calculateBlueprintData(blueprint, facility, svrPeriod, defaultCha
     };
   } catch (error) {
     console.error(`Error calculating data for ${blueprint.typeName}:`, error);
+    return null;
+  }
+}
+
+/**
+ * Calculate profitability and metrics for a reaction
+ * @param {Object} reaction - Reaction object from SDE
+ * @param {Object} facility - Reaction facility configuration
+ * @param {number} svrPeriod - Sales Velocity Ratio period in days
+ * @param {Object} defaultCharacter - Default character for skills
+ * @returns {Promise<Object>} Calculated reaction data with metrics
+ */
+async function calculateReactionData(reaction, facility, svrPeriod, defaultCharacter) {
+  try {
+    console.log(`[calculateReactionData] Processing reaction: ${reaction.itemName}`);
+    const characterId = defaultCharacter ? defaultCharacter.characterId : null;
+    const runs = 1;  // Standard: calculate per 1 run
+
+    // Calculate materials and costs using reaction calculator
+    console.log(`[calculateReactionData] Calling reactions.calculateMaterials for typeId: ${reaction.blueprintTypeId}`);
+    const result = await window.electronAPI.reactions.calculateMaterials(
+      reaction.blueprintTypeId,  // reactionTypeId
+      runs,
+      characterId,  // May be null if not owned
+      facility ? facility.id : null
+    );
+
+    console.log(`[calculateReactionData] Result:`, result);
+
+    if (!result || !result.product) {
+      console.error(`[calculateReactionData] No result or product for reaction ${reaction.itemName}`);
+      return null;
+    }
+
+    if (!result.pricing) {
+      console.warn(`[calculateReactionData] No pricing data for reaction ${reaction.itemName} - this is normal if no facility is selected or market data is unavailable`);
+      // Continue with zero values rather than returning null
+    }
+
+    const pricing = result.pricing || {};
+    const product = result.product;
+
+    // Get reaction time from result (already calculated with bonuses)
+    const productionTimeHours = result.time ? result.time.totalTime / 3600 : 0;
+    console.log(`[calculateReactionData] Production time: ${productionTimeHours} hours`);
+
+    // Extract pricing data (already calculated by backend)
+    const totalCost = pricing.totalCost || 0;
+    const productValue = pricing.outputValue?.totalValue || 0;
+    const profit = pricing.profit || 0;
+    const profitMargin = pricing.profitMargin || 0;
+
+    console.log(`[calculateReactionData] Pricing object:`, pricing);
+    console.log(`[calculateReactionData] Total cost: ${totalCost} ISK (type: ${typeof totalCost})`);
+    console.log(`[calculateReactionData] Product value: ${productValue} ISK (type: ${typeof productValue})`);
+    console.log(`[calculateReactionData] Profit: ${profit} ISK (type: ${typeof profit})`);
+
+    // Calculate metrics
+    const roi = totalCost > 0 ? ((profit / totalCost) * 100) : 0;
+    const iskPerHour = productionTimeHours > 0 ? (profit / productionTimeHours) : 0;
+
+    console.log(`[calculateReactionData] ROI: ${roi}%, ISK/hr: ${iskPerHour}`);
+
+    // Get SVR (Sales Velocity Ratio)
+    const svr = await calculateSVR(product.typeID, svrPeriod, productionTimeHours);
+    console.log(`[calculateReactionData] SVR: ${svr}`);
+
+    // Extract job costs from pricing breakdown
+    const jobCostBreakdown = pricing.jobCostBreakdown || {};
+    const jobCost = jobCostBreakdown.totalJobCost || 0;
+
+    // Extract trading fees from pricing breakdown
+    const inputCosts = pricing.inputCosts || {};
+    const taxesBreakdown = pricing.taxesBreakdown || {};
+    const materialBrokerFee = taxesBreakdown.materialBrokerFee || 0;
+    const productSellingFees = (taxesBreakdown.productSalesTax || 0) + (taxesBreakdown.productBrokerFee || 0);
+    const tradingFeesTotal = (taxesBreakdown.productSalesTax || 0) + (taxesBreakdown.productBrokerFee || 0) + (taxesBreakdown.materialBrokerFee || 0);
+
+    // Calculate M³ for inputs
+    const materialTypeIds = Object.keys(result.materials).map(id => parseInt(id));
+    const materialVolumes = await window.electronAPI.sde.getItemVolumes(materialTypeIds);
+    let totalInputVolume = 0;
+    for (const [typeId, quantity] of Object.entries(result.materials)) {
+      const volume = materialVolumes[typeId] || 0;
+      totalInputVolume += volume * quantity;
+    }
+
+    // Calculate M³ for outputs
+    const productVolumes = await window.electronAPI.sde.getItemVolumes([product.typeID]);
+    const totalOutputVolume = (productVolumes[product.typeID] || 0) * product.quantity;
+
+    // Get current sell orders count
+    const currentSellOrders = await calculateTotalSellVolume(product.typeID);
+
+    // Calculate market trend metrics (same as blueprints)
+    const profitVelocity = await calculateProfitVelocity(product.typeID, profit, 30);
+    const marketSaturation = await calculateMarketSaturation(product.typeID, currentSellOrders, 30);
+    const priceMomentum = await calculatePriceMomentum(product.typeID);
+    const profitStability = await calculateProfitStability(product.typeID, profit, 28);
+    const demandGrowth = await calculateDemandGrowth(product.typeID);
+    const materialCostVolatility = await calculateMaterialCostVolatility(result.materials, 30);
+    const marketHealthScore = calculateMarketHealthScore(svr, marketSaturation, priceMomentum, profitStability);
+
+    // Determine tech level for reactions (use metaGroupID)
+    const techLevel = determineTechLevel(reaction);
+    console.log(`[calculateReactionData] Tech level: ${techLevel}`);
+
+    // Build unified result object
+    const resultObj = {
+      activityType: 'reaction',  // Marker for row type
+      blueprintTypeId: reaction.blueprintTypeId,
+      productTypeId: reaction.productTypeId,
+      category: 'Reactions',  // Always Reactions category
+      itemName: reaction.itemName,
+      productName: reaction.productName,
+      techLevel,
+
+      // Ownership info (if owned)
+      isOwned: reaction.isOwned || false,
+      ownerCharacterId: reaction.ownerCharacterId || null,
+      locationInfo: reaction.locationInfo || null,
+      bpType: reaction.bpType || null,
+
+      // Reaction-specific (ME/TE don't exist)
+      meLevel: null,  // Will display as "N/A" or "--"
+      teLevel: null,  // Will display as "N/A" or "--"
+
+      // Metrics
+      profit,
+      iskPerHour,
+      svr,
+      totalCost,
+      roi,
+      productionTimeHours,
+
+      // Facility info
+      facilityName: facility?.name || 'No Facility',
+      facilityType: facility?.structureType || null,
+
+      // Cost breakdown
+      productMarketPrice: productValue,
+      jobCosts: jobCost,
+      materialPurchaseFees: materialBrokerFee,
+      productSellingFees: productSellingFees,
+      tradingFeesTotal: tradingFeesTotal,
+      profitPercentage: totalCost > 0 ? (profit / totalCost) * 100 : 0,
+
+      // Volume metrics
+      manufacturingSteps: 1,
+      m3Inputs: totalInputVolume,
+      m3Outputs: totalOutputVolume,
+      currentSellOrders,
+
+      // Market trend metrics
+      profitVelocity,
+      marketSaturation,
+      priceMomentum,
+      profitStability,
+      demandGrowth,
+      materialCostVolatility,
+      marketHealthScore,
+    };
+
+    console.log(`[calculateReactionData] Returning result for ${reaction.itemName}:`, resultObj);
+    return resultObj;
+  } catch (error) {
+    console.error(`Error calculating reaction ${reaction.blueprintTypeId}:`, error);
+    console.error('Error stack:', error.stack);
     return null;
   }
 }
@@ -1916,7 +2315,31 @@ function hideEmptyState() {
 
 // Utility Functions
 function formatISK(value) {
-  if (!value || value === 0) return '0.00';
+  // Handle edge cases
+  if (value === null || value === undefined || value === 0) return '0.00';
+
+  // If value is an object, extract the numeric value
+  if (typeof value === 'object') {
+    console.warn('[formatISK] Received object instead of number:', value);
+    // Try to extract totalValue or totalCost if it's a pricing object
+    if (value.totalValue !== undefined) {
+      value = value.totalValue;
+    } else if (value.totalCost !== undefined) {
+      value = value.totalCost;
+    } else if (value.totalCosts !== undefined) {
+      value = value.totalCosts;
+    } else {
+      console.error('[formatISK] Could not extract numeric value from object:', value);
+      return '0.00';
+    }
+  }
+
+  // Ensure value is a number
+  if (typeof value !== 'number' || isNaN(value)) {
+    console.error('[formatISK] Invalid value type:', typeof value, value);
+    return '0.00';
+  }
+
   return value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
@@ -2119,9 +2542,9 @@ function getCellContent(columnId, item) {
     case 'bp-type':
       return `<td class="text-center">${item.bpType || 'N/A'}</td>`;
     case 'me':
-      return `<td class="text-center">${item.meLevel}</td>`;
+      return `<td class="text-center">${item.meLevel !== null ? item.meLevel : '--'}</td>`;
     case 'te':
-      return `<td class="text-center">${item.teLevel}</td>`;
+      return `<td class="text-center">${item.teLevel !== null ? item.teLevel : '--'}</td>`;
     case 'profit':
       return `<td class="text-right ${profitClass}">${formatISK(item.profit)}</td>`;
     case 'isk-per-hour':

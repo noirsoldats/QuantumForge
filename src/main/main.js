@@ -1253,6 +1253,11 @@ function setupIPCHandlers() {
     return getAllBlueprints(limit);
   });
 
+  ipcMain.handle('calculator:getAllReactions', (event, limit) => {
+    const { getAllReactions } = require('./blueprint-calculator');
+    return getAllReactions(limit);
+  });
+
   // Invention IPC handlers
   ipcMain.handle('calculator:getInventionData', (event, blueprintTypeId) => {
     const { getInventionData } = require('./blueprint-calculator');

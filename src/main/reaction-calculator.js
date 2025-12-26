@@ -730,9 +730,35 @@ async function calculateReactionMaterials(reactionTypeId, runs = 1, characterId 
           jobCostBreakdown = await calculateReactionJobCost(reactionTypeId, runs, aggregatedMaterials, facility);
         }
 
-        // Total costs (include job costs only if available)
+        // Calculate trading taxes/fees (same calculation as manufacturing)
+        const { calculateManufacturingTaxes } = require('./blueprint-pricing');
+
+        // Get character skill levels (default to 0 if no character)
+        let accountingSkillLevel = 0;
+        let brokerRelationsSkillLevel = 0;
+
+        if (characterId) {
+          try {
+            const { getEffectiveSkillLevel } = require('./settings-manager');
+            // Accounting skill ID: 16622
+            // Broker Relations skill ID: 3446
+            accountingSkillLevel = getEffectiveSkillLevel(characterId, 16622) || 0;
+            brokerRelationsSkillLevel = getEffectiveSkillLevel(characterId, 3446) || 0;
+          } catch (error) {
+            console.warn('Could not fetch skill levels for tax calculation:', error);
+          }
+        }
+
+        const taxesBreakdown = calculateManufacturingTaxes(
+          inputCost,
+          outputValue,
+          accountingSkillLevel,
+          brokerRelationsSkillLevel
+        );
+
+        // Total costs (include job costs and trading fees)
         const jobCost = jobCostBreakdown ? jobCostBreakdown.totalJobCost : 0;
-        const totalCost = inputCost + jobCost;
+        const totalCost = inputCost + jobCost + taxesBreakdown.totalTaxes;
         const profit = outputValue - totalCost;
         const profitMargin = outputValue > 0 ? (profit / outputValue) * 100 : 0;
 
@@ -748,6 +774,7 @@ async function calculateReactionMaterials(reactionTypeId, runs = 1, characterId 
             totalValue: outputValue
           },
           jobCostBreakdown,  // Will be null if no facility selected
+          taxesBreakdown,    // Trading fees (material broker fee, product sales tax, product broker fee)
           totalCost,
           profit,
           profitMargin
