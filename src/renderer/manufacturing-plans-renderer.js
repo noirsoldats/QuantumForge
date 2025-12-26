@@ -114,6 +114,9 @@ function setupEventListeners() {
   // Analytics tab
   document.getElementById('refresh-esi-data-btn').addEventListener('click', refreshESIData);
 
+  // Refresh current view button
+  document.getElementById('refresh-current-view-btn').addEventListener('click', refreshCurrentView);
+
   // Search and filters
   document.getElementById('plan-search').addEventListener('input', filterPlans);
   document.querySelectorAll('input[name="status-filter"]').forEach(radio => {
@@ -1363,6 +1366,9 @@ function attachReactionEventListeners() {
     refreshBtn.onclick = async () => {
       await window.electronAPI.plans.recalculateMaterials(selectedPlanId, true);
       await loadReactions();
+      // Reload overview and plans list to reflect updated prices
+      await loadOverview();
+      await loadPlans();
       showToast('Reaction prices refreshed', 'success');
     };
   }
@@ -1413,7 +1419,7 @@ function attachReactionEventListeners() {
 
         // Update all reactions (without triggering recalculation for each)
         for (const update of updates) {
-          await window.electronAPI.plans.updateReaction(update.reactionId, {
+          await window.electronAPI.plans.updateBlueprint(update.reactionId, {
             facilityId: update.facilityId,
             facilitySnapshot: update.facilitySnapshot,
             skipRecalculation: true // Don't recalculate for each update
@@ -1427,6 +1433,9 @@ function attachReactionEventListeners() {
         await window.electronAPI.plans.recalculateMaterials(selectedPlanId, false);
 
         await loadReactions();
+        // Reload overview and plans list to reflect updated reaction costs
+        await loadOverview();
+        await loadPlans();
         showToast(`Updated ${updates.length} reaction(s) successfully`, 'success');
       } catch (error) {
         console.error('Error saving reaction facilities:', error);
@@ -1846,6 +1855,8 @@ async function confirmAddBlueprint() {
     // Force refresh Materials and Products tabs to ensure they're in sync
     await loadMaterials();
     await loadProducts();
+    // Reload plans list to update summary card
+    await loadPlans();
     showToast('Blueprint added to plan successfully', 'success');
   } catch (error) {
     showToast('Failed to add blueprint: ' + error.message, 'error');
@@ -1919,6 +1930,8 @@ window.saveBlueprintEdit = async function(planBlueprintId) {
     // Force refresh Materials and Products tabs to ensure they're in sync
     await loadMaterials();
     await loadProducts();
+    // Reload plans list to update summary card
+    await loadPlans();
     showToast('Blueprint updated successfully', 'success');
   } catch (error) {
     showToast('Failed to update blueprint: ' + error.message, 'error');
@@ -2103,6 +2116,8 @@ window.saveBulkEdit = async function() {
     await loadOverview();
     await loadMaterials();
     await loadProducts();
+    // Reload plans list to update summary card
+    await loadPlans();
 
     showToast(`Successfully updated ${bulkUpdates.length} blueprint(s)`, 'success');
     await exitBulkEditMode(false);
@@ -2138,6 +2153,8 @@ window.removeBlueprint = async function(planBlueprintId) {
     // Force refresh Materials and Products tabs to ensure they're in sync
     await loadMaterials();
     await loadProducts();
+    // Reload plans list to update summary card
+    await loadPlans();
     showToast('Blueprint removed from plan', 'success');
   } catch (error) {
     showToast('Failed to remove blueprint: ' + error.message, 'error');
@@ -2441,6 +2458,8 @@ async function refreshPrices() {
     await loadMaterials();
     await loadProducts();
     await loadOverview();
+    // Reload plans list to update summary card with new prices
+    await loadPlans();
     showToast('Prices refreshed successfully', 'success');
   } catch (error) {
     showToast('Failed to refresh prices: ' + error.message, 'error');
@@ -2816,6 +2835,10 @@ window.confirmJobMatch = async function(matchId) {
     await window.electronAPI.plans.confirmJobMatch(matchId);
     await loadJobs();
     await loadOverview(); // Update stats
+    // Reload analytics tab if active
+    if (activeTab === 'analytics') {
+      await loadAnalytics();
+    }
     showToast('Job match confirmed', 'success');
   } catch (error) {
     showToast('Failed to confirm job match: ' + error.message, 'error');
@@ -2839,6 +2862,10 @@ window.unlinkJobMatch = async function(matchId) {
     await window.electronAPI.plans.unlinkJobMatch(matchId);
     await loadJobs();
     await loadOverview(); // Update stats
+    // Reload analytics tab if active
+    if (activeTab === 'analytics') {
+      await loadAnalytics();
+    }
     showToast('Job unlinked successfully', 'info');
   } catch (error) {
     showToast('Failed to unlink job: ' + error.message, 'error');
@@ -2851,6 +2878,10 @@ window.confirmTransactionMatch = async function(matchId) {
     await window.electronAPI.plans.confirmTransactionMatch(matchId);
     await loadTransactions();
     await loadOverview(); // Update stats
+    // Reload analytics tab if active
+    if (activeTab === 'analytics') {
+      await loadAnalytics();
+    }
     showToast('Transaction match confirmed', 'success');
   } catch (error) {
     showToast('Failed to confirm transaction match: ' + error.message, 'error');
@@ -2874,6 +2905,10 @@ window.unlinkTransactionMatch = async function(matchId) {
     await window.electronAPI.plans.unlinkTransactionMatch(matchId);
     await loadTransactions();
     await loadOverview(); // Update stats
+    // Reload analytics tab if active
+    if (activeTab === 'analytics') {
+      await loadAnalytics();
+    }
     showToast('Transaction unlinked successfully', 'info');
   } catch (error) {
     showToast('Failed to unlink transaction: ' + error.message, 'error');
@@ -3145,6 +3180,10 @@ async function handlePlanDivisionToggle(event) {
       console.log(`Updated plan divisions for character ${characterId}:`, enabledDivisions);
       // Update header summary
       await updatePlanDivisionHeader(characterId);
+      // Reload materials tab to reflect division changes
+      if (activeTab === 'materials') {
+        await loadMaterials();
+      }
     }
 
   } catch (error) {
@@ -3263,6 +3302,12 @@ async function handlePlanDefaultCharacterToggle(event) {
       showToast('Failed to update default characters', 'error');
     } else {
       console.log('Updated plan default characters:', defaultCharacters);
+      // Recalculate materials if character defaults changed
+      await window.electronAPI.plans.recalculateMaterials(selectedPlanId, false);
+      // Reload current tab to reflect changes
+      await loadTabContent(activeTab);
+      // Reload plans list to update summary card
+      await loadPlans();
     }
 
   } catch (error) {
@@ -3290,6 +3335,14 @@ async function handlePlanReactionsToggle(event) {
       showToast('Failed to update reactions setting', 'error');
     } else {
       console.log('Updated reactions as intermediates:', isChecked);
+      // Recalculate materials when reactions setting changes
+      await window.electronAPI.plans.recalculateMaterials(selectedPlanId, false);
+      // Update reactions tab visibility
+      await updateReactionsTabVisibility();
+      // Reload current tab to reflect changes
+      await loadTabContent(activeTab);
+      // Reload plans list to update summary card
+      await loadPlans();
     }
 
   } catch (error) {
@@ -3386,6 +3439,34 @@ function stopAutoRefresh() {
   if (autoRefreshInterval) {
     clearInterval(autoRefreshInterval);
     autoRefreshInterval = null;
+  }
+}
+
+// Refresh current view (manual refresh button)
+async function refreshCurrentView() {
+  if (!selectedPlanId) return;
+
+  try {
+    showLoading('Refreshing...');
+
+    // Reload the current tab content
+    await loadTabContent(activeTab);
+
+    // Also reload the plans list to update summary stats
+    await loadPlans();
+
+    // Re-select the current plan to refresh the header
+    const currentPlan = allPlans.find(p => p.planId === selectedPlanId);
+    if (currentPlan) {
+      await selectPlan(selectedPlanId);
+    }
+
+    showToast('View refreshed', 'success');
+  } catch (error) {
+    console.error('Failed to refresh view:', error);
+    showToast('Failed to refresh view: ' + error.message, 'error');
+  } finally {
+    hideLoading();
   }
 }
 
