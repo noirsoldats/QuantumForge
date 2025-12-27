@@ -7,6 +7,7 @@ let currentCharacterFilter = 'default';
 let selectedCharacterId = null;
 let currentSort = { column: 'profit', direction: 'desc' };
 let selectedBlueprints = new Set(); // Track selected blueprint typeIds
+let calculationAbortController = null; // For cancelling calculations
 
 // Market filter state
 let marketFilters = {
@@ -409,6 +410,14 @@ function setupEventListeners() {
   // Calculate button
   document.getElementById('calculate-btn').addEventListener('click', calculateSummary);
 
+  // Cancel calculation button
+  document.getElementById('cancel-calculation-btn').addEventListener('click', () => {
+    if (calculationAbortController) {
+      console.log('[Manufacturing Summary] User requested cancellation');
+      calculationAbortController.abort();
+    }
+  });
+
   // Search box
   document.getElementById('search-box').addEventListener('input', (e) => {
     filterAndDisplayResults(e.target.value);
@@ -492,10 +501,15 @@ async function calculateSummary() {
   // Debug: Log speculative invention settings
   console.log('[DEBUG] Speculative Invention Settings:', speculativeInventionSettings);
 
-  // Show loading
+  // Create AbortController for cancellation
+  calculationAbortController = new AbortController();
+
+  // Show loading and cancel button, hide calculate button
   showLoading('Loading blueprints...');
   hideEmptyState();
   hideResults();
+  document.getElementById('calculate-btn').style.display = 'none';
+  document.getElementById('cancel-calculation-btn').style.display = 'inline-flex';
 
   try {
     // Get current filters from main UI
@@ -616,6 +630,17 @@ async function calculateSummary() {
 
       // Process blueprints in batches
       for (let i = 0; i < totalBlueprints; i += BATCH_SIZE) {
+        // Check for cancellation before processing next batch
+        if (calculationAbortController.signal.aborted) {
+          console.log('[Manufacturing Summary] Calculation cancelled by user');
+          showLoading('Calculation cancelled');
+          await new Promise(resolve => setTimeout(resolve, 1000));
+          hideLoading();
+          document.getElementById('calculate-btn').style.display = 'inline-flex';
+          document.getElementById('cancel-calculation-btn').style.display = 'none';
+          return;
+        }
+
         const batch = filteredBlueprints.slice(i, Math.min(i + BATCH_SIZE, totalBlueprints));
 
         // Update loading message
@@ -687,6 +712,17 @@ async function calculateSummary() {
         let processedReactions = 0;
 
         for (let i = 0; i < totalReactions; i += BATCH_SIZE) {
+          // Check for cancellation before processing next batch
+          if (calculationAbortController.signal.aborted) {
+            console.log('[Manufacturing Summary] Calculation cancelled by user (reactions)');
+            showLoading('Calculation cancelled');
+            await new Promise(resolve => setTimeout(resolve, 1000));
+            hideLoading();
+            document.getElementById('calculate-btn').style.display = 'inline-flex';
+            document.getElementById('cancel-calculation-btn').style.display = 'none';
+            return;
+          }
+
           const batch = filteredReactions.slice(i, Math.min(i + BATCH_SIZE, totalReactions));
 
           // Update loading message
@@ -734,6 +770,11 @@ async function calculateSummary() {
     alert('Error calculating summary: ' + error.message);
     hideLoading();
     showEmptyState();
+  } finally {
+    // Always restore button visibility
+    document.getElementById('calculate-btn').style.display = 'inline-flex';
+    document.getElementById('cancel-calculation-btn').style.display = 'none';
+    calculationAbortController = null;
   }
 }
 
