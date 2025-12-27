@@ -420,6 +420,153 @@ const migrations = [
     down: (db) => {
       console.log('[Migration 006] Rollback not implemented (would require table recreation)');
     }
+  },
+  {
+    id: '007_separate_manual_acquisitions_table',
+    description: 'Create separate tables for manual acquisitions and acquisition log',
+    up: (db) => {
+      console.log('[Migration 007] Creating separate manual acquisitions tables...');
+
+      db.exec('BEGIN TRANSACTION');
+
+      try {
+        // Create plan_material_manual_acquisitions table
+        const manualAcqTableExists = db.prepare(`
+          SELECT name FROM sqlite_master
+          WHERE type='table' AND name='plan_material_manual_acquisitions'
+        `).get();
+
+        if (!manualAcqTableExists) {
+          console.log('[Migration 007] Creating plan_material_manual_acquisitions table...');
+          db.exec(`
+            CREATE TABLE plan_material_manual_acquisitions (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              plan_id TEXT NOT NULL,
+              type_id INTEGER NOT NULL,
+              quantity INTEGER NOT NULL,
+              acquisition_method TEXT NOT NULL,
+              custom_price REAL,
+              note TEXT,
+              created_at INTEGER NOT NULL,
+              updated_at INTEGER NOT NULL,
+              FOREIGN KEY (plan_id) REFERENCES manufacturing_plans(plan_id) ON DELETE CASCADE,
+              UNIQUE(plan_id, type_id)
+            )
+          `);
+
+          db.exec(`
+            CREATE INDEX IF NOT EXISTS idx_manual_acq_plan
+            ON plan_material_manual_acquisitions(plan_id)
+          `);
+
+          db.exec(`
+            CREATE INDEX IF NOT EXISTS idx_manual_acq_type
+            ON plan_material_manual_acquisitions(type_id)
+          `);
+
+          console.log('[Migration 007] plan_material_manual_acquisitions table created');
+        } else {
+          console.log('[Migration 007] plan_material_manual_acquisitions table already exists');
+        }
+
+        // Create plan_material_acquisition_log table
+        const logTableExists = db.prepare(`
+          SELECT name FROM sqlite_master
+          WHERE type='table' AND name='plan_material_acquisition_log'
+        `).get();
+
+        if (!logTableExists) {
+          console.log('[Migration 007] Creating plan_material_acquisition_log table...');
+          db.exec(`
+            CREATE TABLE plan_material_acquisition_log (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              plan_id TEXT NOT NULL,
+              type_id INTEGER NOT NULL,
+              timestamp INTEGER NOT NULL,
+              action TEXT NOT NULL,
+              quantity_before INTEGER,
+              quantity_after INTEGER NOT NULL,
+              acquisition_method TEXT,
+              custom_price REAL,
+              note TEXT,
+              performed_by TEXT,
+              FOREIGN KEY (plan_id) REFERENCES manufacturing_plans(plan_id) ON DELETE CASCADE
+            )
+          `);
+
+          db.exec(`
+            CREATE INDEX IF NOT EXISTS idx_acquisition_log_plan_type
+            ON plan_material_acquisition_log(plan_id, type_id)
+          `);
+
+          db.exec(`
+            CREATE INDEX IF NOT EXISTS idx_acquisition_log_timestamp
+            ON plan_material_acquisition_log(timestamp)
+          `);
+
+          console.log('[Migration 007] plan_material_acquisition_log table created');
+        } else {
+          console.log('[Migration 007] plan_material_acquisition_log table already exists');
+        }
+
+        // Migrate existing data from plan_materials columns to new table
+        const planMaterialsExists = db.prepare(`
+          SELECT name FROM sqlite_master
+          WHERE type='table' AND name='plan_materials'
+        `).get();
+
+        if (planMaterialsExists) {
+          console.log('[Migration 007] Migrating existing acquisition data...');
+
+          // Count how many records need migration
+          const countStmt = db.prepare(`
+            SELECT COUNT(*) as count FROM plan_materials
+            WHERE manually_acquired = 1
+              AND manually_acquired_quantity > 0
+              AND acquisition_method IS NOT NULL
+              AND acquisition_method != 'manufactured'
+          `);
+          const { count } = countStmt.get();
+
+          if (count > 0) {
+            console.log(`[Migration 007] Found ${count} acquisition records to migrate`);
+
+            db.exec(`
+              INSERT INTO plan_material_manual_acquisitions
+                (plan_id, type_id, quantity, acquisition_method, custom_price, note, created_at, updated_at)
+              SELECT
+                plan_id,
+                type_id,
+                manually_acquired_quantity,
+                COALESCE(acquisition_method, 'other'),
+                custom_price,
+                acquisition_note,
+                COALESCE(price_frozen_at, strftime('%s', 'now') * 1000),
+                COALESCE(price_frozen_at, strftime('%s', 'now') * 1000)
+              FROM plan_materials
+              WHERE manually_acquired = 1
+                AND manually_acquired_quantity > 0
+                AND acquisition_method IS NOT NULL
+                AND acquisition_method != 'manufactured'
+            `);
+
+            console.log(`[Migration 007] Successfully migrated ${count} acquisition records`);
+          } else {
+            console.log('[Migration 007] No acquisition data to migrate');
+          }
+        }
+
+        db.exec('COMMIT');
+        console.log('[Migration 007] Migration completed successfully');
+      } catch (error) {
+        db.exec('ROLLBACK');
+        console.error('[Migration 007] Migration failed:', error);
+        throw error;
+      }
+    },
+    down: (db) => {
+      console.log('[Migration 007] Rollback not implemented');
+    }
   }
   // Add future migrations here
 ];

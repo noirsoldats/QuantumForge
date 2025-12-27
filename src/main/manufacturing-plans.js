@@ -1274,21 +1274,39 @@ async function markIntermediateBuiltRecursive(intermediateBlueprintId, isBuilt, 
 function clearManufacturedAcquisitions(planId) {
   const db = getCharacterDatabase();
 
-  // Get count for logging
-  const count = db.prepare(`
+  // Get count for logging (check both old and new tables)
+  const oldCount = db.prepare(`
     SELECT COUNT(*) as count
     FROM plan_materials
     WHERE plan_id = ? AND acquisition_method = 'manufactured'
   `).get(planId).count;
 
-  if (count === 0) {
+  const newCount = db.prepare(`
+    SELECT COUNT(*) as count
+    FROM plan_material_manual_acquisitions
+    WHERE plan_id = ? AND acquisition_method = 'manufactured'
+  `).get(planId).count;
+
+  if (oldCount === 0 && newCount === 0) {
     console.log(`[Plans] No 'manufactured' acquisitions to clear for plan ${planId}`);
     return 0;
   }
 
-  console.log(`[Plans] Clearing 'manufactured' acquisitions for ${count} material(s)`);
+  console.log(`[Plans] Clearing 'manufactured' acquisitions for ${oldCount} material(s) in old table, ${newCount} in new table`);
 
-  // Clear 'manufactured' acquisition data only
+  // Log to acquisition log BEFORE deleting
+  if (newCount > 0) {
+    const now = Date.now();
+    db.prepare(`
+      INSERT INTO plan_material_acquisition_log
+        (plan_id, type_id, timestamp, action, quantity_before, quantity_after, performed_by)
+      SELECT plan_id, type_id, ?, 'remove', quantity, 0, 'system'
+      FROM plan_material_manual_acquisitions
+      WHERE plan_id = ? AND acquisition_method = 'manufactured'
+    `).run(now, planId);
+  }
+
+  // Clear 'manufactured' acquisition data from old plan_materials columns
   db.prepare(`
     UPDATE plan_materials
     SET manually_acquired_quantity = 0,
@@ -1298,7 +1316,13 @@ function clearManufacturedAcquisitions(planId) {
     WHERE plan_id = ? AND acquisition_method = 'manufactured'
   `).run(planId);
 
-  return count;
+  // Delete 'manufactured' acquisitions from new table
+  db.prepare(`
+    DELETE FROM plan_material_manual_acquisitions
+    WHERE plan_id = ? AND acquisition_method = 'manufactured'
+  `).run(planId);
+
+  return oldCount + newCount;
 }
 
 /**
@@ -1466,7 +1490,7 @@ async function recalculateManufacturedMaterials(planId, characterId) {
       finalNote = existing.acquisition_note;
     }
 
-    // Update material with manufactured acquisition
+    // Update material with manufactured acquisition (old table for backward compat)
     db.prepare(`
       UPDATE plan_materials
       SET manually_acquired = ?,
@@ -1482,6 +1506,27 @@ async function recalculateManufacturedMaterials(planId, characterId) {
       planId,
       typeIdInt
     );
+
+    // Insert/update in new plan_material_manual_acquisitions table
+    const now = Date.now();
+    db.prepare(`
+      INSERT INTO plan_material_manual_acquisitions
+        (plan_id, type_id, quantity, acquisition_method, custom_price, note, created_at, updated_at)
+      VALUES (?, ?, ?, ?, NULL, ?, ?, ?)
+      ON CONFLICT(plan_id, type_id) DO UPDATE SET
+        quantity = excluded.quantity,
+        acquisition_method = excluded.acquisition_method,
+        note = excluded.note,
+        updated_at = excluded.updated_at
+    `).run(planId, typeIdInt, manufacturedQty, 'manufactured', finalNote, now, now);
+
+    // Log the acquisition
+    db.prepare(`
+      INSERT INTO plan_material_acquisition_log
+        (plan_id, type_id, timestamp, action, quantity_before, quantity_after,
+         acquisition_method, custom_price, note, performed_by)
+      VALUES (?, ?, ?, 'set', 0, ?, 'manufactured', NULL, ?, 'system')
+    `).run(planId, typeIdInt, now, manufacturedQty, finalNote);
 
     console.log(`  - Material ${typeIdInt}: manufactured=${manufacturedQty}, other=${nonManufacturedQty}, total=${totalAcquired}`);
   }
@@ -2479,28 +2524,18 @@ async function recalculatePlanMaterials(planId, refreshPrices = false) {
         }
       }
 
-      // Always capture acquisition data (regardless of refreshPrices)
-      // EXCLUDE 'manufactured' acquisitions - they will be recalculated from built intermediates
-      // This ensures that when blueprint configs change (ME, facility, etc.),
-      // user must re-mark intermediates as built with the new configuration
-      const acquisitionRecords = db.prepare(`
-        SELECT type_id, manually_acquired, manually_acquired_quantity, acquisition_method, acquisition_note
-        FROM plan_materials
-        WHERE plan_id = ?
-          AND acquisition_method IS NOT NULL
-          AND acquisition_method != 'manufactured'
+      // Track which materials existed before recalculation (for tracking removed acquisitions)
+      const oldMaterials = db.prepare(`
+        SELECT type_id FROM plan_materials WHERE plan_id = ?
       `).all(planId);
+      const oldMaterialTypeIds = new Set(oldMaterials.map(m => m.type_id));
 
-      for (const rec of acquisitionRecords) {
-        if (rec.manually_acquired) {  // Only preserve if actually acquired
-          existingMaterialAcquisition[rec.type_id] = {
-            manually_acquired: rec.manually_acquired,
-            manually_acquired_quantity: rec.manually_acquired_quantity,
-            acquisition_method: rec.acquisition_method,
-            acquisition_note: rec.acquisition_note
-          };
-        }
-      }
+      // Get all manual acquisitions (for deletion/warning tracking)
+      const existingManualAcquisitions = db.prepare(`
+        SELECT type_id, quantity, acquisition_method
+        FROM plan_material_manual_acquisitions
+        WHERE plan_id = ?
+      `).all(planId);
 
       // Clear existing materials and products
       db.prepare('DELETE FROM plan_materials WHERE plan_id = ?').run(planId);
@@ -2511,10 +2546,9 @@ async function recalculatePlanMaterials(planId, refreshPrices = false) {
       // Insert materials with prices
       const insertMaterial = db.prepare(`
         INSERT INTO plan_materials (
-          plan_id, type_id, quantity, base_price, price_frozen_at,
-          manually_acquired, manually_acquired_quantity, acquisition_method, acquisition_note
+          plan_id, type_id, quantity, base_price, price_frozen_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?)
       `);
 
       for (const [typeId, quantity] of Object.entries(aggregatedMaterials)) {
@@ -2544,19 +2578,14 @@ async function recalculatePlanMaterials(planId, refreshPrices = false) {
           }
         }
 
-        // Apply preserved acquisition data (if any)
-        const acqData = existingMaterialAcquisition[parseInt(typeId)] || {};
-
+        // No longer inserting acquisition data into plan_materials
+        // (acquisition data lives in separate plan_material_manual_acquisitions table)
         insertMaterial.run(
           planId,
           parseInt(typeId),
           quantity,
           price,
-          priceFrozenAt,
-          acqData.manually_acquired || 0,
-          acqData.manually_acquired_quantity || 0,
-          acqData.acquisition_method || null,
-          acqData.acquisition_note || null
+          priceFrozenAt
         );
       }
 
@@ -2674,7 +2703,82 @@ async function recalculatePlanMaterials(planId, refreshPrices = false) {
       // Note: We only recalculate if there are built intermediates (otherwise this is a no-op)
       await recalculateManufacturedMaterials(planId, plan.character_id);
 
-      return true;
+      // After inserting new materials, check for acquisition issues
+      const newMaterials = db.prepare(`
+        SELECT type_id, quantity FROM plan_materials WHERE plan_id = ?
+      `).all(planId);
+      const newMaterialTypeIds = new Set(newMaterials.map(m => m.type_id));
+      const warnings = [];
+
+      // Find materials that were removed (had manual acquisition but no longer in plan)
+      const removedAcquisitions = [];
+      for (const acq of existingManualAcquisitions) {
+        if (!newMaterialTypeIds.has(acq.type_id)) {
+          removedAcquisitions.push({
+            typeId: acq.type_id,
+            typeName: getTypeName(acq.type_id),
+            acquiredQuantity: acq.quantity,
+            method: acq.acquisition_method
+          });
+        }
+      }
+
+      // Delete manual acquisitions for removed materials
+      if (removedAcquisitions.length > 0) {
+        const removedTypeIds = removedAcquisitions.map(r => r.typeId);
+        const placeholders = removedTypeIds.map(() => '?').join(',');
+
+        db.prepare(`
+          DELETE FROM plan_material_manual_acquisitions
+          WHERE plan_id = ? AND type_id IN (${placeholders})
+        `).run(planId, ...removedTypeIds);
+
+        // Log the removals
+        const logStmt = db.prepare(`
+          INSERT INTO plan_material_acquisition_log
+            (plan_id, type_id, timestamp, action, quantity_before, quantity_after, performed_by)
+          VALUES (?, ?, ?, 'remove', ?, 0, 'system')
+        `);
+
+        removedAcquisitions.forEach(acq => {
+          logStmt.run(planId, acq.typeId, now, acq.acquiredQuantity);
+        });
+
+        warnings.push({
+          type: 'removed_acquisitions',
+          materials: removedAcquisitions
+        });
+
+        console.log(`[Plans] Removed ${removedAcquisitions.length} manual acquisition(s) for materials no longer in plan ${planId}`);
+      }
+
+      // Check for materials with excess acquisitions (acquired > needed)
+      const excessMaterials = db.prepare(`
+        SELECT pm.type_id, pm.quantity, ma.quantity as acquired_quantity
+        FROM plan_materials pm
+        JOIN plan_material_manual_acquisitions ma
+          ON pm.plan_id = ma.plan_id AND pm.type_id = ma.type_id
+        WHERE pm.plan_id = ?
+          AND ma.quantity > pm.quantity
+      `).all(planId);
+
+      if (excessMaterials.length > 0) {
+        warnings.push({
+          type: 'excess_acquisitions',
+          materials: excessMaterials.map(m => ({
+            typeId: m.type_id,
+            typeName: getTypeName(m.type_id),
+            needed: m.quantity,
+            acquired: m.acquired_quantity,
+            excess: m.acquired_quantity - m.quantity
+          }))
+        });
+
+        console.log(`[Plans] Found ${excessMaterials.length} material(s) with excess acquisitions in plan ${planId}`);
+      }
+
+      // Return success with warnings
+      return { success: true, warnings };
     } catch (error) {
       db.exec('ROLLBACK');
       throw error;
@@ -2696,7 +2800,18 @@ async function getPlanMaterials(planId, includeAssets = false) {
     const db = getCharacterDatabase();
 
     const materials = db.prepare(`
-      SELECT * FROM plan_materials WHERE plan_id = ? ORDER BY quantity DESC
+      SELECT
+        pm.*,
+        ma.quantity as manually_acquired_quantity,
+        ma.acquisition_method,
+        ma.custom_price,
+        ma.note as acquisition_note,
+        ma.updated_at as acquisition_updated_at
+      FROM plan_materials pm
+      LEFT JOIN plan_material_manual_acquisitions ma
+        ON pm.plan_id = ma.plan_id AND pm.type_id = ma.type_id
+      WHERE pm.plan_id = ?
+      ORDER BY pm.quantity DESC
     `).all(planId);
 
     // Query confirmed transaction matches (material purchases)
@@ -2798,11 +2913,12 @@ async function getPlanMaterials(planId, includeAssets = false) {
       quantity: m.quantity,
       basePrice: m.base_price,
       priceFrozenAt: m.price_frozen_at,
-      manuallyAcquired: m.manually_acquired || 0,
+      manuallyAcquired: m.manually_acquired_quantity ? 1 : 0, // For backward compatibility
       manuallyAcquiredQuantity: m.manually_acquired_quantity || 0,
       acquisitionMethod: m.acquisition_method || null,
       customPrice: m.custom_price || null,
       acquisitionNote: m.acquisition_note || null,
+      acquisitionUpdatedAt: m.acquisition_updated_at || null,
       purchasedQuantity: confirmedPurchases[m.type_id]?.quantity || 0,
       purchaseMatchCount: confirmedPurchases[m.type_id]?.count || 0,
       manufacturedQuantity: confirmedManufacturing[m.type_id]?.quantity || 0,
@@ -3373,12 +3489,23 @@ async function getPlanAnalytics(planId) {
  * @param {string} planId - Plan ID
  * @param {number} typeId - Material type ID
  * @param {object} options - Acquisition options
- * @param {string} options.acquisitionMethod - Method of acquisition (e.g., 'owned', 'manufactured', 'gift', 'other')
+ * @param {number} options.quantity - Quantity to mark as acquired
+ * @param {string} options.acquisitionMethod - Method of acquisition (e.g., 'owned', 'manufactured', 'gift', 'contract', 'other')
  * @param {number|null} options.customPrice - Custom price per unit (null to use base_price)
  * @param {string|null} options.acquisitionNote - Optional note about acquisition
+ * @param {string} options.mode - Mode: 'add' (increment) or 'set' (replace total) - default 'set'
+ * @param {boolean} options.validateAssets - Whether to validate against owned assets (default false)
+ * @returns {object} Result with success, newTotal, hasExcess, excessAmount, and assetWarning
  */
 function markMaterialAcquired(planId, typeId, options = {}) {
-  const { quantity, acquisitionMethod = 'other', customPrice = null, acquisitionNote = null } = options;
+  const {
+    quantity,
+    acquisitionMethod = 'other',
+    customPrice = null,
+    acquisitionNote = null,
+    mode = 'set',
+    validateAssets = false
+  } = options;
 
   if (!quantity || quantity <= 0) {
     throw new Error('Quantity is required and must be greater than 0');
@@ -3387,37 +3514,88 @@ function markMaterialAcquired(planId, typeId, options = {}) {
   const db = getCharacterDatabase();
 
   try {
-    // Get the current material to validate quantity
-    const material = db.prepare(`
-      SELECT quantity, manually_acquired_quantity
-      FROM plan_materials
+    // Get current material info
+    const currentMaterial = db.prepare(`
+      SELECT quantity FROM plan_materials
       WHERE plan_id = ? AND type_id = ?
     `).get(planId, typeId);
 
-    if (!material) {
+    if (!currentMaterial) {
       throw new Error('Material not found in plan');
     }
 
-    // Validate: new quantity can't exceed what's needed
-    if (quantity > material.quantity) {
-      throw new Error(`Quantity ${quantity} exceeds plan requirement of ${material.quantity}`);
-    }
-
-    const result = db.prepare(`
-      UPDATE plan_materials
-      SET manually_acquired = 1,
-          manually_acquired_quantity = ?,
-          acquisition_method = ?,
-          custom_price = ?,
-          acquisition_note = ?
+    // Get current manual acquisition if exists
+    const currentAcquisition = db.prepare(`
+      SELECT quantity FROM plan_material_manual_acquisitions
       WHERE plan_id = ? AND type_id = ?
-    `).run(quantity, acquisitionMethod, customPrice, acquisitionNote, planId, typeId);
+    `).get(planId, typeId);
 
-    if (result.changes === 0) {
-      throw new Error('Material not found in plan');
+    const currentAcquiredQty = currentAcquisition?.quantity || 0;
+
+    // Calculate new total based on mode
+    let newTotal;
+    if (mode === 'add') {
+      newTotal = currentAcquiredQty + quantity;
+    } else { // 'set'
+      newTotal = quantity;
     }
 
-    console.log(`[Plans] Marked ${quantity} units of material ${typeId} as acquired for plan ${planId}`);
+    if (newTotal < 0) {
+      throw new Error('Quantity cannot be negative');
+    }
+
+    const hasExcess = newTotal > currentMaterial.quantity;
+
+    // Asset validation (if requested and method is 'owned')
+    let assetWarning = null;
+    if (acquisitionMethod === 'owned' && validateAssets) {
+      const materials = getPlanMaterials(planId, true);
+      const material = materials.find(m => m.typeId === typeId);
+      if (material) {
+        const totalOwned = (material.ownedPersonal || 0) + (material.ownedCorp || 0);
+        if (newTotal > totalOwned) {
+          assetWarning = {
+            requested: newTotal,
+            available: totalOwned,
+            shortfall: newTotal - totalOwned
+          };
+        }
+      }
+    }
+
+    const now = Date.now();
+
+    // Insert or update manual acquisition record
+    db.prepare(`
+      INSERT INTO plan_material_manual_acquisitions
+        (plan_id, type_id, quantity, acquisition_method, custom_price, note, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(plan_id, type_id) DO UPDATE SET
+        quantity = excluded.quantity,
+        acquisition_method = excluded.acquisition_method,
+        custom_price = excluded.custom_price,
+        note = excluded.note,
+        updated_at = excluded.updated_at
+    `).run(planId, typeId, newTotal, acquisitionMethod, customPrice, acquisitionNote, now, now);
+
+    // Log the acquisition
+    db.prepare(`
+      INSERT INTO plan_material_acquisition_log
+        (plan_id, type_id, timestamp, action, quantity_before, quantity_after,
+         acquisition_method, custom_price, note, performed_by)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'user')
+    `).run(planId, typeId, now, mode, currentAcquiredQty, newTotal,
+           acquisitionMethod, customPrice, acquisitionNote);
+
+    console.log(`[Plans] Marked ${newTotal} units of material ${typeId} as acquired for plan ${planId} (mode: ${mode})`);
+
+    return {
+      success: true,
+      newTotal,
+      hasExcess,
+      excessAmount: hasExcess ? newTotal - currentMaterial.quantity : 0,
+      assetWarning
+    };
   } catch (error) {
     console.error('[Plans] Error marking material as acquired:', error);
     throw error;
@@ -3425,29 +3603,40 @@ function markMaterialAcquired(planId, typeId, options = {}) {
 }
 
 /**
- * Unmark a material as manually acquired (reset to default)
+ * Unmark a material as manually acquired (remove manual acquisition record)
  * @param {string} planId - Plan ID
  * @param {number} typeId - Material type ID
+ * @returns {object} Result with success message
  */
 function unmarkMaterialAcquired(planId, typeId) {
   const db = getCharacterDatabase();
 
   try {
-    const result = db.prepare(`
-      UPDATE plan_materials
-      SET manually_acquired = 0,
-          manually_acquired_quantity = 0,
-          acquisition_method = NULL,
-          custom_price = NULL,
-          acquisition_note = NULL
+    // Get current quantity before deletion for logging
+    const currentAcq = db.prepare(`
+      SELECT quantity FROM plan_material_manual_acquisitions
+      WHERE plan_id = ? AND type_id = ?
+    `).get(planId, typeId);
+
+    if (!currentAcq) {
+      return { success: true, message: 'No manual acquisition to remove' };
+    }
+
+    // Delete the manual acquisition
+    db.prepare(`
+      DELETE FROM plan_material_manual_acquisitions
       WHERE plan_id = ? AND type_id = ?
     `).run(planId, typeId);
 
-    if (result.changes === 0) {
-      throw new Error('Material not found in plan');
-    }
+    // Log the removal
+    db.prepare(`
+      INSERT INTO plan_material_acquisition_log
+        (plan_id, type_id, timestamp, action, quantity_before, quantity_after, performed_by)
+      VALUES (?, ?, ?, 'remove', ?, 0, 'user')
+    `).run(planId, typeId, Date.now(), currentAcq.quantity);
 
     console.log(`[Plans] Unmarked material ${typeId} as acquired for plan ${planId}`);
+    return { success: true };
   } catch (error) {
     console.error('[Plans] Error unmarking material as acquired:', error);
     throw error;
@@ -3527,6 +3716,122 @@ function updateMaterialCustomPrice(planId, typeId, customPrice) {
     console.log(`[Plans] Updated custom price for material ${typeId} in plan ${planId}`);
   } catch (error) {
     console.error('[Plans] Error updating material custom price:', error);
+    throw error;
+  }
+}
+
+/**
+ * Cleanup excess acquisitions (reduce to match needed quantity)
+ * @param {string} planId - Plan ID
+ * @param {number|null} typeId - Material type ID (null for all materials)
+ * @returns {object} Result with number of adjustments made
+ */
+function cleanupExcessAcquisitions(planId, typeId = null) {
+  const db = getCharacterDatabase();
+
+  try {
+    // Find acquisitions that exceed needed quantity
+    let query = `
+      SELECT pm.type_id, pm.quantity as needed, ma.quantity as acquired
+      FROM plan_materials pm
+      JOIN plan_material_manual_acquisitions ma
+        ON pm.plan_id = ma.plan_id AND pm.type_id = ma.type_id
+      WHERE pm.plan_id = ?
+        AND ma.quantity > pm.quantity
+    `;
+
+    const params = [planId];
+    if (typeId) {
+      query += ' AND pm.type_id = ?';
+      params.push(typeId);
+    }
+
+    const excessMaterials = db.prepare(query).all(...params);
+
+    if (excessMaterials.length === 0) {
+      return { adjusted: 0 };
+    }
+
+    const now = Date.now();
+    const updateStmt = db.prepare(`
+      UPDATE plan_material_manual_acquisitions
+      SET quantity = ?, updated_at = ?
+      WHERE plan_id = ? AND type_id = ?
+    `);
+
+    const logStmt = db.prepare(`
+      INSERT INTO plan_material_acquisition_log
+        (plan_id, type_id, timestamp, action, quantity_before, quantity_after, performed_by)
+      VALUES (?, ?, ?, 'cleanup', ?, ?, 'user')
+    `);
+
+    excessMaterials.forEach(m => {
+      // Update acquisition to match needed quantity
+      updateStmt.run(m.needed, now, planId, m.type_id);
+
+      // Log the adjustment
+      logStmt.run(planId, m.type_id, now, m.acquired, m.needed);
+    });
+
+    console.log(`[Plans] Cleaned up ${excessMaterials.length} excess acquisitions for plan ${planId}`);
+    return { adjusted: excessMaterials.length };
+  } catch (error) {
+    console.error('[Plans] Error cleaning up excess acquisitions:', error);
+    throw error;
+  }
+}
+
+/**
+ * Get acquisition log for a material or plan
+ * @param {string} planId - Plan ID
+ * @param {number|null} typeId - Material type ID (null for all materials in plan)
+ * @returns {Array} Array of log entries
+ */
+function getAcquisitionLog(planId, typeId = null) {
+  const db = getCharacterDatabase();
+
+  try {
+    let query = `
+      SELECT
+        type_id,
+        timestamp,
+        action,
+        quantity_before,
+        quantity_after,
+        acquisition_method,
+        custom_price,
+        note,
+        performed_by
+      FROM plan_material_acquisition_log
+      WHERE plan_id = ?
+    `;
+
+    const params = [planId];
+    if (typeId) {
+      query += ' AND type_id = ?';
+      params.push(typeId);
+    }
+
+    query += ' ORDER BY timestamp DESC LIMIT 100'; // Most recent 100 entries
+
+    const logEntries = db.prepare(query).all(...params);
+
+    return logEntries.map(entry => ({
+      typeId: entry.type_id,
+      typeName: getTypeName(entry.type_id),
+      timestamp: entry.timestamp,
+      timestampFormatted: new Date(entry.timestamp).toLocaleString(),
+      action: entry.action,
+      quantityBefore: entry.quantity_before,
+      quantityAfter: entry.quantity_after,
+      quantityChange: entry.quantity_after - (entry.quantity_before || 0),
+      acquisitionMethod: entry.acquisition_method,
+      customPrice: entry.custom_price,
+      note: entry.note,
+      performedBy: entry.performed_by
+    }));
+  } catch (error) {
+    console.error('[Plans] Error getting acquisition log:', error);
     throw error;
   }
 }
@@ -3655,6 +3960,8 @@ module.exports = {
   unmarkMaterialAcquired,
   updateMaterialAcquisition,
   updateMaterialCustomPrice,
+  cleanupExcessAcquisitions,
+  getAcquisitionLog,
   getReactions,
   markReactionBuilt,
 };

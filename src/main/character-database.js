@@ -23,6 +23,7 @@ function getCharacterDatabase() {
   const dbPath = path.join(configDir, 'character-data.db');
   db = new Database(dbPath);
   db.pragma('journal_mode = WAL');
+  db.pragma('foreign_keys = ON');
 
   return db;
 }

@@ -93,6 +93,8 @@ const {
   unmarkMaterialAcquired,
   updateMaterialAcquisition,
   updateMaterialCustomPrice,
+  cleanupExcessAcquisitions,
+  getAcquisitionLog,
 } = require('./manufacturing-plans');
 const {
   matchJobsToPlan,
@@ -1171,6 +1173,14 @@ function setupIPCHandlers() {
 
   ipcMain.handle('plans:updateMaterialCustomPrice', (event, planId, typeId, customPrice) => {
     return updateMaterialCustomPrice(planId, typeId, customPrice);
+  });
+
+  ipcMain.handle('plans:cleanupExcessAcquisitions', (event, planId, typeId) => {
+    return cleanupExcessAcquisitions(planId, typeId);
+  });
+
+  ipcMain.handle('plans:getAcquisitionLog', (event, planId, typeId) => {
+    return getAcquisitionLog(planId, typeId);
   });
 
   // Manufacturing Summary Window

@@ -2043,3 +2043,104 @@ tr[data-editing="true"] {
   max-width: 400px;
   text-align: center;
 }
+
+/* ============================================================================
+   ACQUISITION REFACTOR STYLES
+   ============================================================================ */
+
+/* Warning Button */
+.warning-button {
+  padding: 10px 16px;
+  background-color: #faa61a;
+  border: none;
+  border-radius: 6px;
+  color: #1e1e2e;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  transition: background-color 0.2s;
+}
+
+.warning-button:hover {
+  background-color: #e89505;
+}
+
+.warning-button.small {
+  padding: 6px 12px;
+  font-size: 12px;
+  display: inline-flex;
+}
+
+/* Excess Badge Variant */
+.status-badge.excess {
+  background-color: rgba(250, 166, 26, 0.2);
+  color: #faa61a;
+}
+
+/* Alert Boxes */
+#material-warnings {
+  margin: 16px 0;
+}
+
+.alert {
+  padding: 16px;
+  margin-bottom: 16px;
+  border-radius: 6px;
+  border-left: 4px solid;
+}
+
+.alert h4 {
+  margin: 0 0 12px 0;
+  font-size: 16px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.alert p {
+  margin: 0 0 12px 0;
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.alert ul {
+  margin: 0 0 16px 0;
+  padding-left: 24px;
+}
+
+.alert li {
+  margin-bottom: 8px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.alert li button {
+  margin-left: 8px;
+}
+
+/* Warning Alert (Excess Acquisitions) */
+.alert-warning {
+  background-color: rgba(250, 166, 26, 0.1);
+  border-color: #faa61a;
+  color: #ffffff;
+}
+
+.alert-warning h4 {
+  color: #faa61a;
+}
+
+/* Info Alert (Removed Acquisitions) */
+.alert-info {
+  background-color: rgba(23, 162, 184, 0.1);
+  border-color: #17a2b8;
+  color: #ffffff;
+}
+
+.alert-info h4 {
+  color: #17a2b8;
+}

@@ -192,6 +192,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     unmarkMaterialAcquired: (planId, typeId) => ipcRenderer.invoke('plans:unmarkMaterialAcquired', planId, typeId),
     updateMaterialAcquisition: (planId, typeId, updates) => ipcRenderer.invoke('plans:updateMaterialAcquisition', planId, typeId, updates),
     updateMaterialCustomPrice: (planId, typeId, customPrice) => ipcRenderer.invoke('plans:updateMaterialCustomPrice', planId, typeId, customPrice),
+    cleanupExcessAcquisitions: (planId, typeId) => ipcRenderer.invoke('plans:cleanupExcessAcquisitions', planId, typeId),
+    getAcquisitionLog: (planId, typeId) => ipcRenderer.invoke('plans:getAcquisitionLog', planId, typeId),
   },
 
   // Location API

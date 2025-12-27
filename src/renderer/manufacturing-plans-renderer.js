@@ -710,7 +710,13 @@ async function loadMaterials() {
           ? m.acquisitionMethod.replace('_', ' ').toUpperCase()
           : 'MANUAL';
         const note = m.acquisitionNote || 'Manually marked as acquired';
-        badges.push(`<span class="status-badge acquired" title="${escapeHtml(note)}">${methodLabel}: ${formatNumber(m.manuallyAcquiredQuantity)}</span>`);
+        const hasExcess = m.manuallyAcquiredQuantity > m.quantity;
+        const excessAmount = hasExcess ? m.manuallyAcquiredQuantity - m.quantity : 0;
+        const badgeClass = hasExcess ? 'acquired excess' : 'acquired';
+        const badgeText = hasExcess
+          ? `${methodLabel}: ${formatNumber(m.manuallyAcquiredQuantity)} (${formatNumber(excessAmount)} excess)`
+          : `${methodLabel}: ${formatNumber(m.manuallyAcquiredQuantity)}`;
+        badges.push(`<span class="status-badge ${badgeClass}" title="${escapeHtml(note)}">${badgeText}</span>`);
       }
 
       // 2. Purchased badge (confirmed transactions)
@@ -780,6 +786,12 @@ async function loadMaterials() {
                 data-manual-quantity="${m.manuallyAcquiredQuantity}"
                 data-still-needed="${Math.max(0, m.quantity - totalAcquired)}">Edit Acquisition</button>
               <button class="secondary-button small unmark-btn" data-type-id="${m.typeId}">Remove Manual</button>
+              ${m.manuallyAcquiredQuantity > m.quantity ? `
+                <button class="warning-button small cleanup-excess-btn"
+                  data-type-id="${m.typeId}"
+                  data-material-name="${escapeHtml(name)}"
+                  title="Reduce acquired quantity to match needed quantity">Cleanup Excess</button>
+              ` : ''}
             ` : `
               <button class="secondary-button small mark-acquired-btn"
                 data-type-id="${m.typeId}"
@@ -848,6 +860,14 @@ async function loadMaterials() {
     });
   });
 
+  container.querySelectorAll('.cleanup-excess-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const typeId = parseInt(btn.dataset.typeId);
+      const materialName = btn.dataset.materialName;
+      cleanupExcessAcquisition(typeId, materialName);
+    });
+  });
+
   container.querySelectorAll('.edit-acquisition-btn').forEach(btn => {
     btn.addEventListener('click', () => {
       const typeId = parseInt(btn.dataset.typeId);
@@ -867,7 +887,147 @@ async function loadMaterials() {
       editMaterialPrice(typeId, price);
     });
   });
+
+  // After rendering, check for warnings
+  checkAndDisplayMaterialWarnings(materials);
 }
+
+// Check and display material warnings
+async function checkAndDisplayMaterialWarnings(materials) {
+  const warningsContainer = document.getElementById('material-warnings');
+  if (!warningsContainer) return;
+
+  const warnings = [];
+
+  // Check for excess acquisitions
+  const excessMaterials = materials.filter(m =>
+    m.manuallyAcquiredQuantity > 0 && m.manuallyAcquiredQuantity > m.quantity
+  );
+
+  if (excessMaterials.length > 0) {
+    // Get type names for display
+    const typeIds = excessMaterials.map(m => m.typeId);
+    const names = await window.electronAPI.sde.getTypeNames(typeIds);
+
+    warnings.push({
+      type: 'excess_acquisitions',
+      materials: excessMaterials.map(m => ({
+        typeId: m.typeId,
+        typeName: names[m.typeId] || `Type ${m.typeId}`,
+        needed: m.quantity,
+        acquired: m.manuallyAcquiredQuantity,
+        excess: m.manuallyAcquiredQuantity - m.quantity
+      }))
+    });
+  }
+
+  // Render warnings
+  if (warnings.length > 0) {
+    renderMaterialWarnings(warnings);
+  } else {
+    warningsContainer.style.display = 'none';
+    warningsContainer.innerHTML = '';
+  }
+}
+
+// Render material warnings
+function renderMaterialWarnings(warnings) {
+  const warningsContainer = document.getElementById('material-warnings');
+  if (!warnings || warnings.length === 0) {
+    warningsContainer.innerHTML = '';
+    warningsContainer.style.display = 'none';
+    return;
+  }
+
+  let warningsHtml = '';
+
+  warnings.forEach(warning => {
+    if (warning.type === 'excess_acquisitions') {
+      warningsHtml += `
+        <div class="alert alert-warning">
+          <h4>⚠️ Excess Acquisitions Detected</h4>
+          <p>The following materials have more acquired than needed:</p>
+          <ul>
+            ${warning.materials.map(m => `
+              <li>
+                <strong>${escapeHtml(m.typeName)}</strong>:
+                Needed ${formatNumber(m.needed)},
+                Acquired ${formatNumber(m.acquired)}
+                (${formatNumber(m.excess)} excess)
+                <button class="warning-button small cleanup-excess-btn-warning"
+                        data-type-id="${m.typeId}"
+                        data-material-name="${escapeHtml(m.typeName)}">
+                  Fix
+                </button>
+              </li>
+            `).join('')}
+          </ul>
+          <button class="warning-button"
+                  onclick="cleanupAllExcessAcquisitions()">
+            Fix All
+          </button>
+        </div>
+      `;
+    }
+
+    if (warning.type === 'removed_acquisitions') {
+      warningsHtml += `
+        <div class="alert alert-info">
+          <h4>ℹ️ Acquisition Tracking Removed</h4>
+          <p>The following materials were removed from the plan and their acquisition tracking was deleted:</p>
+          <ul>
+            ${warning.materials.map(m => `
+              <li>
+                <strong>${escapeHtml(m.typeName)}</strong>:
+                Had ${formatNumber(m.acquiredQuantity)} marked as
+                ${m.method?.toUpperCase() || 'acquired'}
+              </li>
+            `).join('')}
+          </ul>
+          <button class="secondary-button" onclick="dismissWarning('removed_acquisitions')">
+            Dismiss
+          </button>
+        </div>
+      `;
+    }
+  });
+
+  warningsContainer.innerHTML = warningsHtml;
+  warningsContainer.style.display = 'block';
+
+  // Attach event listeners to inline cleanup buttons
+  warningsContainer.querySelectorAll('.cleanup-excess-btn-warning').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const typeId = parseInt(btn.dataset.typeId);
+      const materialName = btn.dataset.materialName;
+      cleanupExcessAcquisition(typeId, materialName);
+    });
+  });
+}
+
+// Cleanup all excess acquisitions
+window.cleanupAllExcessAcquisitions = async function() {
+  if (!confirm('Reduce all excess acquisitions to match needed quantities?')) {
+    return;
+  }
+
+  try {
+    showLoading('Cleaning up all excess acquisitions...');
+    const result = await window.electronAPI.plans.cleanupExcessAcquisitions(selectedPlanId, null);
+
+    if (result.success) {
+      await loadMaterials();
+      await loadOverview();
+      showToast(`All excess acquisitions adjusted${result.adjusted ? ` (${result.adjusted} material(s))` : ''}`, 'success');
+    } else {
+      showToast('Failed to cleanup excess: ' + result.error, 'error');
+    }
+  } catch (error) {
+    showToast('Failed to cleanup excess: ' + error.message, 'error');
+  } finally {
+    hideLoading();
+  }
+};
 
 // Show acquire material modal
 window.showAcquireMaterialModal = function(typeId, materialName, quantityNeeded = 0, alreadyAcquired = 0, stillNeeded = 0, currentManualQuantity = 0) {
@@ -1013,6 +1173,30 @@ window.unmarkMaterialAcquired = async function(typeId) {
     showToast('Material unmarked', 'success');
   } catch (error) {
     showToast('Failed to unmark material: ' + error.message, 'error');
+  } finally {
+    hideLoading();
+  }
+};
+
+// Cleanup excess acquisition
+window.cleanupExcessAcquisition = async function(typeId, materialName) {
+  if (!confirm(`Reduce acquired quantity for ${materialName} to match needed quantity?`)) {
+    return;
+  }
+
+  try {
+    showLoading('Cleaning up excess acquisition...');
+    const result = await window.electronAPI.plans.cleanupExcessAcquisitions(selectedPlanId, typeId);
+
+    if (result.success) {
+      await loadMaterials();
+      await loadOverview();
+      showToast(`Acquisition adjusted${result.adjusted ? ` (${result.adjusted} material(s))` : ''}`, 'success');
+    } else {
+      showToast('Failed to cleanup excess: ' + result.error, 'error');
+    }
+  } catch (error) {
+    showToast('Failed to cleanup excess: ' + error.message, 'error');
   } finally {
     hideLoading();
   }
