@@ -566,13 +566,16 @@ function getPendingMatches(planId) {
         ij.start_date,
         ij.end_date,
         ij.completed_date,
+        ij.character_id,
         pb.blueprint_type_id as plan_blueprint_type_id,
         pb.runs as plan_runs,
         pb.me_level,
-        pb.te_level
+        pb.te_level,
+        c.character_name
       FROM plan_job_matches jm
       JOIN esi_industry_jobs ij ON jm.job_id = ij.job_id
       JOIN plan_blueprints pb ON jm.plan_blueprint_id = pb.plan_blueprint_id
+      LEFT JOIN characters c ON ij.character_id = c.character_id
       WHERE jm.plan_id = ? AND jm.status = 'pending'
       ORDER BY jm.match_confidence DESC
     `).all(planId);
@@ -595,7 +598,9 @@ function getPendingMatches(planId) {
         status: row.job_status,
         startDate: row.start_date,
         endDate: row.end_date,
-        completedDate: row.completed_date
+        completedDate: row.completed_date,
+        characterId: row.character_id,
+        characterName: row.character_name
       },
       planBlueprint: {
         blueprintTypeId: row.plan_blueprint_type_id,
@@ -624,9 +629,11 @@ function getPendingMatches(planId) {
         wt.unit_price,
         wt.location_id,
         wt.is_buy,
-        wt.is_personal
+        wt.is_personal,
+        c.character_name
       FROM plan_transaction_matches tm
       JOIN esi_wallet_transactions wt ON tm.transaction_id = wt.transaction_id
+      LEFT JOIN characters c ON wt.character_id = c.character_id
       WHERE tm.plan_id = ? AND tm.status = 'pending'
       ORDER BY tm.match_confidence DESC
     `).all(planId);
@@ -651,7 +658,8 @@ function getPendingMatches(planId) {
         unitPrice: row.unit_price,
         locationId: row.location_id,
         isBuy: row.is_buy,
-        isPersonal: row.is_personal
+        isPersonal: row.is_personal,
+        characterName: row.character_name
       }
     }));
 
@@ -789,13 +797,16 @@ function getConfirmedJobMatches(planId) {
         ij.start_date,
         ij.end_date,
         ij.completed_date,
+        ij.character_id,
         pb.blueprint_type_id as plan_blueprint_type_id,
         pb.runs as plan_runs,
         pb.me_level,
-        pb.te_level
+        pb.te_level,
+        c.character_name
       FROM plan_job_matches jm
       JOIN esi_industry_jobs ij ON jm.job_id = ij.job_id
       JOIN plan_blueprints pb ON jm.plan_blueprint_id = pb.plan_blueprint_id
+      LEFT JOIN characters c ON ij.character_id = c.character_id
       WHERE jm.plan_id = ? AND jm.status = 'confirmed'
       ORDER BY jm.confirmed_at DESC
     `).all(planId);
@@ -820,7 +831,9 @@ function getConfirmedJobMatches(planId) {
         status: row.job_status,
         startDate: row.start_date,
         endDate: row.end_date,
-        completedDate: row.completed_date
+        completedDate: row.completed_date,
+        characterId: row.character_id,
+        characterName: row.character_name
       },
       planBlueprint: {
         blueprintTypeId: row.plan_blueprint_type_id,
@@ -882,15 +895,18 @@ function getConfirmedTransactionMatches(planId) {
         tm.status,
         tm.confirmed_at,
         wt.transaction_id as wt_transaction_id,
+        wt.character_id,
         wt.date,
         wt.is_buy,
         wt.is_personal,
         wt.location_id,
         wt.quantity,
         wt.type_id as wt_type_id,
-        wt.unit_price
+        wt.unit_price,
+        c.character_name
       FROM plan_transaction_matches tm
       JOIN esi_wallet_transactions wt ON tm.transaction_id = wt.transaction_id
+      LEFT JOIN characters c ON wt.character_id = c.character_id
       WHERE tm.plan_id = ? AND tm.status = 'confirmed'
       ORDER BY tm.confirmed_at DESC
     `).all(planId);
@@ -908,13 +924,15 @@ function getConfirmedTransactionMatches(planId) {
       confirmedAt: row.confirmed_at,
       transaction: {
         transactionId: row.wt_transaction_id,
+        characterId: row.character_id,
         date: row.date,
         isBuy: row.is_buy,
         isPersonal: row.is_personal,
         locationId: row.location_id,
         quantity: row.quantity,
         typeId: row.wt_type_id,
-        unitPrice: row.unit_price
+        unitPrice: row.unit_price,
+        characterName: row.character_name
       }
     }));
 

@@ -2683,6 +2683,7 @@ async function loadJobs() {
           <thead>
             <tr>
               <th>Blueprint</th>
+              <th>Character</th>
               <th>Job ID</th>
               <th>Runs</th>
               <th>Status</th>
@@ -2704,6 +2705,7 @@ async function loadJobs() {
               return `
                 <tr data-match-id="${match.matchId}">
                   <td>${escapeHtml(blueprintName)}</td>
+                  <td>${escapeHtml(match.job?.characterName || 'Unknown')}</td>
                   <td>${match.job?.jobId || 'N/A'}</td>
                   <td>${match.job?.runs || 'N/A'}</td>
                   <td>${jobStatus}</td>
@@ -2733,6 +2735,7 @@ async function loadJobs() {
             <thead>
               <tr>
                 <th>Blueprint</th>
+                <th>Character</th>
                 <th>Job ID</th>
                 <th>Runs</th>
                 <th>Status</th>
@@ -2753,6 +2756,7 @@ async function loadJobs() {
                 return `
                   <tr data-match-id="${match.matchId}">
                     <td>${escapeHtml(blueprintName)}</td>
+                    <td>${escapeHtml(match.job?.characterName || 'Unknown')}</td>
                     <td>${match.job?.jobId || 'N/A'}</td>
                     <td>${match.job?.runs || 'N/A'}</td>
                     <td>${jobStatus}</td>
@@ -2820,6 +2824,7 @@ async function loadTransactions() {
           <thead>
             <tr>
               <th>Item</th>
+              <th>Character</th>
               <th>Transaction ID</th>
               <th>Quantity</th>
               <th>Price</th>
@@ -2844,6 +2849,7 @@ async function loadTransactions() {
               return `
                 <tr data-match-id="${match.matchId}">
                   <td>${escapeHtml(typeName)}</td>
+                  <td>${escapeHtml(match.transaction?.characterName || 'Unknown')}</td>
                   <td>${match.transaction?.transactionId || 'N/A'}</td>
                   <td>${formatNumber(quantity)}</td>
                   <td>${formatISK(price)}</td>
@@ -2874,6 +2880,7 @@ async function loadTransactions() {
             <thead>
               <tr>
                 <th>Item</th>
+                <th>Character</th>
                 <th>Transaction ID</th>
                 <th>Quantity</th>
                 <th>Price</th>
@@ -2897,6 +2904,7 @@ async function loadTransactions() {
                 return `
                   <tr data-match-id="${match.matchId}">
                     <td>${escapeHtml(typeName)}</td>
+                    <td>${escapeHtml(match.transaction?.characterName || 'Unknown')}</td>
                     <td>${match.transaction?.transactionId || 'N/A'}</td>
                     <td>${formatNumber(quantity)}</td>
                     <td>${formatISK(price)}</td>
@@ -3554,21 +3562,28 @@ function updateProgressBar(type, completed, total, percent) {
 
 // Refresh ESI data
 async function refreshESIData() {
-  if (!currentCharacterId) {
-    showToast('No character selected', 'warning');
+  if (!selectedPlanId) {
+    showToast('No plan selected', 'warning');
     return;
   }
 
   try {
-    showLoading('Refreshing ESI data...');
-    const result = await window.electronAPI.plans.refreshESIData(currentCharacterId);
+    showLoading('Refreshing ESI data for all manufacturing characters...');
+    // Use plan-based refresh to fetch data for all selected manufacturing characters
+    const result = await window.electronAPI.plans.refreshPlanESIData(selectedPlanId);
 
     if (result.success) {
-      showToast(result.message || 'ESI data refreshed successfully', 'success');
+      const message = result.message || 'ESI data refreshed successfully';
+      if (result.errors && result.errors.length > 0) {
+        showToast(`${message} (${result.errors.length} error(s))`, 'warning');
+        console.error('ESI refresh errors:', result.errors);
+      } else {
+        showToast(message, 'success');
+      }
       // Reload current tab to show updated data
       await loadTabContent(activeTab);
     } else {
-      showToast('Failed to refresh ESI data: ' + (result.error || 'Unknown error'), 'error');
+      showToast('Failed to refresh ESI data: ' + (result.message || 'Unknown error'), 'error');
     }
   } catch (error) {
     showToast('Failed to refresh ESI data: ' + error.message, 'error');
