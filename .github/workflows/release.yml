@@ -69,44 +69,123 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           body: |
-            ## Download Guide
+            ## What Should I Download?
 
-            Choose the appropriate installer for your platform:
+            **Quick Guide:**
+            - **Windows users**: Download **`Quantum-Forge-Setup-*.exe`** (installer) or `Quantum-Forge-*.exe` (portable)
+            - **Mac users (Apple Silicon - M1/M2/M3/M4)**: Download **`Quantum-Forge-*-arm64.dmg`** OR the universal **`Quantum-Forge-*.dmg`**
+            - **Mac users (Intel)**: Download **`Quantum-Forge-*.dmg`** (universal) or `Quantum-Forge-*-mac.zip`
+            - **Linux users**: Download **`Quantum-Forge-*.AppImage`** (all distros) or `quantum-forge_*_amd64.deb` (Debian/Ubuntu)
 
-            ### Windows
-            - **`Quantum Forge Setup *.exe`** (RECOMMENDED) - Full installer
-              - Download and run the installer
-              - Installs to Program Files with Start Menu shortcuts
-              - Includes automatic updates
-
-            - **`Quantum Forge *.exe`** - Portable executable
-              - Download and run directly (no installation required)
-              - Good for USB drives or testing
-
-            ### macOS
-            - **`Quantum Forge-*.dmg`** (RECOMMENDED) - Standard macOS installer
-              - Download and open the DMG file
-              - Drag "Quantum Forge" to your Applications folder
-              - Supports both Intel (x64) and Apple Silicon (arm64)
-
-            - **`Quantum Forge-*.zip`** - Archive format
-              - Extract and move to Applications folder
-              - Used for auto-updates
-
-            ### Linux
-            - **`Quantum Forge-*.AppImage`** (RECOMMENDED) - Universal Linux executable
-              - Download the file
-              - Make it executable: `chmod +x Quantum-Forge-*.AppImage`
-              - Run directly: `./Quantum-Forge-*.AppImage`
-              - Works on most distributions
-
-            - **`quantum-forge-*.deb`** - Debian/Ubuntu package
-              - For Debian, Ubuntu, and derivatives
-              - Install: `sudo dpkg -i quantum-forge-*.deb`
-              - Integrates with system package manager
+            _Not sure which Mac you have? The universal `Quantum-Forge-*.dmg` (without "arm64" in the name) works on both Intel and Apple Silicon Macs._
 
             ---
 
-            **Note:** Files named `latest*.yml` are auto-update metadata files and are not needed for manual installation.
+            ## Download Guide by Platform
+
+            ### Windows (x64/AMD64 only)
+
+            All Windows builds support standard 64-bit Intel/AMD processors (x64/AMD64). No ARM64 support currently.
+
+            - **`Quantum-Forge-Setup-*.exe`** (RECOMMENDED) - Full NSIS installer
+              - Download and run the installer
+              - Installs to Program Files with Start Menu shortcuts
+              - Includes automatic updates
+              - **Best for most users**
+
+            - **`Quantum-Forge-*.exe`** - Portable executable
+              - Download and run directly (no installation required)
+              - Good for USB drives, testing, or portable use
+              - Doesn't integrate with Start Menu
+
+            ---
+
+            ### macOS (Universal, Intel x64, and Apple Silicon arm64)
+
+            macOS builds come in multiple variants to optimize for different Mac processors:
+
+            **DMG Installers (Recommended):**
+
+            - **`Quantum-Forge-*.dmg`** (RECOMMENDED - Universal Binary)
+              - **Works on ALL Macs** (Intel and Apple Silicon)
+              - Download and open the DMG file
+              - Drag "Quantum Forge" to your Applications folder
+              - Larger file size (~118 MB) but maximum compatibility
+              - **Best choice if you're unsure which Mac you have**
+
+            - **`Quantum-Forge-*-arm64.dmg`** - Apple Silicon optimized
+              - **Only for Apple Silicon Macs** (M1, M2, M3, M4 chips)
+              - Optimized specifically for ARM64 architecture
+              - Slightly smaller file size than universal
+              - Will NOT work on Intel Macs
+
+            **ZIP Archives (For advanced users or auto-updates):**
+
+            - **`Quantum-Forge-*-mac.zip`** - Intel x64
+              - For Intel-based Macs only
+              - Extract and move to Applications folder
+
+            - **`Quantum-Forge-*-arm64-mac.zip`** - Apple Silicon arm64
+              - For Apple Silicon Macs only (M1/M2/M3/M4)
+              - Extract and move to Applications folder
+
+            **How to tell which Mac you have:**
+            - Click the Apple menu () → "About This Mac"
+            - If you see "Apple M1", "M2", "M3", or "M4" → You have Apple Silicon (use arm64 or universal)
+            - If you see "Intel Core i5/i7/i9" → You have Intel (use universal or mac.zip)
+
+            ---
+
+            ### Linux (x64/AMD64 only)
+
+            All Linux builds support standard 64-bit Intel/AMD processors (x64/AMD64). No ARM64 support currently.
+
+            - **`Quantum-Forge-*.AppImage`** (RECOMMENDED) - Universal Linux executable
+              - **Works on most Linux distributions**
+              - Download the file
+              - Make it executable: `chmod +x Quantum-Forge-*.AppImage`
+              - Run directly: `./Quantum-Forge-*.AppImage`
+              - No installation required, fully portable
+              - **Best for most Linux users**
+
+            - **`quantum-forge_*_amd64.deb`** - Debian/Ubuntu package
+              - For Debian, Ubuntu, and derivatives (Pop!_OS, Linux Mint, etc.)
+              - Install: `sudo dpkg -i quantum-forge_*_amd64.deb` or double-click in file manager
+              - Integrates with system package manager
+              - Appears in application menu automatically
+
+            ---
+
+            ## Architecture Notes
+
+            **What is AMD64/x64?**
+            - Standard 64-bit Intel/AMD processor architecture
+            - Used in most Windows PCs and Intel-based Macs (pre-2020)
+            - Sometimes called "x86_64" or "x64"
+
+            **What is ARM64/Apple Silicon?**
+            - Apple's custom ARM-based processor architecture
+            - Found in Apple Silicon Macs: M1 (2020), M2 (2022), M3 (2023), M4 (2024+)
+            - More power-efficient with better battery life
+            - Different instruction set than Intel/AMD processors
+
+            **What is a Universal Binary? (macOS only)**
+            - A single application file containing both Intel x64 and Apple Silicon arm64 code
+            - Automatically runs the correct version for your Mac's processor
+            - Larger file size (~2x) but works on any Mac
+            - Convenient if you're unsure which processor you have
+
+            ---
+
+            ## Files You Can Ignore
+
+            These files are generated for the app's built-in auto-update system and are not needed for manual installation:
+
+            - **`*.blockmap`** - Binary delta update files (used by auto-updater for efficient downloads)
+            - **`latest.yml`** - Windows auto-update metadata
+            - **`latest-mac.yml`** - macOS auto-update metadata
+            - **`latest-linux.yml`** - Linux auto-update metadata
+
+            If you're manually downloading and installing, you can safely ignore these files.
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
