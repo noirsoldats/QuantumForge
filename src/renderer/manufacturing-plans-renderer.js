@@ -101,6 +101,10 @@ function setupEventListeners() {
   document.getElementById('cancel-configure-btn').addEventListener('click', hideConfigureBlueprintModal);
   document.getElementById('confirm-configure-btn').addEventListener('click', confirmAddBlueprint);
 
+  // Update runs/line preview when runs or lines change
+  document.getElementById('config-runs').addEventListener('input', updateRunsPerLinePreview);
+  document.getElementById('config-lines').addEventListener('input', updateRunsPerLinePreview);
+
   // Materials tab
   document.getElementById('include-assets-checkbox').addEventListener('change', loadMaterials);
   document.getElementById('refresh-prices-btn').addEventListener('click', refreshPrices);
@@ -355,7 +359,10 @@ async function loadBlueprints() {
   }));
 
   let html = '<table><thead><tr>';
-  html += '<th>Blueprint</th><th>Runs</th><th>Lines</th><th>ME</th><th>TE</th>';
+  html += '<th>Blueprint</th>';
+  html += '<th>Runs <span class="info-icon" title="Total manufacturing runs to complete. Materials are calculated per-line, then summed across all lines.">&#9432;</span></th>';
+  html += '<th>Lines <span class="info-icon" title="Number of parallel production lines. Runs are split across lines (ceil(Runs / Lines) per line). ME efficiency floor is applied per-line.">&#9432;</span></th>';
+  html += '<th>ME</th><th>TE</th>';
   html += '<th>Facility</th><th>';
   html += 'Build Plan';
   html += '<span class="info-icon" title="Raw Materials: Expand all intermediate blueprints to raw materials&#10;Buy Components: Purchase component-level materials from market&#10;Buy Intermediate: Purchase the finished intermediate product directly from market&#10;Build/Buy: AI-optimized building vs buying (coming in a future update)">ⓘ</span>';
@@ -368,6 +375,9 @@ async function loadBlueprints() {
     const facilityId = blueprint.facilityId || '';
 
     // Top-level blueprint row
+    // Calculate runs per line for display hint
+    const runsPerLine = Math.ceil(blueprint.runs / blueprint.lines);
+
     html += `
       <tr data-blueprint-id="${blueprint.planBlueprintId}" data-editing="false" class="top-level-blueprint">
         <td><strong>${escapeHtml(name)}</strong></td>
@@ -376,7 +386,7 @@ async function loadBlueprints() {
           <input type="number" class="cell-input" value="${blueprint.runs}" min="1" style="display: none;">
         </td>
         <td class="editable-cell" data-field="lines">
-          <span class="cell-value">${blueprint.lines}</span>
+          <span class="cell-value">${blueprint.lines}<span class="runs-per-line-hint">(${runsPerLine}/line)</span></span>
           <input type="number" class="cell-input" value="${blueprint.lines}" min="1" style="display: none;">
         </td>
         <td class="editable-cell" data-field="meLevel">
@@ -1245,9 +1255,12 @@ async function loadProducts() {
     productsByDepth[depth].push(product);
   }
 
-  // Get product names
+  // Get product names and volumes
   const typeIds = products.map(p => p.typeId);
-  const names = await window.electronAPI.sde.getTypeNames(typeIds);
+  const [names, volumes] = await Promise.all([
+    window.electronAPI.sde.getTypeNames(typeIds),
+    window.electronAPI.sde.getItemVolumes(typeIds)
+  ]);
 
   let html = '';
 
@@ -1261,6 +1274,7 @@ async function loadProducts() {
             <tr>
               <th>Product</th>
               <th>Quantity</th>
+              <th>Total m³</th>
               <th>Price</th>
               <th>Total Value</th>
             </tr>
@@ -1268,6 +1282,8 @@ async function loadProducts() {
           <tbody>
             ${productsByDepth[0].map(p => {
               const name = names[p.typeId] || `Type ${p.typeId}`;
+              const volume = volumes[p.typeId] || 0;
+              const totalM3 = volume * p.quantity;
               const price = p.basePrice ? formatISK(p.basePrice) : 'N/A';
               const total = p.basePrice ? formatISK(p.basePrice * p.quantity) : 'N/A';
 
@@ -1275,6 +1291,7 @@ async function loadProducts() {
                 <tr>
                   <td>${escapeHtml(name)}</td>
                   <td>${formatNumber(p.quantity)}</td>
+                  <td>${formatNumber(totalM3, 2)} m³</td>
                   <td>${price}</td>
                   <td>${total}</td>
                 </tr>
@@ -1307,6 +1324,7 @@ async function loadProducts() {
             <tr>
               <th>Product</th>
               <th>Quantity</th>
+              <th>Total m³</th>
               <th>Price</th>
               <th>Total Value</th>
             </tr>
@@ -1314,6 +1332,8 @@ async function loadProducts() {
           <tbody>
             ${depthProducts.map(p => {
               const name = names[p.typeId] || `Type ${p.typeId}`;
+              const volume = volumes[p.typeId] || 0;
+              const totalM3 = volume * p.quantity;
               const price = p.basePrice ? formatISK(p.basePrice) : 'N/A';
               const total = p.basePrice ? formatISK(p.basePrice * p.quantity) : 'N/A';
               const rowIndent = depth * 20;
@@ -1322,6 +1342,7 @@ async function loadProducts() {
                 <tr>
                   <td style="padding-left: ${rowIndent}px;">${escapeHtml(name)}</td>
                   <td>${formatNumber(p.quantity)}</td>
+                  <td>${formatNumber(totalM3, 2)} m³</td>
                   <td>${price}</td>
                   <td>${total}</td>
                 </tr>
@@ -1991,7 +2012,21 @@ async function showConfigureBlueprintModal(blueprintName) {
     facilitySelect.value = defaultFacilityId;
   }
 
+  // Initialize runs per line preview
+  updateRunsPerLinePreview();
+
   document.getElementById('configure-blueprint-modal').style.display = 'flex';
+}
+
+// Update runs per line preview in configure modal
+function updateRunsPerLinePreview() {
+  const runs = parseInt(document.getElementById('config-runs').value) || 1;
+  const lines = parseInt(document.getElementById('config-lines').value) || 1;
+  const runsPerLine = Math.ceil(runs / lines);
+  const previewElement = document.getElementById('runs-per-line-value');
+  if (previewElement) {
+    previewElement.textContent = runsPerLine;
+  }
 }
 
 // Hide configure blueprint modal

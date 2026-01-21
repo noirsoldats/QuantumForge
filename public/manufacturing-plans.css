@@ -2144,3 +2144,52 @@ tr[data-editing="true"] {
 .alert-info h4 {
   color: #17a2b8;
 }
+
+/* ============================================================================
+   RUNS/LINES UI ENHANCEMENTS
+   ============================================================================ */
+
+/* Helper text under inputs in modals */
+.input-help {
+  display: block;
+  font-size: 11px;
+  color: #72767d;
+  margin-top: -12px;
+  margin-bottom: 12px;
+}
+
+/* Runs per line hint in blueprint table */
+.runs-per-line-hint {
+  font-size: 11px;
+  color: #72767d;
+  margin-left: 6px;
+}
+
+/* Config preview box in configure modal */
+.config-preview {
+  background: rgba(88, 101, 242, 0.1);
+  border: 1px solid rgba(88, 101, 242, 0.3);
+  border-radius: 4px;
+  padding: 10px 14px;
+  margin-bottom: 16px;
+  font-size: 13px;
+  color: #dcddde;
+}
+
+.config-preview span {
+  font-weight: 600;
+  color: #5865f2;
+}
+
+/* Info icon tooltip styling in table headers */
+th .info-icon {
+  cursor: help;
+  margin-left: 4px;
+  opacity: 0.7;
+  font-size: 12px;
+}
+
+th .info-icon:hover {
+  opacity: 1;
+  color: #5865f2;
+}

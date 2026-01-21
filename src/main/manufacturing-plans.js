@@ -58,26 +58,24 @@ async function classifyMaterials(materials) {
  * Calculate runs needed for an intermediate blueprint
  * @param {number} materialQuantity - Units of product needed
  * @param {number} blueprintTypeId - Blueprint type ID
- * @param {number} productionLines - Number of concurrent production lines (default 1)
  * @returns {number} Runs needed
  */
-function calculateIntermediateRuns(materialQuantity, blueprintTypeId, productionLines = 1) {
+function calculateIntermediateRuns(materialQuantity, blueprintTypeId) {
   const product = getBlueprintProduct(blueprintTypeId);
   const productsPerRun = product ? product.quantity : 1;
-  return Math.ceil((materialQuantity * productionLines) / productsPerRun);
+  return Math.ceil(materialQuantity / productsPerRun);
 }
 
 /**
  * Calculate runs needed for a reaction
  * @param {number} materialQuantity - Units of product needed
  * @param {number} reactionTypeId - Reaction formula type ID
- * @param {number} productionLines - Number of concurrent production lines (default 1)
  * @returns {Promise<number>} Runs needed
  */
-async function calculateReactionRuns(materialQuantity, reactionTypeId, productionLines = 1) {
+async function calculateReactionRuns(materialQuantity, reactionTypeId) {
   const product = await getReactionProduct(reactionTypeId);
   const productsPerRun = product ? product.quantity : 1;
-  return Math.ceil((materialQuantity * productionLines) / productsPerRun);
+  return Math.ceil(materialQuantity / productsPerRun);
 }
 
 /**
@@ -539,11 +537,14 @@ async function detectAndCreateIntermediates(parentBlueprintId, planId, character
     // Parse facility snapshot
     const facilitySnapshot = parent.facility_snapshot ? JSON.parse(parent.facility_snapshot) : null;
 
+    // Calculate runs per line for parent - ME floor applies per job
+    const parentRunsPerLine = Math.ceil(parent.runs / parent.lines);
+
     // CRITICAL: Call calculateBlueprintMaterials with useIntermediates=FALSE
-    // This gives us component-level materials only (same as recalculatePlanMaterials)
+    // Calculate materials for runs PER LINE (ME floor applies per job)
     const calculation = await calculateBlueprintMaterials(
       parent.blueprint_type_id,
-      parent.runs,
+      parentRunsPerLine,  // Runs per line - ME floor applies here
       parent.me_level,
       characterId,
       facilitySnapshot,
@@ -554,20 +555,23 @@ async function detectAndCreateIntermediates(parentBlueprintId, planId, character
     const now = Date.now();
 
     // Classify materials using helper function
+    // Note: calculation.materials contains per-line quantities
     const { intermediates, rawMaterials } = await classifyMaterials(calculation.materials);
 
     // Process each intermediate
     for (const intermediate of intermediates) {
       const intermediateBlueprintTypeId = intermediate.blueprintTypeId;
       const materialTypeId = intermediate.typeId;
-      const materialQuantity = intermediate.quantity;
+      // materialQuantity is per-line, multiply by lines for total needed
+      const materialQuantityPerLine = intermediate.quantity;
+      const totalMaterialsNeeded = materialQuantityPerLine * parent.lines;
       const product = intermediate.product;
 
-      // Calculate runs needed using helper function
-      const runsNeeded = calculateIntermediateRuns(materialQuantity, intermediateBlueprintTypeId);
+      // Calculate runs needed using helper function with total materials needed
+      const runsNeeded = calculateIntermediateRuns(totalMaterialsNeeded, intermediateBlueprintTypeId);
       const productsPerRun = product ? product.quantity : 1;
 
-      console.log(`[Plans] Intermediate detected: ${intermediateBlueprintTypeId} - need ${materialQuantity} units @ ${productsPerRun}/run = ${runsNeeded} runs (depth ${depth})`);
+      console.log(`[Plans] Intermediate detected: ${intermediateBlueprintTypeId} - need ${totalMaterialsNeeded} units @ ${productsPerRun}/run = ${runsNeeded} runs (depth ${depth})`);
 
       // Check if this intermediate already exists for this parent
       const existing = db.prepare(`
@@ -625,7 +629,7 @@ async function detectAndCreateIntermediates(parentBlueprintId, planId, character
           now
         );
 
-        console.log(`[Plans] Created intermediate ${intermediateBlueprintTypeId} (${runsNeeded} runs for ${materialQuantity * parent.lines} ${product ? product.typeName : 'units'})`);
+        console.log(`[Plans] Created intermediate ${intermediateBlueprintTypeId} (${runsNeeded} runs for ${totalMaterialsNeeded} ${product ? product.typeName : 'units'})`);
         createdIntermediateIds.push(intermediateBlueprintId);
       }
 
@@ -686,10 +690,13 @@ async function detectAndCreateReactions(parentBlueprintId, planId, characterId, 
     // Parse facility snapshot
     const facilitySnapshot = parent.facility_snapshot ? JSON.parse(parent.facility_snapshot) : null;
 
+    // Calculate runs per line for parent - ME floor applies per job
+    const parentRunsPerLine = Math.ceil(parent.runs / parent.lines);
+
     // Determine parent type and calculate materials accordingly
     let materials;
     if (parent.blueprint_type === 'reaction') {
-      // Parent is a reaction - get its inputs
+      // Parent is a reaction - get its inputs (reactions always have lines=1)
       const reactionCalculation = await calculateReactionMaterials(
         parent.blueprint_type_id,  // This is the reactionTypeId for reactions
         parent.runs,
@@ -698,10 +705,10 @@ async function detectAndCreateReactions(parentBlueprintId, planId, characterId, 
       );
       materials = reactionCalculation.materials;
     } else {
-      // Parent is a manufacturing blueprint
+      // Parent is a manufacturing blueprint - calculate per-line materials
       const calculation = await calculateBlueprintMaterials(
         parent.blueprint_type_id,
-        parent.runs,
+        parentRunsPerLine,  // Runs per line - ME floor applies here
         parent.me_level,
         characterId,
         facilitySnapshot,
@@ -714,20 +721,23 @@ async function detectAndCreateReactions(parentBlueprintId, planId, characterId, 
     const now = Date.now();
 
     // Classify materials using helper function
+    // Note: materials contain per-line quantities for manufacturing blueprints
     const { reactions } = await classifyMaterials(materials);
 
     // Process each reaction
     for (const reaction of reactions) {
       const reactionTypeId = reaction.reactionTypeId;
       const materialTypeId = reaction.typeId;
-      const materialQuantity = reaction.quantity;
+      // For manufacturing blueprints, multiply by lines for total; for reactions, lines=1
+      const materialQuantityPerLine = reaction.quantity;
+      const totalMaterialsNeeded = materialQuantityPerLine * parent.lines;
       const product = reaction.product;
 
-      // Calculate runs needed using helper function
-      const runsNeeded = await calculateReactionRuns(materialQuantity, reactionTypeId);
+      // Calculate runs needed using helper function with total materials needed
+      const runsNeeded = await calculateReactionRuns(totalMaterialsNeeded, reactionTypeId);
       const productsPerRun = product ? product.quantity : 1;
 
-      console.log(`[Plans] Reaction detected: ${reactionTypeId} - need ${materialQuantity} units @ ${productsPerRun}/run = ${runsNeeded} runs (depth ${depth})`);
+      console.log(`[Plans] Reaction detected: ${reactionTypeId} - need ${totalMaterialsNeeded} units @ ${productsPerRun}/run = ${runsNeeded} runs (depth ${depth})`);
 
       // Check if this reaction already exists for this parent
       const existing = db.prepare(`
@@ -1816,7 +1826,7 @@ function flattenIntermediates(intermediateComponents, currentDepth = 1) {
 /**
  * Recursively expand an intermediate blueprint into its materials
  * @param {number} intermediateBlueprintTypeId - Blueprint type ID of the intermediate
- * @param {number} runsNeeded - Number of runs needed (from parent's materials list)
+ * @param {number} unitsNeeded - Total units of product needed (will be converted to runs)
  * @param {object} intermediateConfig - Config from plan_blueprints (if exists)
  * @param {object} parentFacility - Parent blueprint's facility (fallback)
  * @param {string} characterId - Character ID for owned blueprint lookup
@@ -1827,7 +1837,7 @@ function flattenIntermediates(intermediateComponents, currentDepth = 1) {
  */
 async function expandIntermediate(
   intermediateBlueprintTypeId,
-  runsNeeded,
+  unitsNeeded,
   intermediateConfig,
   parentFacility,
   characterId,
@@ -1854,6 +1864,9 @@ async function expandIntermediate(
     }
   }
 
+  // Convert units needed to runs needed
+  const runsNeeded = calculateIntermediateRuns(unitsNeeded, intermediateBlueprintTypeId);
+
   // Convert use_intermediates to boolean for calculateBlueprintMaterials
   const shouldExpandSubIntermediates = (useIntermediates === 'raw_materials' || useIntermediates === 'build_buy');
 
@@ -1872,6 +1885,7 @@ async function expandIntermediate(
   const intermediateProducts = [];
 
   // Track this intermediate as a product (for plan_products)
+  // The actual quantity produced = runs * baseQuantity (may be more than unitsNeeded due to rounding)
   const product = calculation.product;
   if (product) {
     const baseQty = product.baseQuantity || 1;
@@ -2219,11 +2233,15 @@ async function recalculatePlanMaterials(planId, refreshPrices = false) {
     for (const blueprint of topLevelBlueprints) {
       const facility = blueprint.facilitySnapshot;
 
+      // Calculate runs per line - this is how many runs each production line will do
+      // ME floor applies per-line (per job), so we need to calculate materials this way
+      const runsPerLine = Math.ceil(blueprint.runs / blueprint.lines);
+
       // ALWAYS call calculateBlueprintMaterials with useIntermediates=false
-      // This gives us component-level materials only
+      // Calculate materials for runs PER LINE (ME floor applies per job)
       const calculation = await calculateBlueprintMaterials(
         blueprint.blueprintTypeId,
-        blueprint.runs,
+        runsPerLine,  // Runs per line - ME floor applies here
         blueprint.meLevel,
         plan.character_id,
         facility,
@@ -2242,7 +2260,9 @@ async function recalculatePlanMaterials(planId, refreshPrices = false) {
         for (const intermediate of intermediates) {
           const intermediateBlueprintId = intermediate.blueprintTypeId;
           const materialTypeId = intermediate.typeId;
-          const materialQuantity = intermediate.quantity;
+          // materialQuantity is per-line, multiply by lines for total needed
+          const materialQuantityPerLine = intermediate.quantity;
+          const totalMaterialsNeeded = materialQuantityPerLine * blueprint.lines;
 
           // Look up config in plan_blueprints for this intermediate
           // Filter by parent_blueprint_id to get the correct intermediate instance
@@ -2253,8 +2273,8 @@ async function recalculatePlanMaterials(planId, refreshPrices = false) {
             LIMIT 1
           `).get(planId, intermediateBlueprintId, blueprint.planBlueprintId);
 
-          // Calculate correct runs based on current material requirements
-          const correctRunsNeeded = calculateIntermediateRuns(materialQuantity, intermediateBlueprintId);
+          // Calculate correct runs based on total material requirements
+          const correctRunsNeeded = calculateIntermediateRuns(totalMaterialsNeeded, intermediateBlueprintId);
 
           // Update intermediate runs if they've changed
           if (intermediateConfig && intermediateConfig.runs !== correctRunsNeeded) {
@@ -2269,7 +2289,7 @@ async function recalculatePlanMaterials(planId, refreshPrices = false) {
           // Expand this intermediate recursively
           const expansion = await expandIntermediate(
             intermediateBlueprintId,
-            materialQuantity * blueprint.lines,  // Account for production lines
+            totalMaterialsNeeded,  // Total materials needed across all lines
             intermediateConfig ? {
               meLevel: intermediateConfig.me_level,
               teLevel: intermediateConfig.te_level,
@@ -2319,7 +2339,8 @@ async function recalculatePlanMaterials(planId, refreshPrices = false) {
         const product = calculation.product;
         if (product && product.typeID) {
           const baseQty = product.baseQuantity || 1;
-          const totalProductQty = baseQty * blueprint.runs * blueprint.lines;
+          // Total products = baseQuantity * total runs (runs = total to manufacture)
+          const totalProductQty = baseQty * blueprint.runs;
 
           aggregatedMaterials[product.typeID] =
             (aggregatedMaterials[product.typeID] || 0) + totalProductQty;
@@ -2334,9 +2355,10 @@ async function recalculatePlanMaterials(planId, refreshPrices = false) {
       // Get final product for this blueprint
       const product = calculation.product;
       if (product) {
-        // Use baseQuantity (per run) from SDE and multiply by actual runs and lines
+        // Total products = baseQuantity * total runs
+        // runs = total manufacturing runs, lines = parallel production lines to split across
         const baseQty = product.baseQuantity || 1;
-        const totalProductQty = baseQty * blueprint.runs * blueprint.lines;
+        const totalProductQty = baseQty * blueprint.runs;
         aggregatedProducts[product.typeID] = (aggregatedProducts[product.typeID] || 0) + totalProductQty;
       }
     }
@@ -2346,8 +2368,14 @@ async function recalculatePlanMaterials(planId, refreshPrices = false) {
     // Reactions are created with parent_blueprint_id = NULL (aggregated, not per-parent)
     console.log(`[Plans] Detecting reactions from aggregated materials for plan ${planId}`);
 
-    // Check if any blueprint has reactionsAsIntermediates enabled
-    const hasReactionsEnabled = topLevelBlueprints.some(bp =>
+    // Get plan-level reactions setting
+    const planSettings = getPlanIndustrySettings(planId);
+    const planReactionsEnabled = planSettings.reactionsAsIntermediates;
+
+    // Reactions are only processed if:
+    // 1. Plan-level "Calculate Reactions as Intermediates" is enabled, AND
+    // 2. At least one blueprint has useIntermediates set to expand reactions
+    const hasReactionsEnabled = planReactionsEnabled && topLevelBlueprints.some(bp =>
       bp.useIntermediates === 'raw_materials' || bp.useIntermediates === 'build_buy'
     );
 

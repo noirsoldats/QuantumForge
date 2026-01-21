@@ -461,11 +461,17 @@
       <div class="modal-body">
         <h3 id="config-blueprint-name">Blueprint Name</h3>
 
-        <label for="config-runs">Runs</label>
+        <label for="config-runs">Total Runs</label>
         <input type="number" id="config-runs" class="input-field" value="1" min="1">
+        <span class="input-help">Total manufacturing runs to complete</span>
 
         <label for="config-lines">Production Lines</label>
         <input type="number" id="config-lines" class="input-field" value="1" min="1">
+        <span class="input-help">Runs are split across lines (affects ME calculation)</span>
+
+        <div id="runs-per-line-preview" class="config-preview">
+          Runs per line: <span id="runs-per-line-value">1</span>
+        </div>
 
         <label for="config-me">Material Efficiency (ME)</label>
         <input type="number" id="config-me" class="input-field" value="0" min="0" max="10">
