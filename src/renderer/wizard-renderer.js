@@ -32,15 +32,7 @@ const wizardState = {
     outputMinVolume: 1000,
     warningThreshold: 30,
   },
-  facilityChoice: 'jita', // 'jita' or 'custom'
-  customFacility: {
-    name: '',
-    facilityType: 'station', // 'station' or 'structure'
-    regionId: null,
-    systemId: null,
-    structureTypeId: null,
-    rigSlot: null,
-  },
+  facilityChoice: 'jita', // Always 'jita' - custom facility option removed
 };
 
 // DOM Elements
@@ -124,16 +116,7 @@ const elements = {
   // Step 5: Market Settings - Warning
   warningThreshold: document.getElementById('warning-threshold'),
 
-  // Step 7: Facility Choice
-  facilityChoiceRadios: document.getElementsByName('facility-choice'),
-  customFacilityForm: document.getElementById('custom-facility-form'),
-  facilityName: document.getElementById('facility-name'),
-  facilityTypeRadios: document.getElementsByName('facility-type'),
-  facilityRegion: document.getElementById('facility-region'),
-  facilitySystem: document.getElementById('facility-system'),
-  structureFields: document.getElementById('structure-fields'),
-  facilityStructureType: document.getElementById('facility-structure-type'),
-  facilityRig: document.getElementById('facility-rig'),
+  // Step 7: Facility (simplified - no custom facility form)
 
   // Step 8: Summary
   summarySDE: document.getElementById('summary-sde'),
@@ -260,41 +243,7 @@ function setupEventListeners() {
     }
   });
 
-  // Step 7: Facility Choice
-  elements.facilityChoiceRadios.forEach(radio => {
-    radio.addEventListener('change', (e) => {
-      handleFacilityChoiceChange(e.target.value);
-    });
-  });
-
-  elements.facilityTypeRadios.forEach(radio => {
-    radio.addEventListener('change', (e) => {
-      handleFacilityTypeChange(e.target.value);
-    });
-  });
-
-  elements.facilityRegion.addEventListener('change', (e) => {
-    handleFacilityRegionChange(parseInt(e.target.value) || null);
-  });
-
-  elements.facilityStructureType.addEventListener('change', (e) => {
-    const rawValue = e.target.value;
-    const value = parseInt(rawValue);
-    console.log('Structure type changed - raw value:', rawValue, 'parsed value:', value, 'isNaN:', isNaN(value));
-    handleStructureTypeChange(isNaN(value) ? null : value);
-  });
-
-  elements.facilityName.addEventListener('input', (e) => {
-    wizardState.customFacility.name = e.target.value.trim();
-  });
-
-  elements.facilitySystem.addEventListener('change', (e) => {
-    wizardState.customFacility.systemId = parseInt(e.target.value) || null;
-  });
-
-  elements.facilityRig.addEventListener('change', (e) => {
-    wizardState.customFacility.rigSlot = parseInt(e.target.value) || null;
-  });
+  // Step 7: No event listeners needed - Jita 4-4 is always used
 }
 
 // Navigation
@@ -1036,228 +985,18 @@ async function saveMarketSettings() {
   }
 }
 
-// Step 7: Facility Choice Handlers
-
-function handleFacilityChoiceChange(choice) {
-  wizardState.facilityChoice = choice;
-
-  if (choice === 'custom') {
-    elements.customFacilityForm.style.display = 'block';
-    // Load regions if not already loaded
-    if (elements.facilityRegion.options.length <= 1) {
-      loadFacilityRegions();
-    }
-  } else {
-    elements.customFacilityForm.style.display = 'none';
-  }
-}
-
-function handleFacilityTypeChange(type) {
-  wizardState.customFacility.facilityType = type;
-
-  if (type === 'structure') {
-    elements.structureFields.style.display = 'block';
-    // Load structure types if not already loaded
-    if (elements.facilityStructureType.options.length <= 1) {
-      loadStructureTypes();
-    }
-  } else {
-    elements.structureFields.style.display = 'none';
-    // Clear structure-specific fields
-    wizardState.customFacility.structureTypeId = null;
-    wizardState.customFacility.rigSlot = null;
-  }
-}
-
-async function handleFacilityRegionChange(regionId) {
-  if (!regionId) return;
-
-  wizardState.customFacility.regionId = regionId;
-  wizardState.customFacility.systemId = null; // Reset system when region changes
-
-  // Load systems for selected region
-  await loadSystemsForRegion(regionId);
-}
-
-async function handleStructureTypeChange(structureTypeId) {
-  // Always update the state, even if clearing the selection
-  wizardState.customFacility.structureTypeId = structureTypeId ? parseInt(structureTypeId) : null;
-  wizardState.customFacility.rigSlot = null; // Reset rig when structure changes
-
-  // Load rigs for selected structure type (only if valid)
-  if (structureTypeId) {
-    await loadRigsForStructure(structureTypeId);
-  }
-}
-
-// Load data for facility form
-
-async function loadFacilityRegions() {
-  try {
-    const regions = await window.electronAPI.sde.getAllRegions();
-    elements.facilityRegion.innerHTML = '<option value="">Select a region...</option>';
-
-    regions.forEach(region => {
-      const option = document.createElement('option');
-      option.value = region.regionID;
-      option.textContent = region.regionName;
-      elements.facilityRegion.appendChild(option);
-    });
-  } catch (error) {
-    console.error('Error loading regions:', error);
-    elements.facilityRegion.innerHTML = '<option value="">Error loading regions</option>';
-  }
-}
-
-async function loadSystemsForRegion(regionId) {
-  try {
-    elements.facilitySystem.innerHTML = '<option value="">Loading systems...</option>';
-    elements.facilitySystem.disabled = true;
-
-    const systems = await window.electronAPI.facilities.getSystemsByRegion(regionId);
-
-    elements.facilitySystem.innerHTML = '<option value="">Select a system...</option>';
-
-    systems.forEach(system => {
-      const option = document.createElement('option');
-      option.value = system.systemId;
-      const security = system.security !== null ? system.security.toFixed(1) : '?';
-      option.textContent = `${system.systemName} (${security})`;
-      elements.facilitySystem.appendChild(option);
-    });
-
-    elements.facilitySystem.disabled = false;
-  } catch (error) {
-    console.error('Error loading systems:', error);
-    elements.facilitySystem.innerHTML = '<option value="">Error loading systems</option>';
-  }
-}
-
-async function loadStructureTypes() {
-  try {
-    const structureTypes = await window.electronAPI.facilities.getStructureTypes();
-    console.log('Loaded structure types:', structureTypes);
-
-    elements.facilityStructureType.innerHTML = '<option value="">Select structure type...</option>';
-
-    // Filter for Engineering Complexes only
-    const engineeringComplexes = structureTypes.filter(st =>
-      st.typeName && (
-        st.typeName.includes('Raitaru') ||
-        st.typeName.includes('Azbel') ||
-        st.typeName.includes('Sotiyo')
-      )
-    );
-
-    console.log('Filtered engineering complexes:', engineeringComplexes);
-
-    engineeringComplexes.forEach(structure => {
-      const option = document.createElement('option');
-      option.value = structure.typeId;  // Fixed: typeId not typeID
-      option.textContent = structure.typeName;
-      console.log('Creating option - typeId:', structure.typeId, 'typeName:', structure.typeName);
-      elements.facilityStructureType.appendChild(option);
-    });
-  } catch (error) {
-    console.error('Error loading structure types:', error);
-    elements.facilityStructureType.innerHTML = '<option value="">Error loading structures</option>';
-  }
-}
-
-async function loadRigsForStructure(structureTypeId) {
-  try {
-    elements.facilityRig.innerHTML = '<option value="">Loading rigs...</option>';
-
-    const rigs = await window.electronAPI.facilities.getStructureRigs();
-
-    elements.facilityRig.innerHTML = '<option value="">No rig</option>';
-
-    // Determine structure size from typeID
-    let structureSize = 'M'; // Default to medium
-    if (structureTypeId === 35826) structureSize = 'L'; // Azbel
-    else if (structureTypeId === 35827) structureSize = 'XL'; // Sotiyo
-
-    // Filter rigs by size
-    const compatibleRigs = rigs.filter(rig => {
-      const rigName = rig.typeName || '';
-      return rigName.includes(structureSize === 'M' ? 'Medium' :
-                              structureSize === 'L' ? 'Large' : 'X-Large');
-    });
-
-    compatibleRigs.forEach(rig => {
-      const option = document.createElement('option');
-      option.value = rig.typeID;
-      option.textContent = rig.typeName;
-      elements.facilityRig.appendChild(option);
-    });
-  } catch (error) {
-    console.error('Error loading rigs:', error);
-    elements.facilityRig.innerHTML = '<option value="">Error loading rigs</option>';
-  }
-}
-
-// Validate custom facility form
-
-function validateCustomFacility() {
-  const errors = [];
-
-  if (!wizardState.customFacility.name || wizardState.customFacility.name.trim() === '') {
-    errors.push('Facility name is required');
-  }
-
-  if (!wizardState.customFacility.regionId || isNaN(wizardState.customFacility.regionId)) {
-    errors.push('Region is required');
-  }
-
-  if (!wizardState.customFacility.systemId || isNaN(wizardState.customFacility.systemId)) {
-    errors.push('Solar system is required');
-  }
-
-  if (wizardState.customFacility.facilityType === 'structure' &&
-      (!wizardState.customFacility.structureTypeId || isNaN(wizardState.customFacility.structureTypeId))) {
-    errors.push('Structure type is required for player structures');
-  }
-
-  return errors;
-}
-
-// Step 7: Create Facility (updated to handle both choices)
+// Step 7: Create Default Jita 4-4 Facility
 async function createDefaultFacility() {
   try {
-    let facility;
-
-    if (wizardState.facilityChoice === 'jita') {
-      // Create default Jita facility
-      facility = {
-        name: 'Jita 4-4 NPC Station',
-        usage: 'default',
-        facilityType: 'station',
-        regionId: 10000002,
-        systemId: 30000142,
-        structureTypeId: null,
-        rigs: []
-      };
-    } else {
-      // Create custom facility from form
-      console.log('Validating custom facility with state:', JSON.stringify(wizardState.customFacility, null, 2));
-      const validationErrors = validateCustomFacility();
-
-      if (validationErrors.length > 0) {
-        console.error('Validation errors:', validationErrors);
-        alert(`Please fix the following errors:\n\n${validationErrors.join('\n')}`);
-        return false; // Validation failed - don't proceed
-      }
-
-      facility = {
-        name: wizardState.customFacility.name,
-        usage: 'default',
-        facilityType: wizardState.customFacility.facilityType,
-        regionId: wizardState.customFacility.regionId,
-        systemId: wizardState.customFacility.systemId,
-        structureTypeId: wizardState.customFacility.structureTypeId,
-        rigs: wizardState.customFacility.rigSlot ? [wizardState.customFacility.rigSlot] : []
-      };
-    }
+    const facility = {
+      name: 'Jita 4-4 NPC Station',
+      usage: 'default',
+      facilityType: 'station',
+      regionId: 10000002,
+      systemId: 30000142,
+      structureTypeId: null,
+      rigs: []
+    };
 
     const result = await window.electronAPI.facilities.addFacility(facility);
 
@@ -1265,14 +1004,14 @@ async function createDefaultFacility() {
     // The API returns the created facility object, not { success: true }
     if (!result || !result.id) {
       console.warn('Failed to create facility: Invalid response');
-      alert(`Failed to create facility.\n\nYou can add a facility later in the Facilities Manager.`);
+      alert(`Failed to create facility.\n\nYou can add a facility later in the Facilities section.`);
       // Non-critical - allow proceeding
     }
 
     return true; // Allow proceeding to next step
   } catch (error) {
     console.error('Error creating facility:', error);
-    alert(`Error creating facility: ${error.message}\n\nYou can add a facility later in the Facilities Manager.`);
+    alert(`Error creating facility: ${error.message}\n\nYou can add a facility later in the Facilities section.`);
     // Non-critical - allow proceeding
     return true; // Allow proceeding even if facility creation failed
   }
@@ -1315,14 +1054,8 @@ function updateSummary() {
     elements.summaryMarket.textContent = 'Not configured';
   }
 
-  // Facility - show based on user's choice
-  if (wizardState.facilityChoice === 'jita') {
-    elements.summaryFacility.textContent = 'Jita 4-4 NPC Station';
-  } else if (wizardState.customFacility && wizardState.customFacility.name) {
-    elements.summaryFacility.textContent = wizardState.customFacility.name;
-  } else {
-    elements.summaryFacility.textContent = 'Not configured';
-  }
+  // Facility - always Jita 4-4
+  elements.summaryFacility.textContent = 'Jita 4-4 NPC Station';
 }
 
 // UI Updates

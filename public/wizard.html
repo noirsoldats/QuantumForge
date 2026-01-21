@@ -462,87 +462,26 @@
 
       <!-- Step 7: Default Facility -->
       <div id="step-7" class="wizard-step">
-        <div class="step-content">
+        <div class="step-content centered">
+          <div class="facility-icon">
+            <svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M3 21h18"></path>
+              <path d="M5 21V7l8-4v18"></path>
+              <path d="M19 21V11l-6-4"></path>
+              <path d="M9 9v.01"></path>
+              <path d="M9 12v.01"></path>
+              <path d="M9 15v.01"></path>
+              <path d="M9 18v.01"></path>
+            </svg>
+          </div>
           <h2>Default Manufacturing Facility</h2>
           <p class="description">
-            Set up your default manufacturing location. This will be used for calculating
-            production costs and material requirements.
+            A default <strong>Jita 4-4 NPC Station</strong> facility will be created for you.
+            This provides baseline calculations with no structure bonuses.
           </p>
-
-          <!-- Facility Choice Options -->
-          <div class="facility-choice-container">
-            <label class="facility-choice-option">
-              <input type="radio" name="facility-choice" value="jita" checked>
-              <div class="option-content">
-                <span class="option-label">Jita 4-4 (Quick Setup)</span>
-                <span class="option-desc">✓ Recommended • No bonuses • Baseline calculations</span>
-              </div>
-            </label>
-            <label class="facility-choice-option">
-              <input type="radio" name="facility-choice" value="custom">
-              <div class="option-content">
-                <span class="option-label">Custom Facility (Advanced)</span>
-                <span class="option-desc">⚙ Full control • Choose location • Add structure bonuses</span>
-              </div>
-            </label>
-          </div>
-
-          <!-- Custom Facility Form (collapsed by default) -->
-          <div id="custom-facility-form" class="custom-facility-form" style="display: none;">
-            <div class="form-section">
-              <label class="input-label">Facility Name:</label>
-              <input type="text" id="facility-name" class="form-input" placeholder="My Manufacturing Facility" />
-            </div>
-
-            <div class="form-section">
-              <label class="input-label">Facility Type:</label>
-              <div class="radio-group">
-                <label class="radio-option">
-                  <input type="radio" name="facility-type" value="station" checked>
-                  <span>NPC Station</span>
-                </label>
-                <label class="radio-option">
-                  <input type="radio" name="facility-type" value="structure">
-                  <span>Player Structure</span>
-                </label>
-              </div>
-            </div>
-
-            <div class="form-section">
-              <label class="input-label">Region:</label>
-              <select id="facility-region" class="form-select">
-                <option value="">Select a region...</option>
-              </select>
-            </div>
-
-            <div class="form-section">
-              <label class="input-label">Solar System:</label>
-              <select id="facility-system" class="form-select" disabled>
-                <option value="">Select region first...</option>
-              </select>
-            </div>
-
-            <!-- Structure-specific fields (hidden by default) -->
-            <div id="structure-fields" style="display: none;">
-              <div class="form-section">
-                <label class="input-label">Structure Type:</label>
-                <select id="facility-structure-type" class="form-select">
-                  <option value="">Select structure type...</option>
-                </select>
-              </div>
-
-              <div class="form-section">
-                <label class="input-label">Rig (Optional):</label>
-                <select id="facility-rig" class="form-select">
-                  <option value="">No rig</option>
-                </select>
-                <p class="helper-text">Additional rigs can be added later in Facilities Manager</p>
-              </div>
-            </div>
-          </div>
-
-          <p class="helper-text" style="margin-top: 20px;">
-            Additional facilities can be added later in <strong>Facilities Manager</strong>
+          <p class="description secondary">
+            You can add additional facilities with structure bonuses later in the
+            <strong>Facilities</strong> section of the application.
           </p>
         </div>
       </div>

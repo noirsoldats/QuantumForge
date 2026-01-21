@@ -20,13 +20,17 @@ body {
   height: 100%;
   display: flex;
   flex-direction: column;
-  padding: 30px 40px;
+  padding: 0 40px 30px 40px;
 }
 
 /* Header */
 .wizard-header {
+  padding-top: 30px;
   text-align: center;
   margin-bottom: 25px;
+  -webkit-app-region: drag;
+  user-select: none;
+  cursor: move;
 }
 
 .wizard-header h1 {
@@ -179,6 +183,16 @@ body {
 }
 
 .welcome-icon svg {
+  filter: drop-shadow(0 0 10px rgba(100, 180, 255, 0.3));
+}
+
+/* Facility Icon */
+.facility-icon {
+  margin-bottom: 25px;
+  color: #64b4ff;
+}
+
+.facility-icon svg {
   filter: drop-shadow(0 0 10px rgba(100, 180, 255, 0.3));
 }
 

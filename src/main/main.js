@@ -188,7 +188,7 @@ function createSplashWindow() {
 }
 
 function createWindow() {
-  const windowBounds = getWindowBounds('main', { width: 1200, height: 800 });
+  const windowBounds = getWindowBounds('main', { width: 1300, height: 800 });
   const version = app.getVersion();
 
   mainWindow = new BrowserWindow({
