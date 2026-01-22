@@ -1,5 +1,10 @@
 const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
 const path = require('path');
+
+// Initialize error logging FIRST, before any other code runs
+const { initializeLogging, logError, logInfo, setStartupPhase, getLogFilePath, getLogDirectory, collectDiagnostics } = require('./error-logger');
+initializeLogging();
+
 const { createSettingsWindow } = require('./settings-window');
 const { initAutoUpdater, checkForUpdates } = require('./auto-updater');
 const { getWindowBounds, trackWindowState } = require('./window-state-manager');
@@ -7,15 +12,53 @@ const { runStartupChecks } = require('./startup-manager');
 const { createWizardWindow } = require('./wizard-window');
 const { fetchServerStatus, getLastServerStatusFetchTime } = require('./esi-server-status');
 
+/**
+ * Show a native error dialog for fatal errors that occur before any window is displayed
+ * @param {Error} error - The error that occurred
+ * @param {string} context - Where the error occurred
+ */
+function showFatalErrorDialog(error, context) {
+  const logPath = getLogFilePath();
+  const logDir = getLogDirectory();
+
+  const result = dialog.showMessageBoxSync({
+    type: 'error',
+    title: 'Quantum Forge - Startup Error',
+    message: 'The application encountered a fatal error during startup.',
+    detail: `Error: ${error.message}\n\nA log file has been created at:\n${logPath}\n\nTo report this issue:\n1. Click "Open Log Folder" below\n2. Visit github.com/NoirSoldats/QuantumForge/issues\n3. Create a new issue and attach the log file`,
+    buttons: ['Open Log Folder', 'Exit'],
+    defaultId: 0,
+    cancelId: 1,
+  });
+
+  if (result === 0) {
+    // Open the log folder
+    shell.openPath(logDir);
+  }
+
+  app.exit(1);
+}
+
 // Global error handlers for main process
 process.on('uncaughtException', (error) => {
-  console.error('Uncaught Exception in main process:', error);
-  // In production, you might want to log to a file
+  logError('uncaughtException', error);
+
+  // If no windows exist, show native dialog
+  const windows = BrowserWindow.getAllWindows();
+  if (windows.length === 0) {
+    showFatalErrorDialog(error, 'uncaughtException');
+  }
 });
 
 process.on('unhandledRejection', (reason, promise) => {
-  console.error('Unhandled Promise Rejection in main process:', reason);
-  // In production, you might want to log to a file
+  const error = reason instanceof Error ? reason : new Error(String(reason));
+  logError('unhandledRejection', error);
+
+  // If no windows exist, show native dialog
+  const windows = BrowserWindow.getAllWindows();
+  if (windows.length === 0) {
+    showFatalErrorDialog(error, 'unhandledRejection');
+  }
 });
 const {
   loadSettings,
@@ -315,107 +358,131 @@ function createWindow() {
 }
 
 app.whenReady().then(async () => {
-  console.log('[App] Application ready');
+  try {
+    setStartupPhase('app-ready');
+    logInfo('App', 'Application ready');
+    console.log('[App] Application ready');
 
-  // Run config migration BEFORE anything else
-  const { needsConfigMigration, migrateConfigFiles } = require('./config-migration');
-  if (needsConfigMigration()) {
-    console.log('[App] Running config migration...');
-    await migrateConfigFiles();
-    console.log('[App] Config migration complete');
-  }
+    // Run config migration BEFORE anything else
+    setStartupPhase('config-migration');
+    const { needsConfigMigration, migrateConfigFiles } = require('./config-migration');
+    if (needsConfigMigration()) {
+      console.log('[App] Running config migration...');
+      await migrateConfigFiles();
+      console.log('[App] Config migration complete');
+    }
 
-  // Initialize character database
-  const { initializeCharacterDatabase } = require('./character-database');
-  initializeCharacterDatabase();
+    // Initialize character database
+    setStartupPhase('database-init');
+    const { initializeCharacterDatabase } = require('./character-database');
+    initializeCharacterDatabase();
 
-  // Initialize ESI status database
-  initializeESIStatusDatabase();
+    // Initialize ESI status database
+    initializeESIStatusDatabase();
 
-  // Run database schema migrations (must run AFTER database initialization)
-  const { needsSchemaMigrations, runSchemaMigrations } = require('./database-schema-migrations');
-  if (needsSchemaMigrations()) {
-    console.log('[App] Running database schema migrations...');
-    await runSchemaMigrations();
-    console.log('[App] Database schema migrations complete');
-  }
+    // Run database schema migrations (must run AFTER database initialization)
+    setStartupPhase('schema-migration');
+    const { needsSchemaMigrations, runSchemaMigrations } = require('./database-schema-migrations');
+    if (needsSchemaMigrations()) {
+      console.log('[App] Running database schema migrations...');
+      await runSchemaMigrations();
+      console.log('[App] Database schema migrations complete');
+    }
 
-  // Run character data migration (JSON to SQLite)
-  const { needsCharacterDataMigration, migrateCharacterDataToSqlite } = require('./character-data-migration');
-  if (needsCharacterDataMigration()) {
-    console.log('[App] Running character data migration...');
-    await migrateCharacterDataToSqlite();
-    console.log('[App] Character data migration complete');
-  }
+    // Run character data migration (JSON to SQLite)
+    setStartupPhase('character-data-migration');
+    const { needsCharacterDataMigration, migrateCharacterDataToSqlite } = require('./character-data-migration');
+    if (needsCharacterDataMigration()) {
+      console.log('[App] Running character data migration...');
+      await migrateCharacterDataToSqlite();
+      console.log('[App] Character data migration complete');
+    }
 
-  // Migrate global division settings to per-character settings
-  const { migrateGlobalDivisionsToCharacters, migrateAutoUpdateCharacterDataSetting } = require('./settings-manager');
-  console.log('[App] Running division settings migration...');
-  migrateGlobalDivisionsToCharacters();
+    // Migrate global division settings to per-character settings
+    setStartupPhase('division-settings-migration');
+    const { migrateGlobalDivisionsToCharacters, migrateAutoUpdateCharacterDataSetting } = require('./settings-manager');
+    console.log('[App] Running division settings migration...');
+    migrateGlobalDivisionsToCharacters();
 
-  // Migrate auto-update character data setting from boolean to object
-  console.log('[App] Running auto-update setting migration...');
-  migrateAutoUpdateCharacterDataSetting();
+    // Migrate auto-update character data setting from boolean to object
+    console.log('[App] Running auto-update setting migration...');
+    migrateAutoUpdateCharacterDataSetting();
 
-  // Migrate existing plans to have industry settings
-  const { migrateExistingPlansToSettings } = require('./character-database');
-  console.log('[App] Running plan industry settings migration...');
-  migrateExistingPlansToSettings();
+    // Migrate existing plans to have industry settings
+    setStartupPhase('plan-settings-migration');
+    const { migrateExistingPlansToSettings } = require('./character-database');
+    console.log('[App] Running plan industry settings migration...');
+    migrateExistingPlansToSettings();
 
-  // Setup IPC handlers first (needed by both wizard and normal app)
-  setupIPCHandlers();
+    // Setup IPC handlers first (needed by both wizard and normal app)
+    setStartupPhase('ipc-handlers');
+    setupIPCHandlers();
 
-  // Check if this is the first launch
-  const fs = require('fs');
-  const settingsFilePath = getSettingsFilePath();
-  const configFileExists = fs.existsSync(settingsFilePath);
+    // Check if this is the first launch
+    setStartupPhase('first-launch-check');
+    const fs = require('fs');
+    const settingsFilePath = getSettingsFilePath();
+    const configFileExists = fs.existsSync(settingsFilePath);
 
-  const settings = loadSettings();
-  const isFirstLaunch = !settings.general.firstLaunchCompleted;
+    const settings = loadSettings();
+    const isFirstLaunch = !settings.general.firstLaunchCompleted;
 
-  // If config file exists but doesn't have firstLaunchCompleted flag, this is an existing installation
-  // Skip wizard and mark as completed
-  if (configFileExists && isFirstLaunch) {
-    console.log('[App] Existing config detected without firstLaunchCompleted flag, migrating...');
-    updateSettings('general', {
-        "firstLaunchCompleted": true,
-        "wizardVersion": "1.0",
-        "wizardCompletedAt": new Date().toISOString()
-    })
-    console.log('[App] Migration complete, proceeding with normal startup');
-    await startNormalApplication();
-    return;
-  }
+    // If config file exists but doesn't have firstLaunchCompleted flag, this is an existing installation
+    // Skip wizard and mark as completed
+    if (configFileExists && isFirstLaunch) {
+      console.log('[App] Existing config detected without firstLaunchCompleted flag, migrating...');
+      updateSettings('general', {
+          "firstLaunchCompleted": true,
+          "wizardVersion": "1.0",
+          "wizardCompletedAt": new Date().toISOString()
+      })
+      console.log('[App] Migration complete, proceeding with normal startup');
+      setStartupPhase('normal-startup');
+      await startNormalApplication();
+      return;
+    }
 
-  if (isFirstLaunch) {
-    console.log('[App] First launch detected, showing wizard...');
+    if (isFirstLaunch) {
+      console.log('[App] First launch detected, showing wizard...');
+      setStartupPhase('wizard');
 
-    // Create wizard window
-    const wizardWindow = createWizardWindow();
+      // Create wizard window
+      const wizardWindow = createWizardWindow();
 
-    // Wait for wizard to complete
-    return new Promise((resolve) => {
-      // Listen for wizard completion or window close
-      wizardWindow.once('closed', async () => {
-        console.log('[App] Wizard closed, continuing with normal startup...');
+      // Wait for wizard to complete
+      return new Promise((resolve) => {
+        // Listen for wizard completion or window close
+        wizardWindow.once('closed', async () => {
+          console.log('[App] Wizard closed, continuing with normal startup...');
 
-        // Check if wizard was completed
-        const updatedSettings = loadSettings();
-        if (updatedSettings.general.firstLaunchCompleted) {
-          // Wizard completed successfully, proceed with normal startup
-          await startNormalApplication();
-        } else {
-          // Wizard was closed without completing - exit app
-          console.log('[App] Wizard incomplete, exiting application');
-          app.quit();
-        }
-        resolve();
+          // Check if wizard was completed
+          const updatedSettings = loadSettings();
+          if (updatedSettings.general.firstLaunchCompleted) {
+            // Wizard completed successfully, proceed with normal startup
+            setStartupPhase('normal-startup');
+            await startNormalApplication();
+          } else {
+            // Wizard was closed without completing - exit app
+            console.log('[App] Wizard incomplete, exiting application');
+            app.quit();
+          }
+          resolve();
+        });
       });
-    });
-  } else {
-    // Normal startup (not first launch)
-    console.log('[App] Normal startup, creating splash screen...');
-    await startNormalApplication();
+    } else {
+      // Normal startup (not first launch)
+      console.log('[App] Normal startup, creating splash screen...');
+      setStartupPhase('normal-startup');
+      await startNormalApplication();
+    }
+  } catch (error) {
+    logError('app.whenReady', error);
+
+    // If no windows exist, show native dialog
+    const windows = BrowserWindow.getAllWindows();
+    if (windows.length === 0) {
+      showFatalErrorDialog(error, 'app.whenReady');
+    }
   }
 });
 
@@ -1896,6 +1963,25 @@ function setupIPCHandlers() {
 
   ipcMain.handle('app:getElectronVersion', () => {
     return process.versions.electron;
+  });
+
+  // Error Log IPC handlers
+  ipcMain.handle('errorLog:getPath', () => {
+    return getLogFilePath();
+  });
+
+  ipcMain.handle('errorLog:getDirectory', () => {
+    return getLogDirectory();
+  });
+
+  ipcMain.handle('errorLog:openFolder', async () => {
+    const logDir = getLogDirectory();
+    await shell.openPath(logDir);
+    return { success: true };
+  });
+
+  ipcMain.handle('errorLog:getDiagnostics', () => {
+    return collectDiagnostics();
   });
 }
 

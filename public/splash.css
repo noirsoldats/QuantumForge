@@ -333,6 +333,55 @@ body {
   margin-bottom: 20px;
 }
 
+/* Error Log Info Section */
+.error-log-info {
+  background: rgba(0, 0, 0, 0.3);
+  border-radius: 8px;
+  padding: 15px 20px;
+  margin-bottom: 20px;
+  text-align: left;
+}
+
+.error-log-info .log-info-label {
+  color: #a0a0b0;
+  font-size: 0.85em;
+  margin-bottom: 8px;
+}
+
+.error-log-info .log-path {
+  color: #64b4ff;
+  font-size: 0.8em;
+  font-family: 'Monaco', 'Menlo', 'Consolas', monospace;
+  word-break: break-all;
+  background: rgba(100, 180, 255, 0.1);
+  padding: 8px 12px;
+  border-radius: 4px;
+  margin-bottom: 12px;
+}
+
+.error-log-info .report-instructions {
+  color: #a0a0b0;
+  font-size: 0.85em;
+  line-height: 1.5;
+  margin-bottom: 0;
+}
+
+.error-log-info .github-link {
+  color: #9d7fff;
+  font-weight: 600;
+}
+
+/* Secondary button with icon */
+.secondary-button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.secondary-button svg {
+  flex-shrink: 0;
+}
+
 /* Footer */
 .splash-footer {
   padding-top: 20px;

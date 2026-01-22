@@ -136,7 +136,24 @@
         </div>
         <h2>Error</h2>
         <p id="error-message">An error occurred during startup.</p>
+
+        <!-- Log file info section -->
+        <div id="error-log-info" class="error-log-info" style="display: none;">
+          <p class="log-info-label">A log file has been created at:</p>
+          <p id="error-log-path" class="log-path"></p>
+          <p class="report-instructions">
+            To report this issue, open the log folder and attach the log file to a new issue at
+            <span class="github-link">github.com/NoirSoldats/QuantumForge/issues</span>
+          </p>
+        </div>
+
         <div id="error-buttons" class="action-buttons">
+          <button class="secondary-button" id="open-log-btn">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
+            </svg>
+            Open Log Folder
+          </button>
           <button class="primary-button" id="retry-btn">Retry</button>
         </div>
       </div>

@@ -351,4 +351,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   shell: {
     openExternal: (url) => ipcRenderer.invoke('shell:openExternal', url),
   },
+
+  // Error Log API (for accessing log files and diagnostics)
+  errorLog: {
+    getPath: () => ipcRenderer.invoke('errorLog:getPath'),
+    getDirectory: () => ipcRenderer.invoke('errorLog:getDirectory'),
+    openFolder: () => ipcRenderer.invoke('errorLog:openFolder'),
+    getDiagnostics: () => ipcRenderer.invoke('errorLog:getDiagnostics'),
+  },
 });

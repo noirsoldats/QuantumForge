@@ -312,7 +312,7 @@ function hideActionPanel() {
 }
 
 // Show error panel
-function showErrorPanel(error) {
+async function showErrorPanel(error) {
   // Hide tasks and action panel
   tasksContainer.style.display = 'none';
   actionPanel.style.display = 'none';
@@ -321,6 +321,23 @@ function showErrorPanel(error) {
   errorPanel.style.display = 'block';
   errorMessage.textContent = error.message || 'An error occurred during startup.';
 
+  // Fetch and display log file path
+  try {
+    const logPath = await window.electronAPI.errorLog.getPath();
+    const logPathElement = document.getElementById('error-log-path');
+    if (logPathElement) {
+      logPathElement.textContent = logPath;
+    }
+
+    // Show the log info section
+    const logInfoSection = document.getElementById('error-log-info');
+    if (logInfoSection) {
+      logInfoSection.style.display = 'block';
+    }
+  } catch (err) {
+    console.error('[Splash] Error fetching log path:', err);
+  }
+
   // Update retry button
   const retryBtn = document.getElementById('retry-btn');
   if (retryBtn) {
@@ -328,6 +345,19 @@ function showErrorPanel(error) {
       console.log('[Splash] User chose to retry');
       window.electronAPI.startup.retry();
       hideErrorPanel();
+    };
+  }
+
+  // Setup open log folder button
+  const openLogBtn = document.getElementById('open-log-btn');
+  if (openLogBtn) {
+    openLogBtn.onclick = async () => {
+      console.log('[Splash] User chose to open log folder');
+      try {
+        await window.electronAPI.errorLog.openFolder();
+      } catch (err) {
+        console.error('[Splash] Error opening log folder:', err);
+      }
     };
   }
 }
