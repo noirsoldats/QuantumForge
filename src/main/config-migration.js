@@ -1,8 +1,8 @@
 const fs = require('fs');
 const path = require('path');
-const { app } = require('electron');
+const { getDataPath } = require('./portable-mode');
 
-const userDataPath = app.getPath('userData');
+const userDataPath = getDataPath();
 const configDir = path.join(userDataPath, 'config');
 const migrationFlagFile = path.join(configDir, '.migration-complete');
 

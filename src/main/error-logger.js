@@ -7,6 +7,7 @@ const log = require('electron-log');
 const { app } = require('electron');
 const path = require('path');
 const os = require('os');
+const { getDataPath, isPortable } = require('./portable-mode');
 
 // Track initialization state
 let isInitialized = false;
@@ -21,8 +22,8 @@ function initializeLogging() {
     return;
   }
 
-  // Configure log file location
-  const userDataPath = app.getPath('userData');
+  // Configure log file location (portable-aware)
+  const userDataPath = getDataPath();
   const logDir = path.join(userDataPath, 'logs');
 
   // Configure electron-log
@@ -114,13 +115,14 @@ function logInfo(context, message) {
  * @returns {object} Diagnostic information
  */
 function collectDiagnostics() {
-  const userDataPath = app.isReady() ? app.getPath('userData') : 'Not available (app not ready)';
+  const userDataPath = app.isReady() ? getDataPath() : 'Not available (app not ready)';
 
   const diagnostics = {
     app: {
       version: app.getVersion(),
       name: app.getName(),
       isPackaged: app.isPackaged,
+      isPortableMode: isPortable(),
     },
     electron: {
       version: process.versions.electron,
@@ -158,7 +160,7 @@ function collectDiagnostics() {
  * @returns {string} Full path to the log file
  */
 function getLogFilePath() {
-  const userDataPath = app.getPath('userData');
+  const userDataPath = getDataPath();
   return path.join(userDataPath, 'logs', 'quantum-forge.log');
 }
 
@@ -167,7 +169,7 @@ function getLogFilePath() {
  * @returns {string} Full path to the logs directory
  */
 function getLogDirectory() {
-  const userDataPath = app.getPath('userData');
+  const userDataPath = getDataPath();
   return path.join(userDataPath, 'logs');
 }
 

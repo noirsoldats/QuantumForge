@@ -1,7 +1,7 @@
 const Database = require('better-sqlite3');
 const path = require('path');
-const { app } = require('electron');
 const fs = require('fs');
+const { getDataPath } = require('./portable-mode');
 
 let db = null;
 
@@ -9,7 +9,7 @@ let db = null;
  * Get the path to the ESI status database
  */
 function getESIStatusDatabasePath() {
-  const userDataPath = app.getPath('userData');
+  const userDataPath = getDataPath();
   return path.join(userDataPath, 'esi-status.db');
 }
 

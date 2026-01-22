@@ -1,11 +1,11 @@
 const fs = require('fs');
 const path = require('path');
-const { app } = require('electron');
 const https = require('https');
 const { pipeline } = require('stream/promises');
 const { createWriteStream, createReadStream } = require('fs');
 const unbzip2Stream = require('unbzip2-stream');
 const { getUserAgent } = require('./user-agent');
+const { getDataPath } = require('./portable-mode');
 
 // GitHub SDE Repository
 const GITHUB_REPO_OWNER = 'noirsoldats';
@@ -23,8 +23,8 @@ const FUZZWORK_VERSION_CHECK_URL = 'https://www.fuzzwork.co.uk/dump/latest/';
 // Minimum required SDE version (format: numeric version from tag)
 const MINIMUM_SDE_VERSION = '3118350'; // Update this as needed
 
-// Get the user data directory
-const userDataPath = app.getPath('userData');
+// Get the user data directory (portable-aware)
+const userDataPath = getDataPath();
 const sdeDirectory = path.join(userDataPath, 'sde');
 const sdeFilePath = path.join(sdeDirectory, 'eve-sde.db');
 const sdeVersionFile = path.join(sdeDirectory, 'version.txt');

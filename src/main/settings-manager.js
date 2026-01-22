@@ -22,6 +22,7 @@ const defaultSettings = {
     firstLaunchCompleted: false,
     wizardVersion: null,
     wizardCompletedAt: null,
+    skippedUpdateVersion: null,  // Version string that user chose to skip
   },
   accounts: {
     characters: [],

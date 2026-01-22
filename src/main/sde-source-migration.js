@@ -1,6 +1,6 @@
 const fs = require('fs');
 const path = require('path');
-const { app } = require('electron');
+const { getDataPath } = require('./portable-mode');
 const {
   getSdeSource,
   setSdeSource,
@@ -12,8 +12,8 @@ const {
   sdeExists,
 } = require('./sde-manager');
 
-// Migration state file
-const userDataPath = app.getPath('userData');
+// Migration state file (portable-aware)
+const userDataPath = getDataPath();
 const migrationStateFile = path.join(userDataPath, 'sde', 'migration-state.json');
 
 /**

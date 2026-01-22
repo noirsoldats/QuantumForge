@@ -56,9 +56,45 @@ jobs:
           # CSC_LINK: ${{ secrets.WIN_CERTS }}
           # CSC_KEY_PASSWORD: ${{ secrets.WIN_CERTS_PASSWORD }}
 
+  generate-checksums:
+    name: Generate Checksums
+    needs: release
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download all release artifacts
+        uses: robinraju/release-downloader@v1.11
+        with:
+          tag: ${{ github.ref_name }}
+          fileName: '*'
+          out-file-path: artifacts
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Generate SHA256 checksums
+        run: |
+          cd artifacts
+          # Remove files we don't want to checksum
+          rm -f *.yml *.blockmap SHA256SUMS.txt 2>/dev/null || true
+          # Generate checksums for remaining release files
+          if ls *.dmg *.exe *.AppImage *.deb *.zip 2>/dev/null; then
+            sha256sum *.dmg *.exe *.AppImage *.deb *.zip 2>/dev/null | sort -k2 > SHA256SUMS.txt
+            echo "Generated checksums:"
+            cat SHA256SUMS.txt
+          else
+            echo "No release artifacts found to checksum"
+            exit 1
+          fi
+
+      - name: Upload checksums to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/SHA256SUMS.txt
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
   update-release-notes:
     name: Update Release Notes
-    needs: release
+    needs: [release, generate-checksums]
     runs-on: ubuntu-latest
 
     steps:
@@ -187,5 +223,29 @@ jobs:
             - **`latest-linux.yml`** - Linux auto-update metadata
 
             If you're manually downloading and installing, you can safely ignore these files.
+
+            ---
+
+            ## Verifying Your Download
+
+            SHA256 checksums are provided in `SHA256SUMS.txt` to verify download integrity.
+
+            **macOS/Linux:**
+            ```bash
+            # Navigate to your downloads folder, then run:
+            shasum -a 256 -c SHA256SUMS.txt
+            ```
+
+            **Windows (PowerShell):**
+            ```powershell
+            # Check a single file:
+            Get-FileHash "Quantum-Forge-Setup-*.exe" -Algorithm SHA256
+            # Compare the output with the value in SHA256SUMS.txt
+            ```
+
+            **Windows (Command Prompt):**
+            ```cmd
+            certutil -hashfile "Quantum-Forge-Setup-*.exe" SHA256
+            ```
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,9 +1,19 @@
 const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
 const path = require('path');
 
-// Initialize error logging FIRST, before any other code runs
+// Initialize portable mode detection FIRST (needed by error-logger)
+const { detectPortableMode, isPortable, getDataPath } = require('./portable-mode');
+detectPortableMode();
+
+// Initialize error logging SECOND, before any other code runs
 const { initializeLogging, logError, logInfo, setStartupPhase, getLogFilePath, getLogDirectory, collectDiagnostics } = require('./error-logger');
 initializeLogging();
+
+// Log portable mode status
+logInfo('App', `Running in ${isPortable() ? 'PORTABLE' : 'INSTALLED'} mode`);
+if (isPortable()) {
+  logInfo('App', `Data directory: ${getDataPath()}`);
+}
 
 const { createSettingsWindow } = require('./settings-window');
 const { initAutoUpdater, checkForUpdates } = require('./auto-updater');

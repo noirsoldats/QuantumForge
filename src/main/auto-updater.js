@@ -1,6 +1,7 @@
 const { autoUpdater } = require('electron-updater');
 const { dialog } = require('electron');
 const log = require('electron-log');
+const { loadSettings, updateSettings } = require('./settings-manager');
 
 // Configure logging
 autoUpdater.logger = log;
@@ -68,6 +69,15 @@ function checkForUpdates() {
  * @param {Object} info - Update info
  */
 function showUpdateDialog(info) {
+  // Check if user has skipped this version
+  const settings = loadSettings();
+  const skippedVersion = settings.general?.skippedUpdateVersion;
+
+  if (skippedVersion === info.version) {
+    log.info(`Update ${info.version} was previously skipped by user`);
+    return;
+  }
+
   if (mainWindow) {
     mainWindow.webContents.send('update-available', {
       version: info.version,
@@ -82,13 +92,19 @@ function showUpdateDialog(info) {
     title: 'Update Available',
     message: `A new version (${info.version}) is available!`,
     detail: 'Would you like to download it now? The update will be installed when you close the application.',
-    buttons: ['Download', 'Later'],
+    buttons: ['Download', 'Skip This Version', 'Later'],
     defaultId: 0,
-    cancelId: 1
+    cancelId: 2
   }).then(result => {
     if (result.response === 0) {
+      // Download
       autoUpdater.downloadUpdate();
+    } else if (result.response === 1) {
+      // Skip this version
+      updateSettings('general', { skippedUpdateVersion: info.version });
+      log.info(`User skipped version ${info.version}`);
     }
+    // response === 2 is "Later", do nothing
   });
 }
 
