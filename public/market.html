@@ -489,116 +489,114 @@
           <h2>Market Settings</h2>
           <p class="section-description">Configure how market prices are calculated for manufacturing and profit calculations.</p>
 
-          <!-- Market Location Selection -->
+          <!-- Input Materials Settings -->
           <div class="settings-group">
-            <h3>Default Market Location</h3>
-            <p class="settings-description">Choose the scope for market price fetching</p>
+            <h3>Input Materials Settings</h3>
+            <p class="settings-description">Configure location and pricing for buying raw materials</p>
 
+            <!-- Input Location Type Selection -->
             <div class="location-type-selection">
               <label class="radio-option">
-                <input type="radio" name="location-type" value="hub" checked>
+                <input type="radio" name="input-location-type" value="hub" checked>
                 <span class="radio-label">Trade Hub</span>
                 <span class="radio-description">Jita, Amarr, Dodixie, Rens, Hek</span>
               </label>
 
               <label class="radio-option">
-                <input type="radio" name="location-type" value="station">
+                <input type="radio" name="input-location-type" value="station">
                 <span class="radio-label">Specific Station</span>
                 <span class="radio-description">Choose system, then station</span>
               </label>
 
               <label class="radio-option">
-                <input type="radio" name="location-type" value="system">
+                <input type="radio" name="input-location-type" value="system">
                 <span class="radio-label">Solar System</span>
                 <span class="radio-description">All stations in a system</span>
               </label>
 
               <label class="radio-option">
-                <input type="radio" name="location-type" value="region">
+                <input type="radio" name="input-location-type" value="region">
                 <span class="radio-label">Entire Region</span>
                 <span class="radio-description">All systems in a region</span>
               </label>
             </div>
 
-            <!-- Hub Selection -->
-            <div id="hub-selection" class="location-option-content">
+            <!-- Input Hub Selection -->
+            <div id="input-hub-selection" class="location-option-content">
               <div class="form-group">
-                <label for="hub-select">Select Trade Hub</label>
-                <div id="hub-status" class="selection-status hidden">
+                <label for="input-hub-select">Select Trade Hub</label>
+                <div id="input-hub-status" class="selection-status hidden">
                   <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <polyline points="20 6 9 17 4 12"></polyline>
                   </svg>
-                  <span id="hub-status-text"></span>
+                  <span id="input-hub-status-text"></span>
                 </div>
-                <select id="hub-select" class="form-control">
+                <select id="input-hub-select" class="form-control">
                   <option value="">Loading...</option>
                 </select>
               </div>
             </div>
 
-            <!-- Station Selection -->
-            <div id="station-selection" class="location-option-content" style="display: none;">
-              <div id="station-status" class="selection-status hidden">
+            <!-- Input Station Selection -->
+            <div id="input-station-selection" class="location-option-content" style="display: none;">
+              <div id="input-station-status" class="selection-status hidden">
                 <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                   <polyline points="20 6 9 17 4 12"></polyline>
                 </svg>
-                <span id="station-status-text"></span>
+                <span id="input-station-status-text"></span>
               </div>
               <div class="form-row">
                 <div class="form-group">
-                  <label for="station-system-select">Select System</label>
-                  <input type="text" id="station-system-search" class="form-control" placeholder="Search systems...">
-                  <select id="station-system-select" class="form-control" size="8">
+                  <label for="input-station-system-select">Select System</label>
+                  <input type="text" id="input-station-system-search" class="form-control" placeholder="Search systems...">
+                  <select id="input-station-system-select" class="form-control" size="8">
                     <option value="">Type to search...</option>
                   </select>
                 </div>
                 <div class="form-group">
-                  <label for="station-select">Select Station</label>
-                  <select id="station-select" class="form-control" size="8">
+                  <label for="input-station-select">Select Station</label>
+                  <select id="input-station-select" class="form-control" size="8">
                     <option value="">Select a system first</option>
                   </select>
                 </div>
               </div>
             </div>
 
-            <!-- System Selection -->
-            <div id="system-selection" class="location-option-content" style="display: none;">
+            <!-- Input System Selection -->
+            <div id="input-system-selection" class="location-option-content" style="display: none;">
               <div class="form-group">
-                <label for="system-select">Select Solar System</label>
-                <div id="system-status" class="selection-status hidden">
+                <label for="input-system-select">Select Solar System</label>
+                <div id="input-system-status" class="selection-status hidden">
                   <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <polyline points="20 6 9 17 4 12"></polyline>
                   </svg>
-                  <span id="system-status-text"></span>
+                  <span id="input-system-status-text"></span>
                 </div>
-                <input type="text" id="system-search" class="form-control" placeholder="Search systems...">
-                <select id="system-select" class="form-control" size="10">
+                <input type="text" id="input-system-search" class="form-control" placeholder="Search systems...">
+                <select id="input-system-select" class="form-control" size="10">
                   <option value="">Type to search...</option>
                 </select>
               </div>
             </div>
 
-            <!-- Region Selection -->
-            <div id="region-selection" class="location-option-content" style="display: none;">
+            <!-- Input Region Selection -->
+            <div id="input-region-selection" class="location-option-content" style="display: none;">
               <div class="form-group">
-                <label for="region-select">Select Region</label>
-                <div id="region-status" class="selection-status hidden">
+                <label for="input-region-select">Select Region</label>
+                <div id="input-region-status" class="selection-status hidden">
                   <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <polyline points="20 6 9 17 4 12"></polyline>
                   </svg>
-                  <span id="region-status-text"></span>
+                  <span id="input-region-status-text"></span>
                 </div>
-                <select id="region-select" class="form-control" size="10">
+                <select id="input-region-select" class="form-control" size="10">
                   <option value="">Loading...</option>
                 </select>
               </div>
             </div>
-          </div>
 
-          <!-- Input Materials Pricing -->
-          <div class="settings-group">
-            <h3>Input Materials Pricing</h3>
-            <p class="settings-description">Configure how raw material costs are calculated</p>
+            <!-- Input Pricing Settings -->
+            <div class="pricing-settings-divider"></div>
 
             <div class="form-row">
               <div class="form-group">
@@ -642,10 +640,125 @@
             </div>
           </div>
 
-          <!-- Output Products Pricing -->
+          <!-- Output Products Settings -->
           <div class="settings-group">
-            <h3>Output Products Pricing</h3>
-            <p class="settings-description">Configure how manufactured product values are calculated</p>
+            <h3>Output Products Settings</h3>
+            <p class="settings-description">Configure location and pricing for selling manufactured products</p>
+
+            <!-- Same Location Toggle -->
+            <div class="same-location-toggle">
+              <label class="checkbox-option">
+                <input type="checkbox" id="output-same-location" checked>
+                <span class="checkbox-label">Use same market location as Input Materials</span>
+              </label>
+            </div>
+
+            <!-- Output Location Settings (hidden by default) -->
+            <div id="output-location-settings" class="output-location-section" style="display: none;">
+              <!-- Output Location Type Selection -->
+              <div class="location-type-selection">
+                <label class="radio-option">
+                  <input type="radio" name="output-location-type" value="hub" checked>
+                  <span class="radio-label">Trade Hub</span>
+                  <span class="radio-description">Jita, Amarr, Dodixie, Rens, Hek</span>
+                </label>
+
+                <label class="radio-option">
+                  <input type="radio" name="output-location-type" value="station">
+                  <span class="radio-label">Specific Station</span>
+                  <span class="radio-description">Choose system, then station</span>
+                </label>
+
+                <label class="radio-option">
+                  <input type="radio" name="output-location-type" value="system">
+                  <span class="radio-label">Solar System</span>
+                  <span class="radio-description">All stations in a system</span>
+                </label>
+
+                <label class="radio-option">
+                  <input type="radio" name="output-location-type" value="region">
+                  <span class="radio-label">Entire Region</span>
+                  <span class="radio-description">All systems in a region</span>
+                </label>
+              </div>
+
+              <!-- Output Hub Selection -->
+              <div id="output-hub-selection" class="location-option-content">
+                <div class="form-group">
+                  <label for="output-hub-select">Select Trade Hub</label>
+                  <div id="output-hub-status" class="selection-status hidden">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <polyline points="20 6 9 17 4 12"></polyline>
+                    </svg>
+                    <span id="output-hub-status-text"></span>
+                  </div>
+                  <select id="output-hub-select" class="form-control">
+                    <option value="">Loading...</option>
+                  </select>
+                </div>
+              </div>
+
+              <!-- Output Station Selection -->
+              <div id="output-station-selection" class="location-option-content" style="display: none;">
+                <div id="output-station-status" class="selection-status hidden">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <polyline points="20 6 9 17 4 12"></polyline>
+                  </svg>
+                  <span id="output-station-status-text"></span>
+                </div>
+                <div class="form-row">
+                  <div class="form-group">
+                    <label for="output-station-system-select">Select System</label>
+                    <input type="text" id="output-station-system-search" class="form-control" placeholder="Search systems...">
+                    <select id="output-station-system-select" class="form-control" size="8">
+                      <option value="">Type to search...</option>
+                    </select>
+                  </div>
+                  <div class="form-group">
+                    <label for="output-station-select">Select Station</label>
+                    <select id="output-station-select" class="form-control" size="8">
+                      <option value="">Select a system first</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Output System Selection -->
+              <div id="output-system-selection" class="location-option-content" style="display: none;">
+                <div class="form-group">
+                  <label for="output-system-select">Select Solar System</label>
+                  <div id="output-system-status" class="selection-status hidden">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <polyline points="20 6 9 17 4 12"></polyline>
+                    </svg>
+                    <span id="output-system-status-text"></span>
+                  </div>
+                  <input type="text" id="output-system-search" class="form-control" placeholder="Search systems...">
+                  <select id="output-system-select" class="form-control" size="10">
+                    <option value="">Type to search...</option>
+                  </select>
+                </div>
+              </div>
+
+              <!-- Output Region Selection -->
+              <div id="output-region-selection" class="location-option-content" style="display: none;">
+                <div class="form-group">
+                  <label for="output-region-select">Select Region</label>
+                  <div id="output-region-status" class="selection-status hidden">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <polyline points="20 6 9 17 4 12"></polyline>
+                    </svg>
+                    <span id="output-region-status-text"></span>
+                  </div>
+                  <select id="output-region-select" class="form-control" size="10">
+                    <option value="">Loading...</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            <!-- Output Pricing Settings -->
+            <div class="pricing-settings-divider"></div>
 
             <div class="form-row">
               <div class="form-group">

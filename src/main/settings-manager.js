@@ -28,11 +28,18 @@ const defaultSettings = {
     characters: [],
   },
   market: {
+    // Legacy fields kept for backward compatibility during migration
     locationType: 'hub', // 'hub', 'station', 'system', 'region'
     locationId: 60003760, // Jita IV - Moon 4
     regionId: 10000002, // The Forge
     systemId: 30000142, // Jita
     inputMaterials: {
+      // Location fields (new)
+      locationType: 'hub',
+      locationId: 60003760,
+      regionId: 10000002,
+      systemId: 30000142,
+      // Pricing fields
       priceType: 'sell', // 'buy' or 'sell'
       priceMethod: 'hybrid', // 'vwap', 'percentile', 'historical', 'hybrid'
       priceModifier: 1.0, // Multiplier (1.0 = 100%)
@@ -40,6 +47,14 @@ const defaultSettings = {
       minVolume: 1000, // Minimum volume threshold
     },
     outputProducts: {
+      // Toggle for using same location as input
+      useSameLocation: true,
+      // Location fields (used when useSameLocation=false)
+      locationType: 'hub',
+      locationId: 60003760,
+      regionId: 10000002,
+      systemId: 30000142,
+      // Pricing fields
       priceType: 'sell',
       priceMethod: 'hybrid',
       priceModifier: 1.0, // 100% (no adjustment by default)
@@ -78,6 +93,11 @@ function loadSettings() {
     if (fs.existsSync(settingsFilePath)) {
       const data = fs.readFileSync(settingsFilePath, 'utf8');
       const loadedSettings = JSON.parse(data);
+
+      // Migrate market location settings if needed
+      if (loadedSettings.market) {
+        loadedSettings.market = migrateMarketLocationSettings(loadedSettings.market);
+      }
 
       // Merge with defaults to ensure all keys exist
       return mergeWithDefaults(loadedSettings, defaultSettings);
@@ -152,6 +172,7 @@ function getSetting(category, key) {
 
 /**
  * Merge loaded settings with defaults to ensure all keys exist
+ * Handles deep merging for nested objects like market.inputMaterials
  * @param {Object} loaded - Loaded settings
  * @param {Object} defaults - Default settings
  * @returns {Object} Merged settings
@@ -160,14 +181,73 @@ function mergeWithDefaults(loaded, defaults) {
   const merged = { ...defaults };
 
   for (const key in loaded) {
-    if (typeof loaded[key] === 'object' && !Array.isArray(loaded[key])) {
-      merged[key] = { ...defaults[key], ...loaded[key] };
+    if (typeof loaded[key] === 'object' && !Array.isArray(loaded[key]) && loaded[key] !== null) {
+      // Deep merge for nested objects
+      merged[key] = deepMergeWithDefaults(loaded[key], defaults[key] || {});
     } else {
       merged[key] = loaded[key];
     }
   }
 
   return merged;
+}
+
+/**
+ * Deep merge helper for nested settings objects
+ * @param {Object} loaded - Loaded settings object
+ * @param {Object} defaults - Default settings object
+ * @returns {Object} Merged object
+ */
+function deepMergeWithDefaults(loaded, defaults) {
+  const merged = { ...defaults };
+
+  for (const key in loaded) {
+    if (typeof loaded[key] === 'object' && !Array.isArray(loaded[key]) && loaded[key] !== null) {
+      merged[key] = deepMergeWithDefaults(loaded[key], defaults[key] || {});
+    } else {
+      merged[key] = loaded[key];
+    }
+  }
+
+  return merged;
+}
+
+/**
+ * Migrate market location settings from legacy shared location to per-section locations
+ * @param {Object} marketSettings - Market settings object
+ * @returns {Object} Migrated market settings
+ */
+function migrateMarketLocationSettings(marketSettings) {
+  // Skip if already migrated (inputMaterials has regionId)
+  if (marketSettings.inputMaterials?.regionId !== undefined) {
+    return marketSettings;
+  }
+
+  console.log('[Settings Migration] Migrating market location settings to new structure');
+
+  const migrated = { ...marketSettings };
+
+  // Copy shared location to inputMaterials
+  migrated.inputMaterials = {
+    ...migrated.inputMaterials,
+    locationType: marketSettings.locationType || 'hub',
+    locationId: marketSettings.locationId || 60003760,
+    regionId: marketSettings.regionId || 10000002,
+    systemId: marketSettings.systemId || 30000142,
+  };
+
+  // Set outputProducts to use same location by default
+  migrated.outputProducts = {
+    ...migrated.outputProducts,
+    useSameLocation: true,
+    locationType: marketSettings.locationType || 'hub',
+    locationId: marketSettings.locationId || 60003760,
+    regionId: marketSettings.regionId || 10000002,
+    systemId: marketSettings.systemId || 30000142,
+  };
+
+  console.log('[Settings Migration] Market location migration complete');
+  return migrated;
 }
 
 /**

@@ -1503,3 +1503,49 @@ select.form-control:not([value=""]):valid {
   border-top: 1px solid rgba(100, 180, 255, 0.2);
 }
 
+/* Same Location Toggle */
+.same-location-toggle {
+  margin-bottom: 20px;
+  padding: 15px;
+  background: rgba(100, 180, 255, 0.08);
+  border-radius: 8px;
+  border: 1px solid rgba(100, 180, 255, 0.2);
+}
+
+.checkbox-option {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.checkbox-option input[type="checkbox"] {
+  width: 20px;
+  height: 20px;
+  cursor: pointer;
+  accent-color: #64b4ff;
+}
+
+.checkbox-option .checkbox-label {
+  color: #e0e0e0;
+  font-weight: 500;
+  font-size: 0.95em;
+}
+
+/* Output Location Section */
+.output-location-section {
+  margin-top: 15px;
+  padding: 15px;
+  background: rgba(100, 100, 100, 0.08);
+  border-radius: 8px;
+  border: 1px dashed rgba(100, 180, 255, 0.3);
+}
+
+/* Pricing Settings Divider */
+.pricing-settings-divider {
+  height: 1px;
+  background: linear-gradient(to right, transparent, rgba(100, 180, 255, 0.3), transparent);
+  margin: 25px 0;
+}
+

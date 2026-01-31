@@ -178,16 +178,22 @@ async function loadLocationData() {
   }
 }
 
-// Populate trade hubs dropdown
+// Populate trade hubs dropdown (both input and output)
 function populateTradeHubs() {
-  const hubSelect = document.getElementById('hub-select');
-  hubSelect.innerHTML = '';
+  const prefixes = ['input', 'output'];
 
-  tradeHubs.forEach(hub => {
-    const option = document.createElement('option');
-    option.value = hub.stationID;
-    option.textContent = hub.stationName;
-    hubSelect.appendChild(option);
+  prefixes.forEach(prefix => {
+    const hubSelect = document.getElementById(`${prefix}-hub-select`);
+    if (!hubSelect) return;
+
+    hubSelect.innerHTML = '';
+
+    tradeHubs.forEach(hub => {
+      const option = document.createElement('option');
+      option.value = hub.stationID;
+      option.textContent = hub.stationName;
+      hubSelect.appendChild(option);
+    });
   });
 }
 
@@ -223,15 +229,22 @@ function clearUnsavedIndicator() {
 }
 
 // Populate regions dropdown
+// Populate regions dropdown (both input and output)
 function populateRegions() {
-  const regionSelect = document.getElementById('region-select');
-  regionSelect.innerHTML = '';
+  const prefixes = ['input', 'output'];
 
-  allRegions.forEach(region => {
-    const option = document.createElement('option');
-    option.value = region.regionID;
-    option.textContent = region.regionName;
-    regionSelect.appendChild(option);
+  prefixes.forEach(prefix => {
+    const regionSelect = document.getElementById(`${prefix}-region-select`);
+    if (!regionSelect) return;
+
+    regionSelect.innerHTML = '';
+
+    allRegions.forEach(region => {
+      const option = document.createElement('option');
+      option.value = region.regionID;
+      option.textContent = region.regionName;
+      regionSelect.appendChild(option);
+    });
   });
 }
 
@@ -266,8 +279,10 @@ async function handleSystemSearch(searchTerm, targetSelectId) {
 }
 
 // Handle station loading for selected system
-async function loadStationsForSystem(systemId) {
-  const stationSelect = document.getElementById('station-select');
+async function loadStationsForSystem(systemId, prefix = 'input') {
+  const stationSelect = document.getElementById(`${prefix}-station-select`);
+  if (!stationSelect) return;
+
   stationSelect.innerHTML = '<option value="">Loading...</option>';
 
   try {
@@ -295,20 +310,131 @@ async function loadStationsForSystem(systemId) {
 }
 
 // Handle location type switching
-function handleLocationTypeChange() {
-  const locationTypes = document.querySelectorAll('input[name="location-type"]');
+function handleLocationTypeChange(prefix = 'input') {
+  const locationTypes = document.querySelectorAll(`input[name="${prefix}-location-type"]`);
   const selectedType = Array.from(locationTypes).find(radio => radio.checked)?.value;
 
-  // Hide all location option contents
-  document.querySelectorAll('.location-option-content').forEach(content => {
-    content.style.display = 'none';
+  // Hide all location option contents for this prefix
+  const selectionIds = ['hub', 'station', 'system', 'region'];
+  selectionIds.forEach(id => {
+    const content = document.getElementById(`${prefix}-${id}-selection`);
+    if (content) {
+      content.style.display = 'none';
+    }
   });
 
   // Show the selected one
-  const contentId = `${selectedType}-selection`;
+  const contentId = `${prefix}-${selectedType}-selection`;
   const content = document.getElementById(contentId);
   if (content) {
     content.style.display = 'block';
+  }
+}
+
+// Handle output "same location" toggle
+function handleOutputSameLocationChange() {
+  const checkbox = document.getElementById('output-same-location');
+  const outputLocationSettings = document.getElementById('output-location-settings');
+
+  if (checkbox && outputLocationSettings) {
+    outputLocationSettings.style.display = checkbox.checked ? 'none' : 'block';
+  }
+}
+
+// Setup location event listeners for a specific prefix (input or output)
+function setupLocationEventListeners(prefix) {
+  // Location type radio buttons
+  const locationRadios = document.querySelectorAll(`input[name="${prefix}-location-type"]`);
+  locationRadios.forEach(radio => {
+    radio.addEventListener('change', () => handleLocationTypeChange(prefix));
+  });
+
+  // System search for station selection
+  const stationSystemSearch = document.getElementById(`${prefix}-station-system-search`);
+  if (stationSystemSearch) {
+    let searchTimeout;
+    stationSystemSearch.addEventListener('input', (e) => {
+      clearTimeout(searchTimeout);
+      searchTimeout = setTimeout(() => {
+        handleSystemSearch(e.target.value, `${prefix}-station-system-select`);
+      }, 300);
+    });
+  }
+
+  // System search for system selection
+  const systemSearch = document.getElementById(`${prefix}-system-search`);
+  if (systemSearch) {
+    let searchTimeout;
+    systemSearch.addEventListener('input', (e) => {
+      clearTimeout(searchTimeout);
+      searchTimeout = setTimeout(() => {
+        handleSystemSearch(e.target.value, `${prefix}-system-select`);
+      }, 300);
+    });
+  }
+
+  // Station system selection change - load stations
+  const stationSystemSelect = document.getElementById(`${prefix}-station-system-select`);
+  if (stationSystemSelect) {
+    stationSystemSelect.addEventListener('change', (e) => {
+      if (e.target.value) {
+        loadStationsForSystem(parseInt(e.target.value), prefix);
+      }
+    });
+  }
+
+  // Hub selection change
+  const hubSelect = document.getElementById(`${prefix}-hub-select`);
+  if (hubSelect) {
+    hubSelect.addEventListener('change', (e) => {
+      if (e.target.value) {
+        const selectedHub = tradeHubs.find(h => h.stationID === parseInt(e.target.value));
+        if (selectedHub) {
+          updateSelectionStatus(`${prefix}-hub-status`, `${prefix}-hub-status-text`, `Selected: ${selectedHub.stationName}`);
+        }
+      } else {
+        updateSelectionStatus(`${prefix}-hub-status`, `${prefix}-hub-status-text`, null);
+      }
+    });
+  }
+
+  // Station selection change
+  const stationSelect = document.getElementById(`${prefix}-station-select`);
+  if (stationSelect) {
+    stationSelect.addEventListener('change', (e) => {
+      if (e.target.value) {
+        const selectedOption = e.target.options[e.target.selectedIndex];
+        updateSelectionStatus(`${prefix}-station-status`, `${prefix}-station-status-text`, `Selected: ${selectedOption.textContent}`);
+      } else {
+        updateSelectionStatus(`${prefix}-station-status`, `${prefix}-station-status-text`, null);
+      }
+    });
+  }
+
+  // System selection change
+  const systemSelect = document.getElementById(`${prefix}-system-select`);
+  if (systemSelect) {
+    systemSelect.addEventListener('change', (e) => {
+      if (e.target.value) {
+        const selectedOption = e.target.options[e.target.selectedIndex];
+        updateSelectionStatus(`${prefix}-system-status`, `${prefix}-system-status-text`, `Selected: ${selectedOption.textContent}`);
+      } else {
+        updateSelectionStatus(`${prefix}-system-status`, `${prefix}-system-status-text`, null);
+      }
+    });
+  }
+
+  // Region selection change
+  const regionSelect = document.getElementById(`${prefix}-region-select`);
+  if (regionSelect) {
+    regionSelect.addEventListener('change', (e) => {
+      if (e.target.value) {
+        const selectedOption = e.target.options[e.target.selectedIndex];
+        updateSelectionStatus(`${prefix}-region-status`, `${prefix}-region-status-text`, `Selected: ${selectedOption.textContent}`);
+      } else {
+        updateSelectionStatus(`${prefix}-region-status`, `${prefix}-region-status-text`, null);
+      }
+    });
   }
 }
 
@@ -327,84 +453,34 @@ async function loadSettings() {
 
 // Populate settings form with current values
 function populateSettingsForm(settings) {
-  // Location type and selection
-  const locationType = settings.locationType || 'hub';
-  const locationRadio = document.querySelector(`input[name="location-type"][value="${locationType}"]`);
-  if (locationRadio) {
-    locationRadio.checked = true;
+  // Populate INPUT location settings
+  populateLocationSettings(settings.inputMaterials || settings, 'input');
+
+  // Populate OUTPUT location settings
+  const outputSameLocation = document.getElementById('output-same-location');
+  if (outputSameLocation) {
+    outputSameLocation.checked = settings.outputProducts?.useSameLocation !== false;
   }
 
-  // Trigger location type change to show correct section
-  handleLocationTypeChange();
+  // Toggle output location visibility based on checkbox
+  handleOutputSameLocationChange();
 
-  // Set the appropriate location value based on type
-  if (locationType === 'hub') {
-    const hubSelect = document.getElementById('hub-select');
-    if (hubSelect && settings.locationId) {
-      hubSelect.value = settings.locationId;
-      // Update status indicator
-      const selectedHub = tradeHubs.find(h => h.stationID === settings.locationId);
-      if (selectedHub) {
-        updateSelectionStatus('hub-status', 'hub-status-text', `Selected: ${selectedHub.stationName}`);
-      }
-    }
-  } else if (locationType === 'station') {
-    // For station, we need to load the system first, then select the station
-    if (settings.systemId) {
-      handleSystemSearch('', 'station-system-select').then(() => {
-        const stationSystemSelect = document.getElementById('station-system-select');
-        if (stationSystemSelect) {
-          stationSystemSelect.value = settings.systemId;
-        }
-        if (settings.locationId) {
-          loadStationsForSystem(settings.systemId).then(() => {
-            const stationSelect = document.getElementById('station-select');
-            if (stationSelect) {
-              stationSelect.value = settings.locationId;
-              // Update status indicator
-              const selectedOption = stationSelect.options[stationSelect.selectedIndex];
-              if (selectedOption) {
-                updateSelectionStatus('station-status', 'station-status-text', `Selected: ${selectedOption.textContent}`);
-              }
-            }
-          });
-        }
-      });
-    }
-  } else if (locationType === 'system') {
-    if (settings.systemId) {
-      handleSystemSearch('', 'system-select').then(() => {
-        const systemSelect = document.getElementById('system-select');
-        if (systemSelect) {
-          systemSelect.value = settings.systemId;
-          // Update status indicator
-          const selectedOption = systemSelect.options[systemSelect.selectedIndex];
-          if (selectedOption) {
-            updateSelectionStatus('system-status', 'system-status-text', `Selected: ${selectedOption.textContent}`);
-          }
-        }
-      });
-    }
-  } else if (locationType === 'region') {
-    const regionSelect = document.getElementById('region-select');
-    if (regionSelect && settings.regionId) {
-      regionSelect.value = settings.regionId;
-      // Update status indicator
-      const selectedOption = regionSelect.options[regionSelect.selectedIndex];
-      if (selectedOption) {
-        updateSelectionStatus('region-status', 'region-status-text', `Selected: ${selectedOption.textContent}`);
-      }
-    }
+  // Populate output location if not using same location
+  if (settings.outputProducts?.useSameLocation === false) {
+    populateLocationSettings(settings.outputProducts, 'output');
+  } else {
+    // Pre-populate output with input values (for when user unchecks the box)
+    populateLocationSettings(settings.inputMaterials || settings, 'output');
   }
 
-  // Input materials
+  // Input materials pricing
   document.getElementById('input-price-type').value = settings.inputMaterials?.priceType || 'sell';
   document.getElementById('input-price-method').value = settings.inputMaterials?.priceMethod || 'hybrid';
   document.getElementById('input-price-modifier').value = (settings.inputMaterials?.priceModifier || 1.0) * 100;
   document.getElementById('input-percentile').value = settings.inputMaterials?.percentile || 0.2;
   document.getElementById('input-min-volume').value = settings.inputMaterials?.minVolume || 1000;
 
-  // Output products
+  // Output products pricing
   document.getElementById('output-price-type').value = settings.outputProducts?.priceType || 'sell';
   document.getElementById('output-price-method').value = settings.outputProducts?.priceMethod || 'hybrid';
   document.getElementById('output-price-modifier').value = (settings.outputProducts?.priceModifier || 1.0) * 100;
@@ -415,15 +491,108 @@ function populateSettingsForm(settings) {
   document.getElementById('warning-threshold').value = (settings.warningThreshold || 0.3) * 100;
 }
 
+// Populate location settings for a specific prefix (input or output)
+function populateLocationSettings(locationSettings, prefix) {
+  // Get location type from nested settings or fall back to legacy structure
+  const locationType = locationSettings?.locationType || 'hub';
+  const locationRadio = document.querySelector(`input[name="${prefix}-location-type"][value="${locationType}"]`);
+  if (locationRadio) {
+    locationRadio.checked = true;
+  }
+
+  // Trigger location type change to show correct section
+  handleLocationTypeChange(prefix);
+
+  // Set the appropriate location value based on type
+  const locationId = locationSettings?.locationId;
+  const systemId = locationSettings?.systemId;
+  const regionId = locationSettings?.regionId;
+
+  if (locationType === 'hub') {
+    const hubSelect = document.getElementById(`${prefix}-hub-select`);
+    if (hubSelect && locationId) {
+      hubSelect.value = locationId;
+      // Update status indicator
+      const selectedHub = tradeHubs.find(h => h.stationID === locationId);
+      if (selectedHub) {
+        updateSelectionStatus(`${prefix}-hub-status`, `${prefix}-hub-status-text`, `Selected: ${selectedHub.stationName}`);
+      }
+    }
+  } else if (locationType === 'station') {
+    // For station, we need to load the system first, then select the station
+    if (systemId) {
+      handleSystemSearch('', `${prefix}-station-system-select`).then(() => {
+        const stationSystemSelect = document.getElementById(`${prefix}-station-system-select`);
+        if (stationSystemSelect) {
+          stationSystemSelect.value = systemId;
+        }
+        if (locationId) {
+          loadStationsForSystem(systemId, prefix).then(() => {
+            const stationSelect = document.getElementById(`${prefix}-station-select`);
+            if (stationSelect) {
+              stationSelect.value = locationId;
+              // Update status indicator
+              const selectedOption = stationSelect.options[stationSelect.selectedIndex];
+              if (selectedOption) {
+                updateSelectionStatus(`${prefix}-station-status`, `${prefix}-station-status-text`, `Selected: ${selectedOption.textContent}`);
+              }
+            }
+          });
+        }
+      });
+    }
+  } else if (locationType === 'system') {
+    if (systemId) {
+      handleSystemSearch('', `${prefix}-system-select`).then(() => {
+        const systemSelect = document.getElementById(`${prefix}-system-select`);
+        if (systemSelect) {
+          systemSelect.value = systemId;
+          // Update status indicator
+          const selectedOption = systemSelect.options[systemSelect.selectedIndex];
+          if (selectedOption) {
+            updateSelectionStatus(`${prefix}-system-status`, `${prefix}-system-status-text`, `Selected: ${selectedOption.textContent}`);
+          }
+        }
+      });
+    }
+  } else if (locationType === 'region') {
+    const regionSelect = document.getElementById(`${prefix}-region-select`);
+    if (regionSelect && regionId) {
+      regionSelect.value = regionId;
+      // Update status indicator
+      const selectedOption = regionSelect.options[regionSelect.selectedIndex];
+      if (selectedOption) {
+        updateSelectionStatus(`${prefix}-region-status`, `${prefix}-region-status-text`, `Selected: ${selectedOption.textContent}`);
+      }
+    }
+  }
+}
+
 // Get settings from form
 async function getSettingsFromForm() {
-  // Get selected location type
-  const locationType = Array.from(document.querySelectorAll('input[name="location-type"]'))
-    .find(radio => radio.checked)?.value || 'hub';
+  // Get input location settings
+  const inputLocation = await getLocationFromForm('input');
+
+  // Get output "same location" setting
+  const outputSameLocation = document.getElementById('output-same-location')?.checked !== false;
+
+  // Get output location settings (if not using same location)
+  const outputLocation = outputSameLocation ? {} : await getLocationFromForm('output');
 
   const settings = {
-    locationType,
+    // Legacy fields (kept for backward compatibility)
+    locationType: inputLocation.locationType,
+    locationId: inputLocation.locationId,
+    regionId: inputLocation.regionId,
+    systemId: inputLocation.systemId,
+
     inputMaterials: {
+      // Location fields
+      locationType: inputLocation.locationType,
+      locationId: inputLocation.locationId,
+      regionId: inputLocation.regionId,
+      systemId: inputLocation.systemId,
+      // Pricing fields
       priceType: document.getElementById('input-price-type').value,
       priceMethod: document.getElementById('input-price-method').value,
       priceModifier: parseFloat(document.getElementById('input-price-modifier').value) / 100,
@@ -431,6 +600,13 @@ async function getSettingsFromForm() {
       minVolume: parseInt(document.getElementById('input-min-volume').value),
     },
     outputProducts: {
+      useSameLocation: outputSameLocation,
+      // Location fields (use input location if same, otherwise use output location)
+      locationType: outputSameLocation ? inputLocation.locationType : outputLocation.locationType,
+      locationId: outputSameLocation ? inputLocation.locationId : outputLocation.locationId,
+      regionId: outputSameLocation ? inputLocation.regionId : outputLocation.regionId,
+      systemId: outputSameLocation ? inputLocation.systemId : outputLocation.systemId,
+      // Pricing fields
       priceType: document.getElementById('output-price-type').value,
       priceMethod: document.getElementById('output-price-method').value,
       priceModifier: parseFloat(document.getElementById('output-price-modifier').value) / 100,
@@ -440,44 +616,53 @@ async function getSettingsFromForm() {
     warningThreshold: parseFloat(document.getElementById('warning-threshold').value) / 100,
   };
 
-  // Get location-specific values based on type
+  return settings;
+}
+
+// Get location settings from form for a specific prefix (input or output)
+async function getLocationFromForm(prefix) {
+  const locationType = Array.from(document.querySelectorAll(`input[name="${prefix}-location-type"]`))
+    .find(radio => radio.checked)?.value || 'hub';
+
+  const location = { locationType };
+
   if (locationType === 'hub') {
-    const hubSelect = document.getElementById('hub-select');
-    settings.locationId = parseInt(hubSelect.value);
+    const hubSelect = document.getElementById(`${prefix}-hub-select`);
+    location.locationId = parseInt(hubSelect.value);
     // Find the selected hub to get its region and system
-    const selectedHub = tradeHubs.find(h => h.stationID === settings.locationId);
+    const selectedHub = tradeHubs.find(h => h.stationID === location.locationId);
     if (selectedHub) {
-      settings.regionId = selectedHub.regionID;
-      settings.systemId = selectedHub.systemID;
+      location.regionId = selectedHub.regionID;
+      location.systemId = selectedHub.systemID;
     }
   } else if (locationType === 'station') {
-    const stationSystemSelect = document.getElementById('station-system-select');
-    const stationSelect = document.getElementById('station-select');
-    settings.systemId = parseInt(stationSystemSelect.value);
-    settings.locationId = parseInt(stationSelect.value);
+    const stationSystemSelect = document.getElementById(`${prefix}-station-system-select`);
+    const stationSelect = document.getElementById(`${prefix}-station-select`);
+    location.systemId = parseInt(stationSystemSelect.value);
+    location.locationId = parseInt(stationSelect.value);
     // We need to look up the region for this system
     const systems = await window.electronAPI.sde.getAllSystems();
-    const selectedSystem = systems.find(s => s.solarSystemID === settings.systemId);
+    const selectedSystem = systems.find(s => s.solarSystemID === location.systemId);
     if (selectedSystem) {
-      settings.regionId = selectedSystem.regionID;
+      location.regionId = selectedSystem.regionID;
     }
   } else if (locationType === 'system') {
-    const systemSelect = document.getElementById('system-select');
-    settings.systemId = parseInt(systemSelect.value);
-    settings.locationId = settings.systemId;
+    const systemSelect = document.getElementById(`${prefix}-system-select`);
+    location.systemId = parseInt(systemSelect.value);
+    location.locationId = location.systemId;
     // Look up region for this system
     const systems = await window.electronAPI.sde.getAllSystems();
-    const selectedSystem = systems.find(s => s.solarSystemID === settings.systemId);
+    const selectedSystem = systems.find(s => s.solarSystemID === location.systemId);
     if (selectedSystem) {
-      settings.regionId = selectedSystem.regionID;
+      location.regionId = selectedSystem.regionID;
     }
   } else if (locationType === 'region') {
-    const regionSelect = document.getElementById('region-select');
-    settings.regionId = parseInt(regionSelect.value);
-    settings.locationId = settings.regionId;
+    const regionSelect = document.getElementById(`${prefix}-region-select`);
+    location.regionId = parseInt(regionSelect.value);
+    location.locationId = location.regionId;
   }
 
-  return settings;
+  return location;
 }
 
 // Save settings
@@ -802,31 +987,16 @@ async function handleMarketDataRefresh(isRetry = false) {
   });
 
   try {
-    const settings = await window.electronAPI.market.getSettings();
-    const regionId = settings.regionId || 10000002;
-
-    // Step 1: Update market data
     const progressLabel = document.getElementById('progress-label');
-    if (progressLabel) progressLabel.textContent = 'Fetching market orders...';
+    if (progressLabel) progressLabel.textContent = 'Updating all market data...';
 
-    const result = await window.electronAPI.market.manualRefresh(regionId);
+    // Use unified market data update (handles all configured regions, adjusted prices, and cost indices)
+    const result = await window.electronAPI.market.updateAllMarketData();
 
     // Remove progress listener
     window.electronAPI.market.removeFetchProgressListener();
 
     if (result.success) {
-      // Step 2: Update adjusted prices
-      if (progressLabel) progressLabel.textContent = 'Fetching adjusted prices...';
-      updateProgressBar(1, 3, 33);
-
-      await window.electronAPI.market.refreshAdjustedPrices();
-
-      // Step 3: Update cost indices
-      if (progressLabel) progressLabel.textContent = 'Fetching system cost indices...';
-      updateProgressBar(2, 3, 66);
-
-      await window.electronAPI.costIndices.fetch();
-
       // Show complete state
       if (progressLabel) progressLabel.textContent = 'Update complete!';
       updateProgressBar(3, 3, 100);
@@ -855,10 +1025,11 @@ async function handleMarketDataRefresh(isRetry = false) {
       hideProgressBar();
 
       // Check if it's a network/timeout error and offer retry
-      if (result.error && (result.error.includes('fetch failed') || result.error.includes('timeout') || result.error.includes('Failed after'))) {
-        await showErrorWithRetry(result.error, () => handleMarketDataRefresh(true));
+      const errorMsg = result.message || 'Failed to update market data';
+      if (errorMsg.includes('fetch failed') || errorMsg.includes('timeout') || errorMsg.includes('Failed after')) {
+        await showErrorWithRetry(errorMsg, () => handleMarketDataRefresh(true));
       } else {
-        alert(result.error || 'Failed to update market data');
+        alert(errorMsg);
       }
 
       refreshBtn.disabled = false;
@@ -1052,103 +1223,21 @@ function setupEventListeners() {
     resetBtn.addEventListener('click', resetSettings);
   }
 
-  // Location type radio buttons
-  const locationRadios = document.querySelectorAll('input[name="location-type"]');
-  locationRadios.forEach(radio => {
-    radio.addEventListener('change', handleLocationTypeChange);
-  });
+  // Setup location event listeners for both input and output
+  setupLocationEventListeners('input');
+  setupLocationEventListeners('output');
 
-  // System search for station selection
-  const stationSystemSearch = document.getElementById('station-system-search');
-  if (stationSystemSearch) {
-    let searchTimeout;
-    stationSystemSearch.addEventListener('input', (e) => {
-      clearTimeout(searchTimeout);
-      searchTimeout = setTimeout(() => {
-        handleSystemSearch(e.target.value, 'station-system-select');
-      }, 300);
-    });
-  }
-
-  // System search for system selection
-  const systemSearch = document.getElementById('system-search');
-  if (systemSearch) {
-    let searchTimeout;
-    systemSearch.addEventListener('input', (e) => {
-      clearTimeout(searchTimeout);
-      searchTimeout = setTimeout(() => {
-        handleSystemSearch(e.target.value, 'system-select');
-      }, 300);
-    });
-  }
-
-  // Station system selection change - load stations
-  const stationSystemSelect = document.getElementById('station-system-select');
-  if (stationSystemSelect) {
-    stationSystemSelect.addEventListener('change', (e) => {
-      if (e.target.value) {
-        loadStationsForSystem(parseInt(e.target.value));
-      }
-    });
-  }
-
-  // Hub selection change
-  const hubSelect = document.getElementById('hub-select');
-  if (hubSelect) {
-    hubSelect.addEventListener('change', (e) => {
-      if (e.target.value) {
-        const selectedHub = tradeHubs.find(h => h.stationID === parseInt(e.target.value));
-        if (selectedHub) {
-          updateSelectionStatus('hub-status', 'hub-status-text', `Selected: ${selectedHub.stationName}`);
-        }
-      } else {
-        updateSelectionStatus('hub-status', 'hub-status-text', null);
-      }
-    });
-  }
-
-  // Station selection change
-  const stationSelect = document.getElementById('station-select');
-  if (stationSelect) {
-    stationSelect.addEventListener('change', (e) => {
-      if (e.target.value) {
-        const selectedOption = e.target.options[e.target.selectedIndex];
-        updateSelectionStatus('station-status', 'station-status-text', `Selected: ${selectedOption.textContent}`);
-      } else {
-        updateSelectionStatus('station-status', 'station-status-text', null);
-      }
-    });
-  }
-
-  // System selection change
-  const systemSelect = document.getElementById('system-select');
-  if (systemSelect) {
-    systemSelect.addEventListener('change', (e) => {
-      if (e.target.value) {
-        const selectedOption = e.target.options[e.target.selectedIndex];
-        updateSelectionStatus('system-status', 'system-status-text', `Selected: ${selectedOption.textContent}`);
-      } else {
-        updateSelectionStatus('system-status', 'system-status-text', null);
-      }
-    });
-  }
-
-  // Region selection change
-  const regionSelect = document.getElementById('region-select');
-  if (regionSelect) {
-    regionSelect.addEventListener('change', (e) => {
-      if (e.target.value) {
-        const selectedOption = e.target.options[e.target.selectedIndex];
-        updateSelectionStatus('region-status', 'region-status-text', `Selected: ${selectedOption.textContent}`);
-      } else {
-        updateSelectionStatus('region-status', 'region-status-text', null);
-      }
+  // Output "same location" checkbox
+  const outputSameLocation = document.getElementById('output-same-location');
+  if (outputSameLocation) {
+    outputSameLocation.addEventListener('change', () => {
+      handleOutputSameLocationChange();
+      markAsUnsaved();
     });
   }
 
   // Track changes on all form inputs to show unsaved indicator
-  // Exclude override form inputs (they're in a different section)
-  const formInputs = document.querySelectorAll('#settings-tab .form-control, input[name="location-type"]');
+  const formInputs = document.querySelectorAll('#settings-tab .form-control, input[name="input-location-type"], input[name="output-location-type"]');
   formInputs.forEach(input => {
     input.addEventListener('change', () => {
       markAsUnsaved();

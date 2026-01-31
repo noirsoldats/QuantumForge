@@ -947,14 +947,20 @@ function toggleAdvancedSection(section) {
 async function saveMarketSettings() {
   try {
     const marketSettings = {
-      // Location settings
+      // Legacy location settings (for backward compatibility)
       locationType: wizardState.marketSettings.locationType,
       locationId: wizardState.marketSettings.locationId,
       regionId: wizardState.marketSettings.regionId,
       systemId: wizardState.marketSettings.systemId,
 
-      // Input materials settings
+      // Input materials settings (includes location for new structure)
       inputMaterials: {
+        // Location fields
+        locationType: wizardState.marketSettings.locationType,
+        locationId: wizardState.marketSettings.locationId,
+        regionId: wizardState.marketSettings.regionId,
+        systemId: wizardState.marketSettings.systemId,
+        // Pricing fields
         priceType: wizardState.marketSettings.inputPriceType,
         priceMethod: wizardState.marketSettings.inputPricingMethod,
         priceModifier: wizardState.marketSettings.inputPriceModifier / 100, // Convert from percentage
@@ -962,8 +968,15 @@ async function saveMarketSettings() {
         minVolume: wizardState.marketSettings.inputMinVolume,
       },
 
-      // Output products settings
+      // Output products settings (uses same location as input by default in wizard)
       outputProducts: {
+        useSameLocation: true, // Wizard sets up same location for input/output
+        // Location fields (same as input, will be used if useSameLocation is changed later)
+        locationType: wizardState.marketSettings.locationType,
+        locationId: wizardState.marketSettings.locationId,
+        regionId: wizardState.marketSettings.regionId,
+        systemId: wizardState.marketSettings.systemId,
+        // Pricing fields
         priceType: wizardState.marketSettings.outputPriceType,
         priceMethod: wizardState.marketSettings.outputPricingMethod,
         priceModifier: wizardState.marketSettings.outputPriceModifier / 100, // Convert from percentage

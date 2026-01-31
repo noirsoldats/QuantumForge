@@ -1563,6 +1563,60 @@ function setupIPCHandlers() {
     return await manualRefreshAdjustedPrices();
   });
 
+  ipcMain.handle('market:refreshMultipleRegions', async (event, regionIds) => {
+    const { refreshMultipleRegions } = require('./esi-market');
+    return await refreshMultipleRegions(regionIds);
+  });
+
+  // Unified market data update - refreshes all configured regions, adjusted prices, and cost indices
+  ipcMain.handle('market:updateAllMarketData', async (event) => {
+    const { getUniqueRegions } = require('./blueprint-pricing');
+    const { getMarketSettings } = require('./settings-manager');
+    const { refreshMultipleRegions, manualRefreshAdjustedPrices } = require('./esi-market');
+
+    const results = {
+      marketData: null,
+      adjustedPrices: null,
+      costIndices: null,
+      success: false,
+      errors: [],
+    };
+
+    try {
+      // Step 1: Get all unique regions from market settings
+      const marketSettings = getMarketSettings();
+      const regionIds = getUniqueRegions(marketSettings);
+      console.log(`[UpdateAllMarketData] Refreshing ${regionIds.length} region(s):`, regionIds);
+
+      // Step 2: Refresh market data for all regions
+      results.marketData = await refreshMultipleRegions(regionIds);
+      if (!results.marketData.success) {
+        results.errors.push('Some regions failed to refresh');
+      }
+
+      // Step 3: Refresh adjusted prices
+      results.adjustedPrices = await manualRefreshAdjustedPrices();
+      if (!results.adjustedPrices.success) {
+        results.errors.push('Failed to refresh adjusted prices');
+      }
+
+      // Step 4: Refresh cost indices
+      results.costIndices = await fetchCostIndices();
+
+      results.success = results.errors.length === 0;
+      results.message = results.success
+        ? `Updated market data for ${regionIds.length} region(s), adjusted prices, and cost indices`
+        : `Update completed with errors: ${results.errors.join(', ')}`;
+
+      return results;
+    } catch (error) {
+      console.error('[UpdateAllMarketData] Error:', error);
+      results.errors.push(error.message);
+      results.message = `Update failed: ${error.message}`;
+      return results;
+    }
+  });
+
   // Handle IPC for cost indices
   ipcMain.handle('costIndices:fetch', async () => {
     return await fetchCostIndices();

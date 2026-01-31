@@ -8,6 +8,56 @@ const { getMarketSettings } = require('./settings-manager');
 const MANUFACTURING_ACTIVITY = 'manufacturing';
 
 /**
+ * Get the location settings for input materials (buying)
+ * @param {Object} marketSettings - Market settings object
+ * @returns {Object} Location object with regionId, locationId, systemId, locationType
+ */
+function getInputLocation(marketSettings) {
+  const input = marketSettings.inputMaterials;
+  return {
+    regionId: input.regionId ?? marketSettings.regionId,
+    locationId: input.locationId ?? marketSettings.locationId,
+    systemId: input.systemId ?? marketSettings.systemId,
+    locationType: input.locationType ?? marketSettings.locationType,
+  };
+}
+
+/**
+ * Get the location settings for output products (selling)
+ * Falls back to input location if useSameLocation is true
+ * @param {Object} marketSettings - Market settings object
+ * @returns {Object} Location object with regionId, locationId, systemId, locationType
+ */
+function getOutputLocation(marketSettings) {
+  const output = marketSettings.outputProducts;
+  if (output.useSameLocation) {
+    return getInputLocation(marketSettings);
+  }
+  return {
+    regionId: output.regionId ?? marketSettings.regionId,
+    locationId: output.locationId ?? marketSettings.locationId,
+    systemId: output.systemId ?? marketSettings.systemId,
+    locationType: output.locationType ?? marketSettings.locationType,
+  };
+}
+
+/**
+ * Get unique region IDs from both input and output locations
+ * Used for determining which regions need to be refreshed
+ * @param {Object} marketSettings - Market settings object
+ * @returns {Array<number>} Array of unique region IDs
+ */
+function getUniqueRegions(marketSettings) {
+  const input = getInputLocation(marketSettings);
+  const output = getOutputLocation(marketSettings);
+  const regions = new Set([input.regionId]);
+  if (output.regionId !== input.regionId) {
+    regions.add(output.regionId);
+  }
+  return Array.from(regions);
+}
+
+/**
  * Calculate the price for input materials
  * @param {Object} materials - Object with typeId keys and quantity values
  * @param {Object} marketSettings - Market settings object
@@ -15,8 +65,9 @@ const MANUFACTURING_ACTIVITY = 'manufacturing';
  */
 async function calculateInputMaterialsCost(materials, marketSettings) {
   const inputSettings = marketSettings.inputMaterials;
-  const regionId = marketSettings.regionId;
-  const locationId = marketSettings.locationId;
+  const inputLocation = getInputLocation(marketSettings);
+  const regionId = inputLocation.regionId;
+  const locationId = inputLocation.locationId;
 
   const materialPrices = {};
   let totalCost = 0;
@@ -93,8 +144,9 @@ async function calculateInputMaterialsCost(materials, marketSettings) {
  */
 async function calculateOutputProductValue(product, marketSettings) {
   const outputSettings = marketSettings.outputProducts;
-  const regionId = marketSettings.regionId;
-  const locationId = marketSettings.locationId;
+  const outputLocation = getOutputLocation(marketSettings);
+  const regionId = outputLocation.regionId;
+  const locationId = outputLocation.locationId;
 
   try {
     // Check for price override first
@@ -367,5 +419,8 @@ module.exports = {
   calculateOutputProductValue,
   calculateManufacturingJobCost,
   calculateManufacturingTaxes,
-  calculateBlueprintPricing
+  calculateBlueprintPricing,
+  getInputLocation,
+  getOutputLocation,
+  getUniqueRegions,
 };

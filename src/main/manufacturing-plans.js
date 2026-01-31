@@ -2,6 +2,7 @@ const { getCharacterDatabase } = require('./character-database');
 const { calculateBlueprintMaterials, getBlueprintProduct, getBlueprintForProduct, getOwnedBlueprintME } = require('./blueprint-calculator');
 const { calculateReactionMaterials, getReactionProduct, getReactionForProduct, getReactionMaterials } = require('./reaction-calculator');
 const { calculateRealisticPrice } = require('./market-pricing');
+const { getInputLocation, getOutputLocation } = require('./blueprint-pricing');
 const { getAssets } = require('./esi-assets');
 const { getMarketSettings } = require('./settings-manager');
 const { getSdePath } = require('./sde-manager');
@@ -2579,6 +2580,9 @@ async function recalculatePlanMaterials(planId, refreshPrices = false) {
         VALUES (?, ?, ?, ?, ?)
       `);
 
+      // Get location settings for input materials
+      const inputLocation = getInputLocation(marketSettings);
+
       for (const [typeId, quantity] of Object.entries(aggregatedMaterials)) {
         let price = null;
         let priceFrozenAt = null;
@@ -2587,8 +2591,8 @@ async function recalculatePlanMaterials(planId, refreshPrices = false) {
           try {
             const priceResult = await calculateRealisticPrice(
               parseInt(typeId),
-              marketSettings.regionId,
-              marketSettings.locationId,
+              inputLocation.regionId,
+              inputLocation.locationId,
               marketSettings.inputMaterials.priceType,
               quantity
             );
@@ -2633,6 +2637,9 @@ async function recalculatePlanMaterials(planId, refreshPrices = false) {
         VALUES (?, ?, ?, ?, ?, ?, ?)
       `);
 
+      // Get location settings for output products
+      const outputLocation = getOutputLocation(marketSettings);
+
       // Insert final products (is_intermediate = 0, depth = 0)
       for (const [typeId, quantity] of Object.entries(aggregatedProducts)) {
         // Skip if this is not a final product
@@ -2646,8 +2653,8 @@ async function recalculatePlanMaterials(planId, refreshPrices = false) {
           try {
             const priceResult = await calculateRealisticPrice(
               parseInt(typeId),
-              marketSettings.regionId,
-              marketSettings.locationId,
+              outputLocation.regionId,
+              outputLocation.locationId,
               marketSettings.outputProducts.priceType,
               quantity
             );
@@ -2698,8 +2705,8 @@ async function recalculatePlanMaterials(planId, refreshPrices = false) {
           try {
             const priceResult = await calculateRealisticPrice(
               typeId,
-              marketSettings.regionId,
-              marketSettings.locationId,
+              outputLocation.regionId,
+              outputLocation.locationId,
               marketSettings.outputProducts.priceType,
               data.quantity
             );

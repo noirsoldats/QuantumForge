@@ -793,35 +793,29 @@ async function handleUpdateData() {
   updateBtn.disabled = true;
 
   try {
-    // Get market settings to get the region ID
-    const marketSettings = await window.electronAPI.market.getSettings();
-    const regionId = marketSettings.regionId || 10000002; // Default to The Forge (Jita)
+    // Use unified market data update (handles all configured regions, adjusted prices, and cost indices)
+    const result = await window.electronAPI.market.updateAllMarketData();
 
-    // Update market prices
-    await window.electronAPI.market.manualRefresh(regionId);
+    if (result.success) {
+      // Show success message
+      updateBtn.innerHTML = `
+        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <polyline points="20 6 9 17 4 12"></polyline>
+        </svg>
+        Updated!
+      `;
 
-    // Update adjusted prices
-    await window.electronAPI.market.refreshAdjustedPrices();
+      // Clear any active calculation to force recalculation with new data
+      await window.electronAPI.reactions.clearCaches();
 
-    // Update cost indices
-    await window.electronAPI.costIndices.fetch();
-
-    // Show success message
-    updateBtn.innerHTML = `
-      <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-        <polyline points="20 6 9 17 4 12"></polyline>
-      </svg>
-      Updated!
-    `;
-
-    // Clear any active calculation to force recalculation with new data
-    await window.electronAPI.reactions.clearCaches();
-
-    // Reset button after delay
-    setTimeout(() => {
-      updateBtn.innerHTML = originalText;
-      updateBtn.disabled = false;
-    }, 3000);
+      // Reset button after delay
+      setTimeout(() => {
+        updateBtn.innerHTML = originalText;
+        updateBtn.disabled = false;
+      }, 3000);
+    } else {
+      throw new Error(result.message || 'Update failed');
+    }
 
   } catch (error) {
     console.error('Error updating data:', error);

@@ -644,6 +644,18 @@ function getLastMarketFetchTime() {
 }
 
 /**
+ * Get the last fetch time for a specific region's market data
+ * @param {number} regionId - Region ID
+ * @returns {number|null} Timestamp of last fetch, or null if never fetched
+ */
+function getLastMarketFetchTimeForRegion(regionId) {
+  const db = getMarketDatabase();
+  const cacheKey = `market_orders_${regionId}_all`;
+  const result = db.prepare('SELECT last_fetch FROM fetch_metadata WHERE key = ?').get(cacheKey);
+  return result?.last_fetch || null;
+}
+
+/**
  * Get the last history fetch time
  * @returns {number|null} Timestamp of last history fetch, or null if never fetched
  */
@@ -698,21 +710,23 @@ function getHistoryDataStatus(regionId) {
 }
 
 /**
- * Manually refresh all market data for current region
+ * Manually refresh all market data for a specific region
+ * Uses per-region rate limiting (30 minutes between refreshes per region)
  * @param {number} regionId - Region ID to refresh
  * @returns {Promise<Object>} Refresh status
  */
 async function manualRefreshMarketData(regionId) {
-  const lastFetch = getLastMarketFetchTime();
+  const lastFetch = getLastMarketFetchTimeForRegion(regionId);
   const now = Date.now();
   const minInterval = 30 * 60 * 1000; // 30 minutes
 
-  // Check if we can refresh
+  // Check if we can refresh this specific region
   if (lastFetch && (now - lastFetch) < minInterval) {
     const remainingTime = Math.ceil((minInterval - (now - lastFetch)) / 60000);
     return {
       success: false,
-      error: `Please wait ${remainingTime} minutes before refreshing again.`,
+      rateLimited: true,
+      message: `Region ${regionId}: Using cached data (${remainingTime} min until refresh available)`,
       lastFetch: lastFetch
     };
   }
@@ -730,13 +744,14 @@ async function manualRefreshMarketData(regionId) {
     return {
       success: true,
       lastFetch: Date.now(),
-      message: 'Market data updated successfully'
+      message: `Region ${regionId} market data updated successfully`
     };
   } catch (error) {
     console.error('Error refreshing market data:', error);
     return {
       success: false,
       error: error.message,
+      isError: true,
       lastFetch: lastFetch
     };
   }
@@ -896,6 +911,58 @@ async function manualRefreshAdjustedPrices() {
   }
 }
 
+/**
+ * Refresh market data for multiple regions (deduplicates region IDs)
+ * Each region has its own 30-minute rate limit
+ * @param {Array<number>} regionIds - Array of region IDs to refresh
+ * @returns {Promise<Object>} Combined refresh status
+ */
+async function refreshMultipleRegions(regionIds) {
+  // Deduplicate region IDs
+  const uniqueRegionIds = [...new Set(regionIds.filter(id => id && !isNaN(id)))];
+
+  console.log(`[Market] Refreshing ${uniqueRegionIds.length} unique regions:`, uniqueRegionIds);
+
+  const results = [];
+
+  for (const regionId of uniqueRegionIds) {
+    try {
+      const result = await manualRefreshMarketData(regionId);
+      results.push({ regionId, ...result });
+    } catch (error) {
+      console.error(`Error refreshing region ${regionId}:`, error);
+      results.push({ regionId, success: false, error: error.message, isError: true });
+    }
+  }
+
+  const successCount = results.filter(r => r.success).length;
+  const rateLimitedCount = results.filter(r => r.rateLimited).length;
+  const errorCount = results.filter(r => r.isError).length;
+
+  // Only report as failed if there were actual errors (not just rate-limited)
+  const hasErrors = errorCount > 0;
+
+  let message;
+  if (errorCount > 0) {
+    message = `Refreshed ${successCount}/${uniqueRegionIds.length} regions (${errorCount} error(s))`;
+  } else if (rateLimitedCount > 0) {
+    message = successCount > 0
+      ? `Refreshed ${successCount} region(s), ${rateLimitedCount} using cached data`
+      : `All ${rateLimitedCount} region(s) using cached data`;
+  } else {
+    message = `Successfully refreshed ${successCount} region(s)`;
+  }
+
+  return {
+    success: !hasErrors,
+    results,
+    message,
+    refreshedCount: successCount,
+    rateLimitedCount,
+    errorCount,
+  };
+}
+
 module.exports = {
   fetchMarketOrders,
   fetchMarketHistory,
@@ -909,4 +976,5 @@ module.exports = {
   manualRefreshHistoryData,
   fetchAdjustedPrices,
   manualRefreshAdjustedPrices,
+  refreshMultipleRegions,
 };

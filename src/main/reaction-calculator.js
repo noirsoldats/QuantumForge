@@ -659,8 +659,13 @@ async function calculateReactionMaterials(reactionTypeId, runs = 1, characterId 
     if (depth === 0) {
       try {
         const { calculateRealisticPrice } = require('./market-pricing');
+        const { getInputLocation, getOutputLocation } = require('./blueprint-pricing');
         const { getMarketSettings } = require('./settings-manager');
         const marketSettings = getMarketSettings();
+
+        // Get location settings for input and output
+        const inputLocation = getInputLocation(marketSettings);
+        const outputLocation = getOutputLocation(marketSettings);
 
         // Calculate input material costs with individual prices
         let inputCost = 0;
@@ -673,8 +678,8 @@ async function calculateReactionMaterials(reactionTypeId, runs = 1, characterId 
           try {
             const priceResult = await calculateRealisticPrice(
               typeIdNum,
-              marketSettings.regionId,
-              marketSettings.locationId,
+              inputLocation.regionId,
+              inputLocation.locationId,
               marketSettings.inputMaterials?.priceType || 'sell',
               quantity,
               marketSettings.inputMaterials || {}
@@ -713,8 +718,8 @@ async function calculateReactionMaterials(reactionTypeId, runs = 1, characterId 
         try {
           const priceResult = await calculateRealisticPrice(
             product.typeID,
-            marketSettings.regionId,
-            marketSettings.locationId,
+            outputLocation.regionId,
+            outputLocation.locationId,
             marketSettings.outputProducts?.priceType || 'sell',
             product.quantity * runs,
             marketSettings.outputProducts || {}
