@@ -116,7 +116,7 @@ const { fetchCorporationDivisions, getGenericDivisionName } = require('./esi-div
 const { fetchCharacterSkills } = require('./esi-skills');
 const { fetchCharacterBlueprints } = require('./esi-blueprints');
 const { fetchCharacterAssets, fetchCorporationAssets, saveAssets, getAssets, getAssetsCacheStatus } = require('./esi-assets');
-const { fetchCharacterIndustryJobs, saveIndustryJobs, getIndustryJobs, getIndustryJobsCacheStatus } = require('./esi-industry-jobs');
+const { fetchCharacterIndustryJobs, fetchCorporationIndustryJobs, saveIndustryJobs, getIndustryJobs, getIndustryJobsCacheStatus } = require('./esi-industry-jobs');
 const { fetchCharacterWalletTransactions, saveWalletTransactions, getWalletTransactions, getWalletTransactionsCacheStatus } = require('./esi-wallet');
 const {
   createManufacturingPlan,
@@ -1038,6 +1038,19 @@ function setupIPCHandlers() {
 
   ipcMain.handle('industryJobs:getCacheStatus', (event, characterId) => {
     return getIndustryJobsCacheStatus(characterId);
+  });
+
+  ipcMain.handle('industryJobs:fetchCorporation', async (event, characterId, corporationId, includeCompleted) => {
+    try {
+      const jobsData = await fetchCorporationIndustryJobs(characterId, corporationId, includeCompleted);
+      if (jobsData.jobs && jobsData.jobs.length > 0) {
+        saveIndustryJobs(jobsData);
+      }
+      return { success: true, count: jobsData.jobs.length };
+    } catch (error) {
+      console.error('Error fetching corporation industry jobs:', error);
+      throw error;
+    }
   });
 
   // Wallet Transactions IPC Handlers

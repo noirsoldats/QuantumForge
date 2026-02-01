@@ -15,13 +15,15 @@ const { getCharacterDatabase } = require('./character-database');
  *
  * @param {string} planId - Plan ID to match jobs against
  * @param {Object} options - Matching options
- * @param {number} options.characterId - Character ID for filtering jobs
+ * @param {number} options.characterId - Character ID for filtering jobs (deprecated, use characterIds)
+ * @param {number[]} options.characterIds - Character IDs for filtering personal jobs
+ * @param {number[]} options.corporationIds - Corporation IDs for filtering corporate jobs
  * @param {number} options.maxDaysAgo - Max days to look back (default: 30)
  * @param {number} options.minConfidence - Minimum confidence threshold (default: 0.5)
  * @returns {Array} Array of potential matches with confidence scores
  */
 function matchJobsToPlan(planId, options = {}) {
-  const { characterId, characterIds, maxDaysAgo = 30, minConfidence = 0.5 } = options;
+  const { characterId, characterIds, corporationIds, maxDaysAgo = 30, minConfidence = 0.5 } = options;
 
   const db = getCharacterDatabase();
 
@@ -50,20 +52,56 @@ function matchJobsToPlan(planId, options = {}) {
       charIds = characterId ? [characterId] : [];
     }
 
-    if (charIds.length === 0) {
+    // Get corporation IDs (if provided)
+    const corpIds = corporationIds || [];
+
+    if (charIds.length === 0 && corpIds.length === 0) {
       return [];
     }
 
-    // Get industry jobs for ALL characters within time window
+    // Get industry jobs within time window
+    // Query personal jobs for characters AND corporate jobs for corporations
     const timeWindow = Date.now() - (maxDaysAgo * 24 * 60 * 60 * 1000);
-    const placeholders = charIds.map(() => '?').join(',');
-    const jobs = db.prepare(`
-      SELECT * FROM esi_industry_jobs
-      WHERE character_id IN (${placeholders})
-        AND activity_id = 1
-        AND start_date >= ?
-      ORDER BY start_date DESC
-    `).all(...charIds, Math.floor(timeWindow / 1000));
+    let jobs = [];
+
+    // Build query based on what IDs we have
+    if (charIds.length > 0 && corpIds.length > 0) {
+      // Query both personal and corporate jobs
+      const charPlaceholders = charIds.map(() => '?').join(',');
+      const corpPlaceholders = corpIds.map(() => '?').join(',');
+      jobs = db.prepare(`
+        SELECT * FROM esi_industry_jobs
+        WHERE (
+          (character_id IN (${charPlaceholders}) AND is_corporation = 0)
+          OR (corporation_id IN (${corpPlaceholders}) AND is_corporation = 1)
+        )
+          AND activity_id = 1
+          AND start_date >= ?
+        ORDER BY start_date DESC
+      `).all(...charIds, ...corpIds, Math.floor(timeWindow / 1000));
+    } else if (charIds.length > 0) {
+      // Query only personal jobs
+      const charPlaceholders = charIds.map(() => '?').join(',');
+      jobs = db.prepare(`
+        SELECT * FROM esi_industry_jobs
+        WHERE character_id IN (${charPlaceholders})
+          AND is_corporation = 0
+          AND activity_id = 1
+          AND start_date >= ?
+        ORDER BY start_date DESC
+      `).all(...charIds, Math.floor(timeWindow / 1000));
+    } else if (corpIds.length > 0) {
+      // Query only corporate jobs
+      const corpPlaceholders = corpIds.map(() => '?').join(',');
+      jobs = db.prepare(`
+        SELECT * FROM esi_industry_jobs
+        WHERE corporation_id IN (${corpPlaceholders})
+          AND is_corporation = 1
+          AND activity_id = 1
+          AND start_date >= ?
+        ORDER BY start_date DESC
+      `).all(...corpIds, Math.floor(timeWindow / 1000));
+    }
 
     if (jobs.length === 0) {
       return [];
@@ -567,6 +605,8 @@ function getPendingMatches(planId) {
         ij.end_date,
         ij.completed_date,
         ij.character_id,
+        ij.is_corporation,
+        ij.corporation_id,
         pb.blueprint_type_id as plan_blueprint_type_id,
         pb.runs as plan_runs,
         pb.me_level,
@@ -600,7 +640,9 @@ function getPendingMatches(planId) {
         endDate: row.end_date,
         completedDate: row.completed_date,
         characterId: row.character_id,
-        characterName: row.character_name
+        characterName: row.character_name,
+        isCorporation: row.is_corporation === 1,
+        corporationId: row.corporation_id
       },
       planBlueprint: {
         blueprintTypeId: row.plan_blueprint_type_id,
@@ -798,6 +840,8 @@ function getConfirmedJobMatches(planId) {
         ij.end_date,
         ij.completed_date,
         ij.character_id,
+        ij.is_corporation,
+        ij.corporation_id,
         pb.blueprint_type_id as plan_blueprint_type_id,
         pb.runs as plan_runs,
         pb.me_level,
@@ -833,7 +877,9 @@ function getConfirmedJobMatches(planId) {
         endDate: row.end_date,
         completedDate: row.completed_date,
         characterId: row.character_id,
-        characterName: row.character_name
+        characterName: row.character_name,
+        isCorporation: row.is_corporation === 1,
+        corporationId: row.corporation_id
       },
       planBlueprint: {
         blueprintTypeId: row.plan_blueprint_type_id,

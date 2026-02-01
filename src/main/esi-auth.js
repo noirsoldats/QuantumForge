@@ -12,6 +12,7 @@ const ESI_CONFIG = {
   tokenUrl: 'https://login.eveonline.com/v2/oauth/token',
   scopes: [
     'esi-industry.read_character_jobs.v1',
+    'esi-industry.read_corporation_jobs.v1',
     'esi-industry.read_character_mining.v1',
     'esi-markets.read_character_orders.v1',
     'esi-assets.read_assets.v1',

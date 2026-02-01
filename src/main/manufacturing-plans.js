@@ -3257,20 +3257,17 @@ async function getPlanSummary(planId) {
 }
 
 /**
- * Refresh ESI data for active plans for a character
- * @param {number} characterId - Character ID
- * @returns {Promise<Object>} Refresh status
- */
-/**
  * Refresh ESI data for all characters associated with a plan
+ * Fetches personal jobs for each character and corporate jobs (deduplicated by corporation)
  * @param {string} planId - Plan ID to refresh
  * @returns {Promise<Object>} Refresh summary
  */
 async function refreshPlanESIData(planId) {
   try {
-    const { fetchCharacterIndustryJobs, saveIndustryJobs } = require('./esi-industry-jobs');
+    const { fetchCharacterIndustryJobs, fetchCorporationIndustryJobs, saveIndustryJobs } = require('./esi-industry-jobs');
     const { fetchCharacterWalletTransactions, saveWalletTransactions } = require('./esi-wallet');
     const { matchJobsToPlan, matchTransactionsToPlan } = require('./plan-matching');
+    const { getCharacter } = require('./settings-manager');
     const db = getCharacterDatabase();
 
     // Get plan industry settings to find all characters
@@ -3288,19 +3285,41 @@ async function refreshPlanESIData(planId) {
       characterIds = [plan.character_id];
     }
 
+    // Build a map of corporation ID -> first character with access (for deduplication)
+    // This ensures we only fetch each corporation's jobs once, even if multiple characters share the same corp
+    const corporationCharacterMap = new Map(); // corporationId -> characterId (auth character)
+
+    for (const characterId of characterIds) {
+      const character = getCharacter(characterId);
+      if (character && character.corporationId) {
+        // First character with this corp becomes the auth character
+        if (!corporationCharacterMap.has(character.corporationId)) {
+          corporationCharacterMap.set(character.corporationId, characterId);
+        }
+      }
+    }
+
     // Fetch jobs and transactions for ALL characters
     const results = {
       success: true,
       charactersRefreshed: [],
+      corporationsFetched: [],
       errors: []
     };
 
+    // First pass: Fetch personal jobs and wallet transactions for each character
     for (const characterId of characterIds) {
       try {
-        // Fetch industry jobs
+        // Fetch personal industry jobs
         const jobsData = await fetchCharacterIndustryJobs(characterId, true);
         if (jobsData.jobs) {
-          saveIndustryJobs({ characterId, jobs: jobsData.jobs, lastUpdated: jobsData.lastUpdated });
+          saveIndustryJobs({
+            characterId,
+            jobs: jobsData.jobs,
+            lastUpdated: jobsData.lastUpdated,
+            cacheExpiresAt: jobsData.cacheExpiresAt,
+            isCorporation: false
+          });
         }
 
         // Fetch wallet transactions
@@ -3311,23 +3330,64 @@ async function refreshPlanESIData(planId) {
 
         results.charactersRefreshed.push(characterId);
       } catch (error) {
-        console.error(`[Plans] Error refreshing character ${characterId}:`, error);
-        results.errors.push({ characterId, error: error.message });
+        console.error(`[Plans] Error refreshing personal data for character ${characterId}:`, error);
+        results.errors.push({ characterId, error: error.message, type: 'personal' });
       }
     }
 
-    // Run matching after fetching all data
+    // Second pass: Fetch corporate jobs (deduplicated by corporation)
+    const corporationsFetched = new Set();
+
+    for (const [corporationId, authCharacterId] of corporationCharacterMap) {
+      // Skip if we've already fetched this corporation's jobs
+      if (corporationsFetched.has(corporationId)) {
+        continue;
+      }
+
+      try {
+        console.log(`[Plans] Fetching corporation ${corporationId} jobs using character ${authCharacterId}`);
+        const corpJobsData = await fetchCorporationIndustryJobs(authCharacterId, corporationId, true);
+
+        if (corpJobsData.jobs && corpJobsData.jobs.length > 0) {
+          saveIndustryJobs({
+            characterId: authCharacterId,
+            corporationId: corporationId,
+            jobs: corpJobsData.jobs,
+            lastUpdated: corpJobsData.lastUpdated,
+            cacheExpiresAt: corpJobsData.cacheExpiresAt,
+            isCorporation: true
+          });
+          console.log(`[Plans] Saved ${corpJobsData.jobs.length} corporation jobs for corp ${corporationId}`);
+        }
+
+        corporationsFetched.add(corporationId);
+        results.corporationsFetched.push(corporationId);
+      } catch (error) {
+        console.error(`[Plans] Error fetching corporation ${corporationId} jobs:`, error);
+        results.errors.push({ corporationId, error: error.message, type: 'corporation' });
+      }
+    }
+
+    // Run matching after fetching all data (include corporation IDs for job matching)
     try {
-      matchJobsToPlan(planId, { characterIds: results.charactersRefreshed });
+      matchJobsToPlan(planId, {
+        characterIds: results.charactersRefreshed,
+        corporationIds: results.corporationsFetched
+      });
       matchTransactionsToPlan(planId, { characterIds: results.charactersRefreshed });
     } catch (error) {
       console.error('[Plans] Error running matches:', error);
     }
 
+    const corpMsg = results.corporationsFetched.length > 0
+      ? `, ${results.corporationsFetched.length} corporation(s)`
+      : '';
+
     return {
       success: results.errors.length === 0,
-      message: `Refreshed ${results.charactersRefreshed.length} character(s)`,
+      message: `Refreshed ${results.charactersRefreshed.length} character(s)${corpMsg}`,
       charactersRefreshed: results.charactersRefreshed,
+      corporationsFetched: results.corporationsFetched,
       errors: results.errors
     };
   } catch (error) {

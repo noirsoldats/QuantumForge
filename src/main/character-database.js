@@ -484,6 +484,34 @@ function initializeCharacterDatabase() {
     console.error('[Character Database] Plan industry settings migration error:', error);
   }
 
+  // Migration: Add corporation industry jobs support to esi_industry_jobs table
+  try {
+    const columns = database.pragma('table_info(esi_industry_jobs)');
+    const hasIsCorporation = columns.some(col => col.name === 'is_corporation');
+    const hasCorporationId = columns.some(col => col.name === 'corporation_id');
+
+    if (!hasIsCorporation) {
+      console.log('[Character Database] Adding is_corporation column to esi_industry_jobs table');
+      database.exec(`ALTER TABLE esi_industry_jobs ADD COLUMN is_corporation INTEGER DEFAULT 0`);
+    }
+
+    if (!hasCorporationId) {
+      console.log('[Character Database] Adding corporation_id column to esi_industry_jobs table');
+      database.exec(`ALTER TABLE esi_industry_jobs ADD COLUMN corporation_id INTEGER`);
+    }
+
+    // Create indexes for corporation job queries
+    if (!hasIsCorporation || !hasCorporationId) {
+      console.log('[Character Database] Creating indexes for corporation industry job columns');
+      database.exec(`
+        CREATE INDEX IF NOT EXISTS idx_industry_jobs_corporation ON esi_industry_jobs(corporation_id);
+        CREATE INDEX IF NOT EXISTS idx_industry_jobs_is_corp ON esi_industry_jobs(is_corporation);
+      `);
+    }
+  } catch (error) {
+    console.error('[Character Database] Corporation industry jobs migration error:', error);
+  }
+
   // Migration: Migrate blueprints and blueprint_overrides to composite primary key
   migrateBlueprints_v2();
 

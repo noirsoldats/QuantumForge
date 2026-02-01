@@ -129,6 +129,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Industry Jobs API
   industryJobs: {
     fetch: (characterId, includeCompleted) => ipcRenderer.invoke('industryJobs:fetch', characterId, includeCompleted),
+    fetchCorporation: (characterId, corporationId, includeCompleted) => ipcRenderer.invoke('industryJobs:fetchCorporation', characterId, corporationId, includeCompleted),
     get: (characterId, filters) => ipcRenderer.invoke('industryJobs:get', characterId, filters),
     getCacheStatus: (characterId) => ipcRenderer.invoke('industryJobs:getCacheStatus', characterId),
   },
