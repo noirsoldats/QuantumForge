@@ -1853,6 +1853,94 @@ tr[data-editing="true"] {
   color: #ffffff;
 }
 
+/* Owned Assets Section in Mark Built Modal */
+.owned-assets-section {
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid #3a3a4e;
+}
+
+.owned-assets-section h4 {
+  margin: 0 0 12px 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: #b0b0b0;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.owned-assets-summary {
+  margin-bottom: 12px;
+  padding: 8px 12px;
+  background-color: #2a2a3e;
+  border-radius: 6px;
+  border: 1px solid #3a3a4e;
+}
+
+.owned-assets-summary .owned-total {
+  font-size: 14px;
+  color: #ffffff;
+}
+
+.owned-assets-summary .owned-total strong {
+  color: #5865f2;
+}
+
+.owned-assets-group {
+  margin-bottom: 12px;
+}
+
+.owned-assets-group h5 {
+  margin: 0 0 8px 0;
+  font-size: 12px;
+  font-weight: 500;
+  color: #9090a0;
+}
+
+.owned-assets-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.owned-assets-list li {
+  padding: 6px 12px;
+  font-size: 13px;
+  color: #c0c0c0;
+  background-color: #252535;
+  border-radius: 4px;
+  margin-bottom: 4px;
+}
+
+.owned-assets-list li:last-child {
+  margin-bottom: 0;
+}
+
+.owned-assets-list li strong {
+  color: #ffffff;
+}
+
+.no-assets-message {
+  font-size: 13px;
+  color: #808090;
+  font-style: italic;
+  margin: 0;
+}
+
+.owned-assets-loading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: #808090;
+}
+
+.owned-assets-loading .spinner.small {
+  width: 16px;
+  height: 16px;
+  border-width: 2px;
+}
+
 /* Partial Built Badges */
 .status-badge.partially-built {
   background-color: #ff9800;

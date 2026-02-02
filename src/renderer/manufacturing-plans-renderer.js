@@ -1040,7 +1040,7 @@ window.cleanupAllExcessAcquisitions = async function() {
 };
 
 // Show acquire material modal
-window.showAcquireMaterialModal = function(typeId, materialName, quantityNeeded = 0, alreadyAcquired = 0, stillNeeded = 0, currentManualQuantity = 0) {
+window.showAcquireMaterialModal = async function(typeId, materialName, quantityNeeded = 0, alreadyAcquired = 0, stillNeeded = 0, currentManualQuantity = 0) {
   const modal = document.getElementById('acquire-material-modal');
   if (!modal) {
     createAcquireMaterialModal();
@@ -1063,6 +1063,52 @@ window.showAcquireMaterialModal = function(typeId, materialName, quantityNeeded 
   // Update modal title based on mode
   const title = currentManualQuantity > 0 ? 'Edit Manual Acquisition' : 'Mark Material as Acquired';
   document.querySelector('#acquire-material-modal .modal-header h2').textContent = title;
+
+  // Fetch and display owned assets for this material type
+  const ownedAssetsContainer = document.getElementById('acquire-owned-assets-container');
+  if (ownedAssetsContainer && selectedPlanId) {
+    ownedAssetsContainer.innerHTML = '<div class="owned-assets-loading"><div class="spinner small"></div> Loading assets...</div>';
+
+    try {
+      const ownedAssets = await window.electronAPI.plans.getProductOwnedAssets(selectedPlanId, typeId);
+      const totalOwned = ownedAssets.ownedPersonal + ownedAssets.ownedCorp;
+
+      let ownedAssetsHtml = '';
+      if (totalOwned > 0 || ownedAssets.personalDetails.length > 0 || ownedAssets.corpDetails.length > 0) {
+        ownedAssetsHtml = `
+          <div class="owned-assets-summary">
+            <span class="owned-total">Total Owned: <strong>${formatNumber(totalOwned)}</strong></span>
+          </div>
+          ${ownedAssets.personalDetails.length > 0 ? `
+            <div class="owned-assets-group">
+              <h5>Personal Hangars (${formatNumber(ownedAssets.ownedPersonal)})</h5>
+              <ul class="owned-assets-list">
+                ${ownedAssets.personalDetails.map(d => `
+                  <li>${escapeHtml(d.characterName)}: <strong>${formatNumber(d.quantity)}</strong></li>
+                `).join('')}
+              </ul>
+            </div>
+          ` : ''}
+          ${ownedAssets.corpDetails.length > 0 ? `
+            <div class="owned-assets-group">
+              <h5>Corporation Hangars (${formatNumber(ownedAssets.ownedCorp)})</h5>
+              <ul class="owned-assets-list">
+                ${ownedAssets.corpDetails.map(d => `
+                  <li>${escapeHtml(d.corporationName)} - ${escapeHtml(d.divisionName)}: <strong>${formatNumber(d.quantity)}</strong></li>
+                `).join('')}
+              </ul>
+            </div>
+          ` : ''}
+        `;
+      } else {
+        ownedAssetsHtml = '<p class="no-assets-message">No assets found in configured character/corporation hangars.</p>';
+      }
+      ownedAssetsContainer.innerHTML = ownedAssetsHtml;
+    } catch (error) {
+      console.error('Error fetching owned assets:', error);
+      ownedAssetsContainer.innerHTML = '<p class="no-assets-message">Failed to load owned assets.</p>';
+    }
+  }
 
   modal.style.display = 'flex';
 };
@@ -1087,6 +1133,13 @@ function createAcquireMaterialModal() {
           <div style="margin-bottom: 24px; padding: 12px; background: rgba(88, 101, 242, 0.1); border-radius: 4px;">
             <div style="font-size: 13px; color: #b9bbbe; margin-bottom: 4px;">Material</div>
             <div style="font-size: 16px; font-weight: 600;" id="acquire-material-name"></div>
+          </div>
+
+          <div class="owned-assets-section">
+            <h4>Owned Assets</h4>
+            <div id="acquire-owned-assets-container">
+              <p class="no-assets-message">Loading...</p>
+            </div>
           </div>
 
           <div style="margin-bottom: 20px;">
@@ -2415,6 +2468,51 @@ window.showMarkBuiltModal = async function(intermediateBlueprintId) {
     const name = typeNames[intermediate.intermediateProductTypeId] || 'Unknown';
     console.log('Using name:', name);
 
+    // Fetch owned assets for this product type
+    const ownedAssets = await window.electronAPI.plans.getProductOwnedAssets(selectedPlanId, intermediate.intermediateProductTypeId);
+    console.log('Owned assets:', ownedAssets);
+    const totalOwned = ownedAssets.ownedPersonal + ownedAssets.ownedCorp;
+
+    // Build owned assets HTML section
+    let ownedAssetsHtml = '';
+    if (totalOwned > 0 || ownedAssets.personalDetails.length > 0 || ownedAssets.corpDetails.length > 0) {
+      ownedAssetsHtml = `
+        <div class="owned-assets-section">
+          <h4>Owned Assets</h4>
+          <div class="owned-assets-summary">
+            <span class="owned-total">Total Owned: <strong>${formatNumber(totalOwned)}</strong></span>
+          </div>
+          ${ownedAssets.personalDetails.length > 0 ? `
+            <div class="owned-assets-group">
+              <h5>Personal Hangars (${formatNumber(ownedAssets.ownedPersonal)})</h5>
+              <ul class="owned-assets-list">
+                ${ownedAssets.personalDetails.map(d => `
+                  <li>${escapeHtml(d.characterName)}: <strong>${formatNumber(d.quantity)}</strong></li>
+                `).join('')}
+              </ul>
+            </div>
+          ` : ''}
+          ${ownedAssets.corpDetails.length > 0 ? `
+            <div class="owned-assets-group">
+              <h5>Corporation Hangars (${formatNumber(ownedAssets.ownedCorp)})</h5>
+              <ul class="owned-assets-list">
+                ${ownedAssets.corpDetails.map(d => `
+                  <li>${escapeHtml(d.corporationName)} - ${escapeHtml(d.divisionName)}: <strong>${formatNumber(d.quantity)}</strong></li>
+                `).join('')}
+              </ul>
+            </div>
+          ` : ''}
+        </div>
+      `;
+    } else {
+      ownedAssetsHtml = `
+        <div class="owned-assets-section">
+          <h4>Owned Assets</h4>
+          <p class="no-assets-message">No assets found in configured character/corporation hangars.</p>
+        </div>
+      `;
+    }
+
     // Create modal
     console.log('Creating modal element...');
     const modal = document.createElement('div');
@@ -2454,6 +2552,8 @@ window.showMarkBuiltModal = async function(intermediateBlueprintId) {
             </div>
             <span id="built-percentage">${Math.round(((intermediate.builtRuns || 0) / intermediate.runs) * 100)}%</span>
           </div>
+
+          ${ownedAssetsHtml}
         </div>
         <div class="modal-footer">
           <button class="secondary-button cancel-btn">Cancel</button>
@@ -3239,11 +3339,18 @@ async function loadPlanDivisions(enabledDivisionsMap) {
       return;
     }
 
-    containerEl.innerHTML = '';
-
-    // Render section for each character (reuse pattern from settings-renderer.js)
+    // Build complete HTML for all characters first (avoids insertAdjacentHTML race conditions)
+    let html = '';
     for (const character of characters) {
-      await renderPlanCharacterDivisionSection(character, enabledDivisionsMap[character.characterId] || []);
+      html += await buildPlanCharacterDivisionHTML(character, enabledDivisionsMap[character.characterId] || []);
+    }
+
+    // Set all HTML at once (destroys old elements and their listeners)
+    containerEl.innerHTML = html;
+
+    // Add event listeners AFTER all HTML is in DOM
+    for (const character of characters) {
+      attachPlanDivisionEventListeners(character.characterId);
     }
 
   } catch (error) {
@@ -3253,12 +3360,10 @@ async function loadPlanDivisions(enabledDivisionsMap) {
 }
 
 /**
- * Render collapsible division section for one character
+ * Build HTML for collapsible division section for one character
+ * Returns HTML string instead of inserting directly (to avoid race conditions)
  */
-async function renderPlanCharacterDivisionSection(character, enabledDivisions) {
-  const containerEl = document.getElementById('plan-character-divisions-container');
-  if (!containerEl) return;
-
+async function buildPlanCharacterDivisionHTML(character, enabledDivisions) {
   const characterId = character.characterId;
 
   // Get division names from character settings
@@ -3272,8 +3377,8 @@ async function renderPlanCharacterDivisionSection(character, enabledDivisions) {
     selectedSummary = divisionLabels.join(', ');
   }
 
-  // Create section HTML (same pattern as settings-renderer.js)
-  const sectionHTML = `
+  // Return section HTML (same pattern as settings-renderer.js)
+  return `
     <div class="character-division-section">
       <div class="character-division-header" id="plan-division-header-${characterId}">
         <div class="character-division-header-left">
@@ -3296,10 +3401,13 @@ async function renderPlanCharacterDivisionSection(character, enabledDivisions) {
       </div>
     </div>
   `;
+}
 
-  containerEl.insertAdjacentHTML('beforeend', sectionHTML);
-
-  // Add event listeners
+/**
+ * Attach event listeners for a character's division section
+ * Called after HTML is set via innerHTML (which destroys old elements/listeners)
+ */
+function attachPlanDivisionEventListeners(characterId) {
   const headerEl = document.getElementById(`plan-division-header-${characterId}`);
   if (headerEl) {
     headerEl.addEventListener('click', () => togglePlanCharacterDivisions(characterId));

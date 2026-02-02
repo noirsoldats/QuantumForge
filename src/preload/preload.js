@@ -166,6 +166,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     markReactionBuilt: (planBlueprintId, builtRuns) => ipcRenderer.invoke('plans:markReactionBuilt', planBlueprintId, builtRuns),
     getMaterials: (planId, includeAssets) => ipcRenderer.invoke('plans:getMaterials', planId, includeAssets),
     getProducts: (planId) => ipcRenderer.invoke('plans:getProducts', planId),
+    getProductOwnedAssets: (planId, typeId) => ipcRenderer.invoke('plans:getProductOwnedAssets', planId, typeId),
     getSummary: (planId) => ipcRenderer.invoke('plans:getSummary', planId),
     recalculateMaterials: (planId, refreshPrices) => ipcRenderer.invoke('plans:recalculateMaterials', planId, refreshPrices),
     refreshESIData: (characterId) => ipcRenderer.invoke('plans:refreshESIData', characterId),

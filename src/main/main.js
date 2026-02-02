@@ -1163,6 +1163,11 @@ function setupIPCHandlers() {
     return getPlanProducts(planId);
   });
 
+  ipcMain.handle('plans:getProductOwnedAssets', (event, planId, typeId) => {
+    const { getProductOwnedAssets } = require('./manufacturing-plans');
+    return getProductOwnedAssets(planId, typeId);
+  });
+
   ipcMain.handle('plans:getSummary', async (event, planId) => {
     return await getPlanSummary(planId);
   });

@@ -3092,9 +3092,9 @@ async function getPlanMaterials(planId, includeAssets = false) {
  * @returns {boolean} True if asset is in an enabled division
  */
 function isAssetInEnabledDivision(asset, enabledDivisions) {
-  // If no divisions are enabled, include all corp assets (backward compatibility)
+  // If no divisions are enabled, no corp assets should be included
   if (!enabledDivisions || enabledDivisions.length === 0) {
-    return true;
+    return false;
   }
 
   // Parse location_flag to extract division number
@@ -3103,14 +3103,14 @@ function isAssetInEnabledDivision(asset, enabledDivisions) {
   if (!locationFlag || !locationFlag.startsWith('CorpSAG')) {
     // Asset is not in a corporation hangar division
     // (might be in a station hangar, container, etc.)
-    // Include it to be safe
-    return true;
+    // Exclude it since we can't determine its division
+    return false;
   }
 
   // Extract division number (1-7)
   const divisionMatch = locationFlag.match(/^CorpSAG(\d+)$/);
   if (!divisionMatch) {
-    return true; // Can't parse, include to be safe
+    return false; // Can't parse, exclude
   }
 
   const divisionId = parseInt(divisionMatch[1], 10);
@@ -4025,6 +4025,122 @@ async function markReactionBuilt(planBlueprintId, builtRuns) {
   }
 }
 
+/**
+ * Get owned assets for a specific product type across all plan characters
+ * Used by the Mark Built modal to show how many of an item the user has
+ * @param {string} planId - Plan ID
+ * @param {number} typeId - Type ID of the product to check
+ * @returns {Object} Object with ownedPersonal, ownedCorp, and detail arrays
+ */
+function getProductOwnedAssets(planId, typeId) {
+  try {
+    const db = getCharacterDatabase();
+
+    // Get plan to find character ID
+    const plan = db.prepare('SELECT character_id FROM manufacturing_plans WHERE plan_id = ?').get(planId);
+    if (!plan) {
+      return { ownedPersonal: 0, ownedCorp: 0, personalDetails: [], corpDetails: [] };
+    }
+
+    // Get plan industry settings for character selection
+    const planSettings = getPlanIndustrySettings(planId);
+
+    // Determine which characters to use
+    let characterIds = planSettings.defaultCharacters || [];
+    if (characterIds.length === 0) {
+      // Fallback: use plan's default character only
+      characterIds = [plan.character_id];
+    }
+
+    // Get enabled divisions per character
+    const enabledDivisions = planSettings.enabledDivisions || {};
+
+    // Aggregate assets across all selected characters
+    let totalPersonal = 0;
+    let totalCorp = 0;
+    const personalDetails = [];
+    const corpDetails = [];
+    const processedCorps = new Set();
+
+    for (const characterId of characterIds) {
+      // Get character info
+      const { getCharacter } = require('./settings-manager');
+      const character = getCharacter(characterId);
+
+      if (!character) {
+        console.warn(`[Plans] Character ${characterId} not found, skipping assets`);
+        continue;
+      }
+
+      // Fetch personal assets for this character, filter by typeId
+      const personalAssets = getAssets(characterId, false).filter(a => a.typeId === typeId);
+      let charTotal = 0;
+      for (const asset of personalAssets) {
+        charTotal += asset.quantity;
+      }
+      if (charTotal > 0) {
+        totalPersonal += charTotal;
+        personalDetails.push({
+          characterId: characterId,
+          characterName: character.characterName,
+          quantity: charTotal
+        });
+      }
+
+      // Fetch corporation assets (with division filtering and deduplication)
+      const corpId = character.corporationId;
+      if (corpId && !processedCorps.has(corpId)) {
+        processedCorps.add(corpId);
+
+        // Get enabled divisions for this character
+        const charEnabledDivisions = enabledDivisions[characterId] || [];
+
+        // Fetch all corp assets for this character, filter by typeId
+        const corpAssets = getAssets(characterId, true).filter(a => a.typeId === typeId);
+
+        // Group by division - only include assets in enabled divisions
+        const divisionTotals = {};
+        for (const asset of corpAssets) {
+          if (isAssetInEnabledDivision(asset, charEnabledDivisions)) {
+            const divisionId = extractDivisionId(asset.locationFlag);
+            if (divisionId) {
+              if (!divisionTotals[divisionId]) {
+                divisionTotals[divisionId] = 0;
+              }
+              divisionTotals[divisionId] += asset.quantity;
+            }
+          }
+        }
+
+        // Add to details
+        for (const [divKey, qty] of Object.entries(divisionTotals)) {
+          if (qty > 0) {
+            totalCorp += qty;
+            const divisionId = parseInt(divKey, 10);
+            corpDetails.push({
+              corporationId: corpId,
+              corporationName: character.corporationName || `Corporation ${corpId}`,
+              divisionId: divisionId,
+              divisionName: getDivisionName(characterId, divisionId),
+              quantity: qty
+            });
+          }
+        }
+      }
+    }
+
+    return {
+      ownedPersonal: totalPersonal,
+      ownedCorp: totalCorp,
+      personalDetails: personalDetails,
+      corpDetails: corpDetails
+    };
+  } catch (error) {
+    console.error('Error getting product owned assets:', error);
+    return { ownedPersonal: 0, ownedCorp: 0, personalDetails: [], corpDetails: [] };
+  }
+}
+
 module.exports = {
   createManufacturingPlan,
   getManufacturingPlan,
@@ -4059,4 +4175,5 @@ module.exports = {
   getAcquisitionLog,
   getReactions,
   markReactionBuilt,
+  getProductOwnedAssets,
 };
