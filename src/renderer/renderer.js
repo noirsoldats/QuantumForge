@@ -155,6 +155,15 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
   }
 
+  // Cleanup Tool card handler
+  const cleanupToolCard = document.getElementById('cleanup-tool-card');
+  if (cleanupToolCard) {
+    cleanupToolCard.addEventListener('click', () => {
+      console.log('Opening Cleanup Tool');
+      window.electronAPI.cleanupTool.openWindow();
+    });
+  }
+
   // Load default character avatar
   await loadDefaultCharacterAvatar();
 

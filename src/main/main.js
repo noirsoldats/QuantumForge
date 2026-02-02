@@ -1279,6 +1279,27 @@ function setupIPCHandlers() {
     createManufacturingSummaryWindow();
   });
 
+  // Cleanup Tool Window
+  ipcMain.handle('cleanupTool:openWindow', () => {
+    const { createCleanupToolWindow } = require('./cleanup-tool-window');
+    createCleanupToolWindow();
+  });
+
+  ipcMain.handle('cleanupTool:getAssetSources', async () => {
+    const { getAssetSources } = require('./cleanup-tool');
+    return getAssetSources();
+  });
+
+  ipcMain.handle('cleanupTool:refreshAssets', async (event, characterIds) => {
+    const { refreshAssets } = require('./cleanup-tool');
+    return refreshAssets(characterIds);
+  });
+
+  ipcMain.handle('cleanupTool:aggregateAssets', (event, sources) => {
+    const { aggregateAssets } = require('./cleanup-tool');
+    return aggregateAssets(sources);
+  });
+
   ipcMain.handle('blueprints:openInCalculator', (event, blueprintTypeId, meLevel) => {
     // Focus or create main window
     if (mainWindow && !mainWindow.isDestroyed()) {

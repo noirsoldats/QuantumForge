@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://images.evetech.net;">
+  <title>What Can I Build? - Quantum Forge</title>
+  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="manufacturing-summary.css">
+  <link rel="stylesheet" href="cleanup-tool.css">
+</head>
+<body>
+  <div class="app-container">
+    <!-- Header -->
+    <header class="header">
+      <div class="header-content">
+        <button class="back-button" id="back-btn">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="18" y1="6" x2="6" y2="18"></line>
+            <line x1="6" y1="6" x2="18" y2="18"></line>
+          </svg>
+          Close
+        </button>
+        <h1>What Can I Build?</h1>
+      </div>
+    </header>
+
+    <!-- Main Content -->
+    <main class="main-content">
+      <!-- Controls Section -->
+      <div class="controls-section">
+        <div class="filter-controls">
+          <div class="filter-row">
+            <!-- Asset Sources Selection -->
+            <div class="filter-group asset-sources-group">
+              <label>Asset Sources:</label>
+              <div class="asset-sources-header">
+                <button class="secondary-button small" id="select-all-assets-btn">Select All</button>
+                <button class="secondary-button small" id="deselect-all-assets-btn">Deselect All</button>
+                <button class="secondary-button small" id="refresh-assets-btn" title="Refresh assets from ESI">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M21 2v6h-6"></path>
+                    <path d="M3 12a9 9 0 0 1 15-6.7L21 8"></path>
+                    <path d="M3 22v-6h6"></path>
+                    <path d="M21 12a9 9 0 0 1-15 6.7L3 16"></path>
+                  </svg>
+                  Refresh Assets
+                </button>
+              </div>
+              <div id="asset-sources-list" class="asset-sources-list">
+                <!-- Asset sources will be populated by JavaScript -->
+                <div class="loading-placeholder">Loading asset sources...</div>
+              </div>
+            </div>
+
+            <!-- Blueprint Filter -->
+            <div class="filter-group">
+              <label>Blueprint Filter:</label>
+              <div class="radio-group">
+                <label class="radio-label">
+                  <input type="radio" name="blueprint-filter" value="all">
+                  <span>All Blueprints</span>
+                </label>
+                <label class="radio-label">
+                  <input type="radio" name="blueprint-filter" value="owned" checked>
+                  <span>Owned BPs</span>
+                </label>
+                <label class="radio-label">
+                  <input type="radio" name="blueprint-filter" value="corp">
+                  <span>Corp BPs</span>
+                </label>
+              </div>
+              <div class="character-filter-section">
+                <label>Character:</label>
+                <div class="radio-group">
+                  <label class="radio-label">
+                    <input type="radio" name="character-filter" value="all">
+                    <span>All Characters</span>
+                  </label>
+                  <label class="radio-label">
+                    <input type="radio" name="character-filter" value="default" checked>
+                    <span>Default Character</span>
+                  </label>
+                  <label class="radio-label">
+                    <input type="radio" name="character-filter" value="specific">
+                    <span>Specific Character</span>
+                  </label>
+                </div>
+                <select id="character-select" class="character-select" disabled>
+                  <option value="">Select Character...</option>
+                </select>
+              </div>
+              <div class="t2-invention-section">
+                <label class="checkbox-label">
+                  <input type="checkbox" id="include-t2-invention">
+                  <span>Include T2 (via Invention)</span>
+                </label>
+                <p class="helper-text">When Owned/Corp selected: adds inventable T2 BPs from owned T1s</p>
+              </div>
+            </div>
+
+            <!-- Tech Level Filter -->
+            <div class="filter-group">
+              <label for="tech-filter">Tech Levels:</label>
+              <div class="filter-chips-grid" id="tech-filter">
+                <div class="filter-chips-row">
+                  <label class="filter-chip">
+                    <input type="checkbox" value="T1" checked>
+                    <span>T1</span>
+                  </label>
+                  <label class="filter-chip">
+                    <input type="checkbox" value="T2" checked>
+                    <span>T2</span>
+                  </label>
+                  <label class="filter-chip">
+                    <input type="checkbox" value="T3" checked>
+                    <span>T3</span>
+                  </label>
+                </div>
+                <div class="filter-chips-row">
+                  <label class="filter-chip">
+                    <input type="checkbox" value="Storyline" checked>
+                    <span>Storyline</span>
+                  </label>
+                  <label class="filter-chip">
+                    <input type="checkbox" value="Navy" checked>
+                    <span>Navy</span>
+                  </label>
+                  <label class="filter-chip">
+                    <input type="checkbox" value="Pirate" checked>
+                    <span>Pirate</span>
+                  </label>
+                </div>
+              </div>
+            </div>
+
+            <!-- Category Filter -->
+            <div class="filter-group">
+              <label for="category-filter">Categories:</label>
+              <div class="filter-chips-grid" id="category-filter">
+                <div class="filter-chips-row">
+                  <label class="filter-chip">
+                    <input type="checkbox" value="Ships" checked>
+                    <span>Ships</span>
+                  </label>
+                  <label class="filter-chip">
+                    <input type="checkbox" value="Drones" checked>
+                    <span>Drones</span>
+                  </label>
+                  <label class="filter-chip">
+                    <input type="checkbox" value="Modules" checked>
+                    <span>Modules</span>
+                  </label>
+                  <label class="filter-chip">
+                    <input type="checkbox" value="Ammo/Charges" checked>
+                    <span>Ammo</span>
+                  </label>
+                  <label class="filter-chip">
+                    <input type="checkbox" value="Components" checked>
+                    <span>Components</span>
+                  </label>
+                </div>
+                <div class="filter-chips-row">
+                  <label class="filter-chip">
+                    <input type="checkbox" value="Rigs" checked>
+                    <span>Rigs</span>
+                  </label>
+                  <label class="filter-chip">
+                    <input type="checkbox" value="Deployables" checked>
+                    <span>Deployables</span>
+                  </label>
+                  <label class="filter-chip">
+                    <input type="checkbox" value="Subsystems" checked>
+                    <span>Subsystems</span>
+                  </label>
+                  <label class="filter-chip">
+                    <input type="checkbox" value="Structures" checked>
+                    <span>Structures</span>
+                  </label>
+                  <label class="filter-chip">
+                    <input type="checkbox" value="Structure Rigs" checked>
+                    <span>Structure Rigs</span>
+                  </label>
+                </div>
+                <div class="filter-chips-row">
+                  <label class="filter-chip">
+                    <input type="checkbox" value="Structure Modules" checked>
+                    <span>Structure Modules</span>
+                  </label>
+                  <label class="filter-chip">
+                    <input type="checkbox" value="Boosters" checked>
+                    <span>Boosters</span>
+                  </label>
+                  <label class="filter-chip">
+                    <input type="checkbox" value="Celestials" checked>
+                    <span>Celestials</span>
+                  </label>
+                </div>
+              </div>
+            </div>
+
+            <!-- Missing Materials Threshold -->
+            <div class="filter-group threshold-group">
+              <label>On-Hand Threshold:</label>
+              <div class="threshold-control">
+                <input type="range" id="threshold-slider" min="0" max="100" value="90" step="5">
+                <div class="threshold-value-container">
+                  <input type="number" id="threshold-input" min="0" max="100" value="90" step="5">
+                  <span>%</span>
+                </div>
+              </div>
+              <p class="helper-text">Only show items where at least this % of materials are on-hand</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="settings-controls">
+          <div class="control-group">
+            <label for="facility-select">Manufacturing Facility:</label>
+            <select id="facility-select">
+              <option value="">Select Facility...</option>
+            </select>
+          </div>
+
+          <button class="primary-button" id="calculate-btn">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline>
+            </svg>
+            Calculate Buildable Items
+          </button>
+
+          <button class="secondary-button" id="cancel-calculation-btn" style="display: none;">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="10"></circle>
+              <line x1="15" y1="9" x2="9" y2="15"></line>
+              <line x1="9" y1="9" x2="15" y2="15"></line>
+            </svg>
+            Cancel
+          </button>
+        </div>
+      </div>
+
+      <!-- Loading Indicator -->
+      <div id="loading-indicator" class="loading-indicator hidden">
+        <div class="spinner"></div>
+        <p id="loading-message">Loading...</p>
+      </div>
+
+      <!-- Results Section -->
+      <div id="results-section" class="results-section hidden">
+        <div class="results-header">
+          <h2>Buildable Items</h2>
+          <div class="results-stats">
+            <span id="results-count">0 items</span>
+            <button class="secondary-button" id="configure-columns-btn" title="Configure Columns">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <line x1="4" y1="21" x2="4" y2="14"></line>
+                <line x1="4" y1="10" x2="4" y2="3"></line>
+                <line x1="12" y1="21" x2="12" y2="12"></line>
+                <line x1="12" y1="8" x2="12" y2="3"></line>
+                <line x1="20" y1="21" x2="20" y2="16"></line>
+                <line x1="20" y1="12" x2="20" y2="3"></line>
+                <line x1="1" y1="14" x2="7" y2="14"></line>
+                <line x1="9" y1="8" x2="15" y2="8"></line>
+                <line x1="17" y1="16" x2="23" y2="16"></line>
+              </svg>
+              Columns
+            </button>
+            <button class="primary-button" id="add-selected-to-plan-btn" title="Add Selected Items to Manufacturing Plan" style="display: none;">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <line x1="12" y1="5" x2="12" y2="19"></line>
+                <line x1="5" y1="12" x2="19" y2="12"></line>
+              </svg>
+              Add to Plan (<span id="selected-count">0</span>)
+            </button>
+            <input type="text" id="search-box" placeholder="Search items...">
+          </div>
+        </div>
+
+        <!-- Summary Table -->
+        <div class="table-container">
+          <table id="summary-table" class="summary-table">
+            <thead>
+              <tr>
+                <!-- Headers will be populated by JavaScript -->
+              </tr>
+            </thead>
+            <tbody id="summary-table-body">
+              <!-- Rows will be populated by JavaScript -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Empty State -->
+      <div id="empty-state" class="empty-state">
+        <svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+          <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+          <line x1="3" y1="9" x2="21" y2="9"></line>
+          <line x1="9" y1="21" x2="9" y2="9"></line>
+        </svg>
+        <h3>No Data Yet</h3>
+        <p>Select asset sources, configure filters, then click "Calculate Buildable Items" to see what you can manufacture with on-hand materials.</p>
+      </div>
+    </main>
+  </div>
+
+  <!-- Column Configuration Modal -->
+  <div id="column-config-modal" class="modal" style="display: none;">
+    <div class="modal-content column-config-modal">
+      <div class="modal-header">
+        <h2>Configure Columns</h2>
+        <button class="close-btn" id="close-column-modal-btn">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p class="modal-instructions">Drag columns to reorder. Check/uncheck to show/hide.</p>
+        <div id="column-list" class="column-list">
+          <!-- Column items will be populated by JavaScript -->
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="secondary-button" id="reset-columns-btn">Reset to Default</button>
+        <button class="primary-button" id="apply-columns-btn">Apply</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Plan Selection Modal -->
+  <div id="plan-selection-modal" class="modal" style="display: none;">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2>Add to Manufacturing Plan</h2>
+        <button class="close-btn" id="close-plan-selection-modal-btn">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p>Select an existing plan or create a new one:</p>
+        <div id="plan-selection-options" class="plan-selection-options">
+          <!-- Plan options will be populated by JavaScript -->
+        </div>
+        <div id="new-plan-section" style="display: none; margin-top: 16px;">
+          <label for="new-plan-name-input">New Plan Name (optional):</label>
+          <input type="text" id="new-plan-name-input" class="input-field" placeholder="Leave empty for auto-generated name">
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="secondary-button" id="cancel-plan-selection-btn">Cancel</button>
+        <button class="primary-button" id="confirm-plan-selection-btn">Add to Plan</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="../src/renderer/cleanup-tool-renderer.js"></script>
+</body>
+</html>

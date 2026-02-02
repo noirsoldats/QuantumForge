@@ -298,6 +298,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
     openWindow: () => ipcRenderer.invoke('manufacturingSummary:openWindow'),
   },
 
+  // Cleanup Tool API
+  cleanupTool: {
+    openWindow: () => ipcRenderer.invoke('cleanupTool:openWindow'),
+    getAssetSources: () => ipcRenderer.invoke('cleanupTool:getAssetSources'),
+    refreshAssets: (characterIds) => ipcRenderer.invoke('cleanupTool:refreshAssets', characterIds),
+    aggregateAssets: (sources) => ipcRenderer.invoke('cleanupTool:aggregateAssets', sources),
+  },
+
   // App API (updates, version, etc.)
   app: {
     getVersion: () => ipcRenderer.invoke('app:getVersion'),
