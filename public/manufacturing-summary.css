@@ -261,6 +261,11 @@ body {
   border-color: rgba(100, 180, 255, 0.6);
 }
 
+.control-group select option {
+  background: #1e1e2e;
+  color: #e0e0f0;
+}
+
 .market-filters-group {
   flex: 1;
   max-width: 370px;

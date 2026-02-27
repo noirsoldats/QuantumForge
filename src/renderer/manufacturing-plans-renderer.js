@@ -1526,20 +1526,35 @@ async function renderReactionTree(reaction, calculation) {
     facilityOptions += `<option value="${facility.id}" ${selected}>${escapeHtml(facility.name)}</option>`;
   });
 
+  // Total quantity produced by this reaction
+  const totalQty = calculation.product ? calculation.product.quantity : reaction.runs;
+  const qtyPerRun = calculation.product ? calculation.product.baseQuantity : 1;
+
   // Build header with reaction info
   let html = `
     <div class="reaction-item" data-reaction-id="${reaction.planBlueprintId}">
       <div class="reaction-header">
         <div class="reaction-info">
           <h4>${escapeHtml(productName)}${builtBadge}</h4>
-          <div class="reaction-meta">
-            <span>Runs: ${formatNumber(reaction.runs)}</span>
-            <label style="margin-left: 16px;">
-              <span style="margin-right: 8px;">Facility:</span>
-              <select class="reaction-facility-select" data-reaction-id="${reaction.planBlueprintId}" style="padding: 4px 8px; background: var(--bg-secondary); color: var(--text-primary); border: 1px solid var(--border-color); border-radius: 4px;">
-                ${facilityOptions}
-              </select>
-            </label>
+          <div class="reaction-stats">
+            <div class="reaction-stat">
+              <span class="reaction-stat-label">Runs</span>
+              <span class="reaction-stat-value">${formatNumber(reaction.runs)}</span>
+            </div>
+            <div class="reaction-stat">
+              <span class="reaction-stat-label">Per Run</span>
+              <span class="reaction-stat-value">${formatNumber(qtyPerRun)}</span>
+            </div>
+            <div class="reaction-stat highlight">
+              <span class="reaction-stat-label">Total Produced</span>
+              <span class="reaction-stat-value">${formatNumber(totalQty)}</span>
+            </div>
+          </div>
+          <div class="reaction-facility-row">
+            <span class="reaction-facility-label">Facility:</span>
+            <select class="reaction-facility-select" data-reaction-id="${reaction.planBlueprintId}">
+              ${facilityOptions}
+            </select>
           </div>
         </div>
         <div class="reaction-actions">
@@ -1591,6 +1606,10 @@ function renderTreeNodes(nodes, finalProduct) {
       badge = '<span class="badge badge-raw">RAW</span>';
     }
 
+    const runsLabel = node.isIntermediate && node.runsNeeded != null
+      ? `<span class="tree-node-runs">${formatNumber(node.runsNeeded)} run${node.runsNeeded !== 1 ? 's' : ''}</span>`
+      : '';
+
     html += `
       <div class="${nodeClass} ${depthClass}">
         <div class="tree-node-content">
@@ -1598,6 +1617,7 @@ function renderTreeNodes(nodes, finalProduct) {
             ${node.isIntermediate ? '⊕' : (depth === 0 ? '●' : '■')}
           </span>
           <span class="tree-node-name">${escapeHtml(node.typeName || `Type ${node.typeID}`)}</span>
+          ${runsLabel}
           <span class="tree-node-quantity">×${formatNumber(node.quantity)}</span>
           ${badge}
         </div>
@@ -1675,14 +1695,15 @@ function attachReactionEventListeners() {
           });
         }
 
-        // Update all reactions (without triggering recalculation for each)
-        for (const update of updates) {
-          await window.electronAPI.plans.updateBlueprint(update.reactionId, {
+        // Bulk update all reactions in a single transaction (recalculates once at the end)
+        const bulkUpdates = updates.map(update => ({
+          planBlueprintId: update.reactionId,
+          updates: {
             facilityId: update.facilityId,
-            facilitySnapshot: update.facilitySnapshot,
-            skipRecalculation: true // Don't recalculate for each update
-          });
-        }
+            facilitySnapshot: update.facilitySnapshot
+          }
+        }));
+        await window.electronAPI.plans.bulkUpdateBlueprints(selectedPlanId, bulkUpdates);
 
         // Clear reaction cache to ensure new facility bonuses are applied
         await window.electronAPI.reactions.clearCaches();

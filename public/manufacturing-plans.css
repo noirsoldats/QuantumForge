@@ -668,6 +668,11 @@ tr:hover {
   margin-bottom: 16px;
 }
 
+.input-field option {
+  background-color: #1e1e2e;
+  color: #ffffff;
+}
+
 .textarea-field {
   min-height: 100px;
   resize: vertical;
@@ -1976,11 +1981,12 @@ tr[data-editing="true"] {
 
 /* Reaction Items */
 .reaction-item {
-  margin-bottom: 24px;
+  margin-bottom: 20px;
   border: 1px solid var(--border-color);
-  border-radius: 8px;
+  border-radius: 10px;
   overflow: hidden;
   background: var(--bg-primary);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
 }
 
 .reaction-item.error {
@@ -1992,14 +1998,23 @@ tr[data-editing="true"] {
 .reaction-header {
   display: flex;
   justify-content: space-between;
-  align-items: center;
-  padding: 16px;
+  align-items: flex-start;
+  padding: 14px 16px;
   background: var(--bg-secondary);
   border-bottom: 1px solid var(--border-color);
+  gap: 16px;
+}
+
+.reaction-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
 }
 
 .reaction-info h4 {
-  margin: 0 0 8px 0;
+  margin: 0;
   color: var(--text-primary);
   font-size: 15px;
   font-weight: 600;
@@ -2008,26 +2023,92 @@ tr[data-editing="true"] {
   gap: 8px;
 }
 
-.reaction-meta {
+/* Stats row: Runs / Per Run / Total Produced */
+.reaction-stats {
   display: flex;
-  gap: 16px;
-  font-size: 13px;
-  color: var(--text-secondary);
+  gap: 8px;
+  flex-wrap: wrap;
 }
 
-.reaction-meta span {
-  display: inline-flex;
+.reaction-stat {
+  display: flex;
+  flex-direction: column;
   align-items: center;
-  gap: 4px;
+  padding: 6px 14px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  min-width: 80px;
+}
+
+.reaction-stat.highlight {
+  border-color: #5865f2;
+  background: rgba(88, 101, 242, 0.08);
+}
+
+.reaction-stat-label {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-secondary);
+  margin-bottom: 3px;
+}
+
+.reaction-stat-value {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text-primary);
+  font-family: 'Courier New', monospace;
+}
+
+.reaction-stat.highlight .reaction-stat-value {
+  color: #5865f2;
+}
+
+/* Facility row */
+.reaction-facility-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-top: 2px;
+}
+
+.reaction-facility-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  white-space: nowrap;
+}
+
+.reaction-facility-select {
+  flex: 1;
+  max-width: 280px;
+  padding: 5px 8px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  border: 1px solid var(--border-color);
+  border-radius: 5px;
+  font-size: 13px;
+}
+
+.reaction-facility-select option {
+  background: #1e1e2e;
+  color: #ffffff;
 }
 
 .reaction-actions {
   display: flex;
   gap: 8px;
+  flex-shrink: 0;
+  padding-top: 2px;
 }
 
 .reaction-tree {
-  padding: 16px;
+  padding: 14px 16px;
+  background: var(--bg-primary);
 }
 
 /* Tree Visualization */
@@ -2064,6 +2145,17 @@ tr[data-editing="true"] {
   color: var(--text-secondary);
   font-family: 'Courier New', monospace;
   font-size: 13px;
+}
+
+.tree-node-runs {
+  font-size: 11px;
+  font-weight: 600;
+  color: #43b581;
+  background: rgba(67, 181, 129, 0.12);
+  border: 1px solid rgba(67, 181, 129, 0.3);
+  border-radius: 4px;
+  padding: 1px 6px;
+  white-space: nowrap;
 }
 
 /* Node Types */

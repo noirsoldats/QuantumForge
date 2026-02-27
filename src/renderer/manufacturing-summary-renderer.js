@@ -2286,13 +2286,16 @@ function displayResults(searchTerm = '') {
   const tbody = document.getElementById('summary-table-body');
   tbody.innerHTML = '';
 
+  // Always read current search box value if no term was passed in
+  const activeSearch = searchTerm || (document.getElementById('search-box')?.value || '');
+
   let filteredData = calculatedData;
-  if (searchTerm) {
-    const search = searchTerm.toLowerCase();
+  if (activeSearch) {
+    const search = activeSearch.toLowerCase();
     filteredData = calculatedData.filter(item =>
-      item.itemName.toLowerCase().includes(search) ||
-      item.category.toLowerCase().includes(search) ||
-      item.productName.toLowerCase().includes(search)
+      (item.itemName || '').toLowerCase().includes(search) ||
+      (item.category || '').toLowerCase().includes(search) ||
+      (item.productName || '').toLowerCase().includes(search)
     );
   }
 
