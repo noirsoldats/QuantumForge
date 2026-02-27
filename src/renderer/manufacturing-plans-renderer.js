@@ -3119,9 +3119,18 @@ async function matchJobs() {
       characterIds = [currentCharacterId];
     }
 
-    // Match using ALL characters
+    // Resolve corporation IDs for all configured characters
+    const allCharacters = await window.electronAPI.esi.getCharacters();
+    const corporationIds = [...new Set(
+      characterIds
+        .map(cid => allCharacters.find(c => c.characterId === cid)?.corporationId)
+        .filter(Boolean)
+    )];
+
+    // Match using ALL characters and their corporations
     const matches = await window.electronAPI.plans.matchJobs(selectedPlanId, {
       characterIds,
+      corporationIds,
       minConfidence: 0.3
     });
 
