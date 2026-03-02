@@ -5,6 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://images.evetech.net">
   <title>Manufacturing Plans - Quantum Forge</title>
+  <link rel="stylesheet" href="shared/variables.css">
+  <link rel="stylesheet" href="shared/components.css">
   <link rel="stylesheet" href="manufacturing-plans.css">
 </head>
 <body>
@@ -415,11 +417,11 @@
   </div>
 
   <!-- Create Plan Modal -->
-  <div id="create-plan-modal" class="modal" style="display: none;">
+  <div id="create-plan-modal" class="modal" style="display: none;" role="dialog" aria-modal="true" aria-labelledby="create-modal-title">
     <div class="modal-content">
       <div class="modal-header">
-        <h2>Create Manufacturing Plan</h2>
-        <button class="close-btn" id="close-create-modal-btn">&times;</button>
+        <h2 id="create-modal-title">Create Manufacturing Plan</h2>
+        <button class="close-btn" id="close-create-modal-btn" aria-label="Close dialog">&times;</button>
       </div>
       <div class="modal-body">
         <label for="new-plan-name">Plan Name</label>
@@ -436,11 +438,11 @@
   </div>
 
   <!-- Add Blueprint Modal -->
-  <div id="add-blueprint-modal" class="modal" style="display: none;">
+  <div id="add-blueprint-modal" class="modal" style="display: none;" role="dialog" aria-modal="true" aria-labelledby="add-blueprint-modal-title">
     <div class="modal-content large">
       <div class="modal-header">
-        <h2>Add Blueprint to Plan</h2>
-        <button class="close-btn" id="close-blueprint-modal-btn">&times;</button>
+        <h2 id="add-blueprint-modal-title">Add Blueprint to Plan</h2>
+        <button class="close-btn" id="close-blueprint-modal-btn" aria-label="Close dialog">&times;</button>
       </div>
       <div class="modal-body">
         <input type="text" id="blueprint-search-modal" class="search-input" placeholder="Search blueprints from SDE...">
@@ -452,11 +454,11 @@
   </div>
 
   <!-- Configure Blueprint Modal -->
-  <div id="configure-blueprint-modal" class="modal" style="display: none;">
+  <div id="configure-blueprint-modal" class="modal" style="display: none;" role="dialog" aria-modal="true" aria-labelledby="configure-modal-title">
     <div class="modal-content">
       <div class="modal-header">
-        <h2>Configure Blueprint</h2>
-        <button class="close-btn" id="close-configure-modal-btn">&times;</button>
+        <h2 id="configure-modal-title">Configure Blueprint</h2>
+        <button class="close-btn" id="close-configure-modal-btn" aria-label="Close dialog">&times;</button>
       </div>
       <div class="modal-body">
         <h3 id="config-blueprint-name">Blueprint Name</h3>

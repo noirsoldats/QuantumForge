@@ -136,6 +136,15 @@ function updateServerStatusDisplay(data, isCached = false, ageSeconds = 0) {
   const serverStatus = data.vip ? 'restarting' : (data.players !== undefined ? 'online' : 'offline');
   iconElement.classList.add(`status-${serverStatus}`);
 
+  // Update pulse dot
+  const pulseDot = document.getElementById('server-pulse-dot');
+  if (pulseDot) {
+    pulseDot.className = 'pulse-dot';
+    if (serverStatus === 'online') pulseDot.classList.add('online');
+    else if (serverStatus === 'restarting') pulseDot.classList.add('warning');
+    else pulseDot.classList.add('error');
+  }
+
   // Build title with cache indicator
   let title = `Server Status: ${serverStatus.charAt(0).toUpperCase() + serverStatus.slice(1)}`;
   if (data.players !== undefined) {
@@ -266,18 +275,23 @@ async function updateESIStatus() {
       // Remove all status classes
       iconElement.classList.remove('status-online', 'status-warning', 'status-error', 'status-loading');
 
+      const esiPulseDot = document.getElementById('esi-pulse-dot');
+
       if (status.overall === 'green') {
         iconElement.classList.add('status-online');
         textElement.textContent = 'ESI: OK';
         statusItem.title = `ESI Status: All systems operational (${status.totalCount} calls tracked)`;
+        if (esiPulseDot) { esiPulseDot.className = 'pulse-dot online'; }
       } else if (status.overall === 'yellow') {
         iconElement.classList.add('status-warning');
         textElement.textContent = 'ESI: Warning';
         statusItem.title = `ESI Status: ${status.warningCount} calls need attention, ${status.inProgressCount || 0} in progress`;
+        if (esiPulseDot) { esiPulseDot.className = 'pulse-dot warning'; }
       } else {
         iconElement.classList.add('status-error');
         textElement.textContent = 'ESI: Error';
         statusItem.title = `ESI Status: ${status.errorCount} calls failed`;
+        if (esiPulseDot) { esiPulseDot.className = 'pulse-dot error'; }
       }
     }
   } catch (error) {

@@ -284,28 +284,7 @@ tr[data-fully-acquired="true"] {
   background-color: rgba(87, 242, 135, 0.03);
 }
 
-.confidence-badge {
-  display: inline-block;
-  padding: 4px 10px;
-  border-radius: 12px;
-  font-size: 12px;
-  font-weight: 600;
-}
-
-.confidence-badge.high {
-  background-color: rgba(87, 242, 135, 0.2);
-  color: #57f287;
-}
-
-.confidence-badge.medium {
-  background-color: rgba(254, 231, 92, 0.2);
-  color: #fee75c;
-}
-
-.confidence-badge.low {
-  background-color: rgba(237, 66, 69, 0.2);
-  color: #ed4245;
-}
+/* Confidence badge styles provided by shared/components.css */
 
 .plan-actions {
   display: flex;

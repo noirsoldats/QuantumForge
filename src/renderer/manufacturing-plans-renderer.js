@@ -1,6 +1,26 @@
 // Manufacturing Plans Renderer
 // Handles UI for creating and managing manufacturing plans
 
+/**
+ * Render a polished empty state with icon, heading, and helpful sub-text.
+ * @param {string} heading - Short title
+ * @param {string} subtext - Guidance text
+ * @param {string} iconPath - SVG path data for the icon
+ */
+function renderEmptyState(heading, subtext, iconPath) {
+  return `
+    <div class="empty-state">
+      <div class="empty-state-icon" aria-hidden="true">
+        <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24"
+             fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          ${iconPath}
+        </svg>
+      </div>
+      <h3>${heading}</h3>
+      <p>${subtext}</p>
+    </div>`;
+}
+
 // State
 let allPlans = [];
 let selectedPlanId = null;
@@ -58,6 +78,17 @@ async function loadFacilities() {
 
 // Setup event listeners
 function setupEventListeners() {
+  // Global Escape key: close any open modal
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    const modals = document.querySelectorAll('.modal[role="dialog"]');
+    modals.forEach(modal => {
+      if (modal.style.display !== 'none') {
+        modal.style.display = 'none';
+      }
+    });
+  });
+
   // Character selector
   document.getElementById('character-selector').addEventListener('change', async (e) => {
     currentCharacterId = parseInt(e.target.value);
@@ -149,7 +180,11 @@ function renderPlansList() {
   );
 
   if (filteredPlans.length === 0) {
-    container.innerHTML = '<div class="loading">No plans found</div>';
+    container.innerHTML = renderEmptyState(
+      'No plans found',
+      'Create a new plan using the "New Plan" button above, or adjust your search filter.',
+      '<rect x="3" y="3" width="18" height="18" rx="2"></rect><path d="M8 7h8M8 11h5M8 15h3"></path>'
+    );
     return;
   }
 
@@ -324,7 +359,11 @@ async function loadBlueprints() {
   );
 
   if (topLevelBlueprints.length === 0) {
-    container.innerHTML = '<div class="loading">No blueprints in this plan. Click "Add Blueprint" to get started.</div>';
+    container.innerHTML = renderEmptyState(
+      'No blueprints yet',
+      'Click "Add Blueprint" to add manufacturing jobs to this plan.',
+      '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="12" y1="18" x2="12" y2="12"></line><line x1="9" y1="15" x2="15" y2="15"></line>'
+    );
     return;
   }
 
@@ -622,7 +661,11 @@ async function loadMaterials() {
   const container = document.getElementById('materials-list-tab');
 
   if (materials.length === 0) {
-    container.innerHTML = '<div class="loading">No materials calculated. Add blueprints to this plan.</div>';
+    container.innerHTML = renderEmptyState(
+      'No materials yet',
+      'Add blueprints to this plan and materials will be calculated automatically.',
+      '<rect x="2" y="7" width="20" height="14" rx="2"></rect><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"></path>'
+    );
     return;
   }
 
@@ -2014,7 +2057,11 @@ async function searchBlueprints(e) {
     const container = document.getElementById('blueprint-search-results');
 
     if (results.length === 0) {
-      container.innerHTML = '<div class="loading">No blueprints found</div>';
+      container.innerHTML = renderEmptyState(
+        'No blueprints found',
+        'Try a different search term.',
+        '<circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line>'
+      );
       return;
     }
 
@@ -2878,7 +2925,11 @@ async function loadJobs() {
         </table>
       `;
     } else {
-      html += '<div class="loading">No pending job matches found. Click "Match Jobs" to find matches from ESI.</div>';
+      html += renderEmptyState(
+        'No pending job matches',
+        'Click "Match Jobs" to scan your ESI industry jobs and find matches for this plan.',
+        '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>'
+      );
     }
     html += '</div>';
 
@@ -3023,7 +3074,11 @@ async function loadTransactions() {
         </table>
       `;
     } else {
-      html += '<div class="loading">No pending transaction matches found. Click "Match Transactions" to find matches from ESI.</div>';
+      html += renderEmptyState(
+        'No pending transaction matches',
+        'Click "Match Transactions" to scan your ESI wallet and find matches for materials and products.',
+        '<line x1="12" y1="1" x2="12" y2="23"></line><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path>'
+      );
     }
     html += '</div>';
 

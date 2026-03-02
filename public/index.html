@@ -5,11 +5,13 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://images.evetech.net">
   <title>Quantum Forge - Eve Online Industry Manager</title>
+  <link rel="stylesheet" href="shared/variables.css">
+  <link rel="stylesheet" href="shared/components.css">
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
   <div id="app">
-    <button id="settings-btn" class="settings-icon" title="Settings">
+    <button id="settings-btn" class="settings-icon" title="Settings" aria-label="Open Settings">
       <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
         <circle cx="12" cy="12" r="3"></circle>
         <path d="M12 1v6m0 6v6m0-18a10 10 0 0 1 10 10m-10 10a10 10 0 0 1-10-10m8.5-8.5l3 3m-11 11l3 3m11-11l-3 3m-11-11l-3 3m15 5h-6m-6 0H1"></path>
@@ -17,7 +19,7 @@
       </svg>
     </button>
     <div id="character-avatar-container" class="character-avatar-container" style="display: none;">
-      <button id="character-avatar-btn" class="character-avatar-icon" title="Character Menu">
+      <button id="character-avatar-btn" class="character-avatar-icon" title="Character Menu" aria-label="Character Menu" aria-haspopup="true" aria-expanded="false">
         <img id="character-avatar-img" src="" alt="Default Character" />
       </button>
       <div id="character-menu" class="character-menu" style="display: none;">
@@ -69,18 +71,18 @@
             <h3>Analytics</h3>
             <p>Analyze profits and efficiency</p>
           </div> -->
-          <div class="card clickable-card" id="market-manager-card">
+          <div class="card clickable-card" id="market-manager-card" tabindex="0" role="button" aria-label="Open Market Manager">
             <h3>Market Manager</h3>
             <p>Configure pricing, view market data, and manage overrides</p>
-            <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin: 10px auto; display: block; opacity: 0.7;">
+            <svg class="card-icon" xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
               <line x1="12" y1="1" x2="12" y2="23"></line>
               <path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path>
             </svg>
           </div>
-          <div class="card clickable-card" id="blueprints-card">
+          <div class="card clickable-card" id="blueprints-card" tabindex="0" role="button" aria-label="Open Blueprint Calculator">
             <h3>Blueprint Calculator</h3>
             <p>Calculate material requirements for manufacturing</p>
-            <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin: 10px auto; display: block; opacity: 0.7;">
+            <svg class="card-icon" xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
               <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
               <polyline points="14 2 14 8 20 8"></polyline>
               <line x1="16" y1="13" x2="8" y2="13"></line>
@@ -88,10 +90,10 @@
               <polyline points="10 9 9 9 8 9"></polyline>
             </svg>
           </div>
-          <div class="card clickable-card" id="facilities-card">
+          <div class="card clickable-card" id="facilities-card" tabindex="0" role="button" aria-label="Open Facilities Manager">
             <h3>Facilities Manager</h3>
             <p>Manage your manufacturing facilities and structures</p>
-            <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin: 10px auto; display: block; opacity: 0.7;">
+            <svg class="card-icon" xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
               <rect x="4" y="2" width="16" height="20" rx="2" ry="2"></rect>
               <path d="M9 22v-4h6v4"></path>
               <path d="M8 6h.01"></path>
@@ -105,36 +107,36 @@
               <path d="M8 14h.01"></path>
             </svg>
           </div>
-          <div class="card clickable-card" id="manufacturing-summary-card">
+          <div class="card clickable-card" id="manufacturing-summary-card" tabindex="0" role="button" aria-label="Open Manufacturing Summary">
             <h3>Manufacturing Summary</h3>
             <p>View profitability analysis for all blueprints</p>
-            <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin: 10px auto; display: block; opacity: 0.7;">
+            <svg class="card-icon" xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
               <line x1="18" y1="20" x2="18" y2="10"></line>
               <line x1="12" y1="20" x2="12" y2="4"></line>
               <line x1="6" y1="20" x2="6" y2="14"></line>
             </svg>
           </div>
-          <div class="card clickable-card" id="manufacturing-plans-card">
+          <div class="card clickable-card" id="manufacturing-plans-card" tabindex="0" role="button" aria-label="Open Manufacturing Plans">
             <h3>Manufacturing Plans</h3>
             <p>Create and track manufacturing plans with materials and cost analysis</p>
-            <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin: 10px auto; display: block; opacity: 0.7;">
+            <svg class="card-icon" xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
               <path d="M9 11l3 3L22 4"></path>
               <path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"></path>
             </svg>
           </div>
-          <div class="card clickable-card" id="reactions-calculator-card">
+          <div class="card clickable-card" id="reactions-calculator-card" tabindex="0" role="button" aria-label="Open Reactions Calculator">
             <h3>Reactions Calculator</h3>
             <p>Calculate reaction chains and material requirements</p>
-            <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin: 10px auto; display: block; opacity: 0.7;">
+            <svg class="card-icon" xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
               <circle cx="12" cy="12" r="10"></circle>
               <line x1="2" y1="12" x2="22" y2="12"></line>
               <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path>
             </svg>
           </div>
-          <div class="card clickable-card" id="cleanup-tool-card">
+          <div class="card clickable-card" id="cleanup-tool-card" tabindex="0" role="button" aria-label="Open What Can I Build tool">
             <h3>What Can I Build?</h3>
             <p>Find what you can build with materials already in your hangars</p>
-            <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin: 10px auto; display: block; opacity: 0.7;">
+            <svg class="card-icon" xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
               <rect x="2" y="7" width="20" height="14" rx="2" ry="2"></rect>
               <path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"></path>
               <path d="M6 11h4"></path>
@@ -175,8 +177,8 @@
         </div>
 
         <div class="footer-item" id="server-status-item" title="Server Status: Loading...">
-          <svg id="server-status-icon" class="status-icon status-loading" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <!-- Default loading icon -->
+          <span id="server-pulse-dot" class="pulse-dot" aria-hidden="true"></span>
+          <svg id="server-status-icon" class="status-icon status-loading" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
             <circle cx="12" cy="12" r="10"></circle>
             <line x1="12" y1="8" x2="12" y2="12"></line>
             <line x1="12" y1="16" x2="12.01" y2="16"></line>
@@ -184,8 +186,9 @@
           <span id="server-status-text" class="label">Loading</span>
         </div>
 
-        <div class="footer-item footer-clickable" id="esi-status-item" title="ESI Status: Loading...">
-          <svg id="esi-status-icon" class="status-icon status-loading" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <div class="footer-item footer-clickable" id="esi-status-item" title="ESI Status: Loading..." role="button" aria-label="View ESI Status">
+          <span id="esi-pulse-dot" class="pulse-dot" aria-hidden="true"></span>
+          <svg id="esi-status-icon" class="status-icon status-loading" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
             <circle cx="12" cy="12" r="10"></circle>
             <path d="M12 6v6l4 2"></path>
           </svg>
@@ -196,10 +199,10 @@
   </div>
 
   <!-- SDE Update Modal -->
-  <div id="sde-update-modal" class="modal" style="display: none;">
+  <div id="sde-update-modal" class="modal" style="display: none;" role="dialog" aria-modal="true" aria-labelledby="sde-modal-title">
     <div class="modal-content">
       <div class="modal-header">
-        <h2>SDE Update Available</h2>
+        <h2 id="sde-modal-title">SDE Update Available</h2>
       </div>
       <div class="modal-body">
         <div class="update-info">
