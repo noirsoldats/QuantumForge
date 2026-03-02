@@ -1609,9 +1609,9 @@ function setupIPCHandlers() {
 
   // Unified market data update - refreshes all configured regions, adjusted prices, and cost indices
   ipcMain.handle('market:updateAllMarketData', async (event) => {
-    const { getUniqueRegions } = require('./blueprint-pricing');
+    const { getUniqueRegions, getInputLocation, getOutputLocation } = require('./blueprint-pricing');
     const { getMarketSettings } = require('./settings-manager');
-    const { refreshMultipleRegions, manualRefreshAdjustedPrices } = require('./esi-market');
+    const { refreshMultipleRegions, manualRefreshAdjustedPrices, fetchStructureMarketOrders } = require('./esi-market');
 
     const results = {
       marketData: null,
@@ -1627,19 +1627,44 @@ function setupIPCHandlers() {
       const regionIds = getUniqueRegions(marketSettings);
       console.log(`[UpdateAllMarketData] Refreshing ${regionIds.length} region(s):`, regionIds);
 
-      // Step 2: Refresh market data for all regions
+      // Step 2: Refresh market data for all regions (public orders only)
       results.marketData = await refreshMultipleRegions(regionIds);
       if (!results.marketData.success) {
         results.errors.push('Some regions failed to refresh');
       }
 
-      // Step 3: Refresh adjusted prices
+      // Step 3: Refresh private structure orders AFTER public region refresh
+      // so structure orders co-exist with public orders in the same region bucket
+      const inputLoc = getInputLocation(marketSettings);
+      const outputLoc = getOutputLocation(marketSettings);
+      const structureLocations = [inputLoc, outputLoc].filter(
+        loc => loc.locationType === 'private_structure' && loc.structureId && loc.characterId
+      );
+      const uniqueStructures = [...new Map(structureLocations.map(l => [l.structureId, l])).values()];
+      for (const loc of uniqueStructures) {
+        let character = getCharacter(loc.characterId);
+        if (character) {
+          if (isTokenExpired(character.expiresAt)) {
+            const newTokens = await refreshAccessToken(character.refreshToken);
+            updateCharacterTokens(loc.characterId, newTokens);
+            character = getCharacter(loc.characterId);
+          }
+          try {
+            await fetchStructureMarketOrders(loc.structureId, loc.regionId, character.accessToken, true);
+          } catch (err) {
+            console.error(`[UpdateAllMarketData] Failed to refresh structure ${loc.structureId}:`, err);
+            results.errors.push(`Structure market refresh failed: ${err.message}`);
+          }
+        }
+      }
+
+      // Step 4: Refresh adjusted prices
       results.adjustedPrices = await manualRefreshAdjustedPrices();
       if (!results.adjustedPrices.success) {
         results.errors.push('Failed to refresh adjusted prices');
       }
 
-      // Step 4: Refresh cost indices
+      // Step 5: Refresh cost indices
       results.costIndices = await fetchCostIndices();
 
       results.success = results.errors.length === 0;
@@ -1654,6 +1679,34 @@ function setupIPCHandlers() {
       results.message = `Update failed: ${error.message}`;
       return results;
     }
+  });
+
+  // Search for player-owned structures by name (requires structure search scope)
+  ipcMain.handle('market:searchStructures', async (event, characterId, searchTerm) => {
+    const { searchStructures } = require('./esi-market');
+
+    let character = getCharacter(characterId);
+    if (!character) throw new Error('Character not found');
+    if (isTokenExpired(character.expiresAt)) {
+      const newTokens = await refreshAccessToken(character.refreshToken);
+      updateCharacterTokens(characterId, newTokens);
+      character = getCharacter(characterId);
+    }
+    return await searchStructures(character.characterId, character.accessToken, searchTerm);
+  });
+
+  // Refresh market orders for a specific private structure
+  ipcMain.handle('market:refreshStructureMarket', async (event, structureId, regionId, characterId) => {
+    const { fetchStructureMarketOrders } = require('./esi-market');
+
+    let character = getCharacter(characterId);
+    if (!character) throw new Error('Character not found');
+    if (isTokenExpired(character.expiresAt)) {
+      const newTokens = await refreshAccessToken(character.refreshToken);
+      updateCharacterTokens(characterId, newTokens);
+      character = getCharacter(characterId);
+    }
+    return await fetchStructureMarketOrders(structureId, regionId, character.accessToken, true);
   });
 
   // Handle IPC for cost indices

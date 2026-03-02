@@ -171,10 +171,41 @@ async function loadLocationData() {
     allRegions = await window.electronAPI.sde.getAllRegions();
     populateRegions();
 
+    // Populate character selects for private structure search
+    await populateCharacterSelects();
+
     // Systems will be loaded on demand via search
     console.log(`Loaded ${tradeHubs.length} trade hubs and ${allRegions.length} regions`);
   } catch (error) {
     console.error('Error loading location data:', error);
+  }
+}
+
+// Populate character dropdowns for private structure authentication
+async function populateCharacterSelects() {
+  try {
+    const characters = await window.electronAPI.esi.getCharacters();
+    const prefixes = ['input', 'output'];
+    prefixes.forEach(prefix => {
+      const select = document.getElementById(`${prefix}-structure-character-select`);
+      if (!select) return;
+      select.innerHTML = '';
+      if (!characters || characters.length === 0) {
+        const opt = document.createElement('option');
+        opt.value = '';
+        opt.textContent = 'No characters — add one in Settings';
+        select.appendChild(opt);
+        return;
+      }
+      characters.forEach(char => {
+        const opt = document.createElement('option');
+        opt.value = char.characterId;
+        opt.textContent = char.characterName || `Character ${char.characterId}`;
+        select.appendChild(opt);
+      });
+    });
+  } catch (err) {
+    console.error('Error loading characters for structure select:', err);
   }
 }
 
@@ -315,7 +346,7 @@ function handleLocationTypeChange(prefix = 'input') {
   const selectedType = Array.from(locationTypes).find(radio => radio.checked)?.value;
 
   // Hide all location option contents for this prefix
-  const selectionIds = ['hub', 'station', 'system', 'region'];
+  const selectionIds = ['hub', 'station', 'system', 'region', 'private_structure'];
   selectionIds.forEach(id => {
     const content = document.getElementById(`${prefix}-${id}-selection`);
     if (content) {
@@ -435,6 +466,93 @@ function setupLocationEventListeners(prefix) {
         updateSelectionStatus(`${prefix}-region-status`, `${prefix}-region-status-text`, null);
       }
     });
+  }
+
+  // Private structure search button
+  const structureSearchBtn = document.getElementById(`${prefix}-structure-search-btn`);
+  if (structureSearchBtn) {
+    structureSearchBtn.addEventListener('click', () => handleStructureSearch(prefix));
+  }
+
+  // Private structure character select change — clear results
+  const structureCharacterSelect = document.getElementById(`${prefix}-structure-character-select`);
+  if (structureCharacterSelect) {
+    structureCharacterSelect.addEventListener('change', () => {
+      const resultsSelect = document.getElementById(`${prefix}-structure-results-select`);
+      if (resultsSelect) {
+        resultsSelect.innerHTML = '<option value="">Search for a structure above</option>';
+      }
+      updateSelectionStatus(`${prefix}-structure-status`, `${prefix}-structure-status-text`, null);
+    });
+  }
+
+  // Private structure results selection change
+  const structureResultsSelect = document.getElementById(`${prefix}-structure-results-select`);
+  if (structureResultsSelect) {
+    structureResultsSelect.addEventListener('change', (e) => {
+      if (e.target.value) {
+        try {
+          const data = JSON.parse(e.target.value);
+          updateSelectionStatus(`${prefix}-structure-status`, `${prefix}-structure-status-text`, `Selected: ${data.structureName}`);
+        } catch {
+          // ignore parse errors
+        }
+      } else {
+        updateSelectionStatus(`${prefix}-structure-status`, `${prefix}-structure-status-text`, null);
+      }
+    });
+  }
+}
+
+// Handle structure search for private structure location type
+async function handleStructureSearch(prefix) {
+  const characterSelect = document.getElementById(`${prefix}-structure-character-select`);
+  const searchInput = document.getElementById(`${prefix}-structure-search`);
+  const resultsSelect = document.getElementById(`${prefix}-structure-results-select`);
+
+  if (!characterSelect || !searchInput || !resultsSelect) return;
+
+  const characterId = parseInt(characterSelect.value);
+  const searchTerm = searchInput.value.trim();
+
+  if (!characterId) {
+    resultsSelect.innerHTML = '<option value="">Select a character first</option>';
+    return;
+  }
+  if (searchTerm.length < 3) {
+    resultsSelect.innerHTML = '<option value="">Enter at least 3 characters to search</option>';
+    return;
+  }
+
+  resultsSelect.innerHTML = '<option value="">Searching...</option>';
+
+  try {
+    const structures = await window.electronAPI.market.searchStructures(characterId, searchTerm);
+
+    resultsSelect.innerHTML = '';
+
+    if (!structures || structures.length === 0) {
+      const opt = document.createElement('option');
+      opt.value = '';
+      opt.textContent = 'No structures found — check name or character access';
+      resultsSelect.appendChild(opt);
+      return;
+    }
+
+    structures.forEach(s => {
+      const opt = document.createElement('option');
+      opt.value = JSON.stringify({
+        structureId: s.structureId,
+        solarSystemId: s.solarSystemId,
+        regionId: s.regionId,
+        structureName: s.structureName,
+      });
+      opt.textContent = s.structureName;
+      resultsSelect.appendChild(opt);
+    });
+  } catch (err) {
+    console.error('Structure search failed:', err);
+    resultsSelect.innerHTML = '<option value="">Search failed — check character scopes</option>';
   }
 }
 
@@ -565,6 +683,36 @@ function populateLocationSettings(locationSettings, prefix) {
         updateSelectionStatus(`${prefix}-region-status`, `${prefix}-region-status-text`, `Selected: ${selectedOption.textContent}`);
       }
     }
+  } else if (locationType === 'private_structure') {
+    const structureName = locationSettings?.structureName;
+    const structureId = locationSettings?.structureId ?? locationSettings?.locationId;
+    const solarSystemId = locationSettings?.systemId;
+    const charId = locationSettings?.characterId;
+
+    // Set character select
+    const charSelect = document.getElementById(`${prefix}-structure-character-select`);
+    if (charSelect && charId) {
+      charSelect.value = charId;
+    }
+
+    // Pre-populate results list with saved structure
+    if (structureId && structureName) {
+      const resultsSelect = document.getElementById(`${prefix}-structure-results-select`);
+      if (resultsSelect) {
+        resultsSelect.innerHTML = '';
+        const opt = document.createElement('option');
+        opt.value = JSON.stringify({
+          structureId,
+          solarSystemId,
+          regionId,
+          structureName,
+        });
+        opt.textContent = structureName;
+        opt.selected = true;
+        resultsSelect.appendChild(opt);
+        updateSelectionStatus(`${prefix}-structure-status`, `${prefix}-structure-status-text`, `Selected: ${structureName}`);
+      }
+    }
   }
 }
 
@@ -592,6 +740,12 @@ async function getSettingsFromForm() {
       locationId: inputLocation.locationId,
       regionId: inputLocation.regionId,
       systemId: inputLocation.systemId,
+      // Private structure fields (only present for private_structure locationType)
+      ...(inputLocation.locationType === 'private_structure' && {
+        structureId: inputLocation.structureId,
+        structureName: inputLocation.structureName,
+        characterId: inputLocation.characterId,
+      }),
       // Pricing fields
       priceType: document.getElementById('input-price-type').value,
       priceMethod: document.getElementById('input-price-method').value,
@@ -606,6 +760,12 @@ async function getSettingsFromForm() {
       locationId: outputSameLocation ? inputLocation.locationId : outputLocation.locationId,
       regionId: outputSameLocation ? inputLocation.regionId : outputLocation.regionId,
       systemId: outputSameLocation ? inputLocation.systemId : outputLocation.systemId,
+      // Private structure fields (only present for private_structure locationType)
+      ...((outputSameLocation ? inputLocation.locationType : outputLocation.locationType) === 'private_structure' && {
+        structureId: outputSameLocation ? inputLocation.structureId : outputLocation.structureId,
+        structureName: outputSameLocation ? inputLocation.structureName : outputLocation.structureName,
+        characterId: outputSameLocation ? inputLocation.characterId : outputLocation.characterId,
+      }),
       // Pricing fields
       priceType: document.getElementById('output-price-type').value,
       priceMethod: document.getElementById('output-price-method').value,
@@ -660,6 +820,23 @@ async function getLocationFromForm(prefix) {
     const regionSelect = document.getElementById(`${prefix}-region-select`);
     location.regionId = parseInt(regionSelect.value);
     location.locationId = location.regionId;
+  } else if (locationType === 'private_structure') {
+    const resultsSelect = document.getElementById(`${prefix}-structure-results-select`);
+    const characterSelect = document.getElementById(`${prefix}-structure-character-select`);
+    const selectedValue = resultsSelect?.value;
+    if (selectedValue) {
+      try {
+        const data = JSON.parse(selectedValue);
+        location.structureId = data.structureId;
+        location.structureName = data.structureName;
+        location.locationId = data.structureId;   // used as location filter in price calc
+        location.regionId = data.regionId;         // real EVE region ID from SDE lookup
+        location.systemId = data.solarSystemId;
+        location.characterId = parseInt(characterSelect?.value);
+      } catch (err) {
+        console.error('Error parsing structure selection:', err);
+      }
+    }
   }
 
   return location;

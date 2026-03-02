@@ -521,6 +521,12 @@
                 <span class="radio-label">Entire Region</span>
                 <span class="radio-description">All systems in a region</span>
               </label>
+
+              <label class="radio-option">
+                <input type="radio" name="input-location-type" value="private_structure">
+                <span class="radio-label">Private Structure</span>
+                <span class="radio-description">Citadel or Engineering Complex with market</span>
+              </label>
             </div>
 
             <!-- Input Hub Selection -->
@@ -595,6 +601,38 @@
                   <option value="">Loading...</option>
                 </select>
               </div>
+            </div>
+
+            <!-- Input Private Structure Selection -->
+            <div id="input-private_structure-selection" class="location-option-content" style="display: none;">
+              <div id="input-structure-status" class="selection-status hidden">
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <polyline points="20 6 9 17 4 12"></polyline>
+                </svg>
+                <span id="input-structure-status-text"></span>
+              </div>
+              <div class="form-group">
+                <label for="input-structure-character-select">Character for ESI Authentication</label>
+                <select id="input-structure-character-select" class="form-control">
+                  <option value="">Loading characters...</option>
+                </select>
+              </div>
+              <div class="form-row">
+                <div class="form-group">
+                  <label for="input-structure-search">Structure Name Search</label>
+                  <input type="text" id="input-structure-search" class="form-control" placeholder="Type structure name (min 3 chars)...">
+                </div>
+                <div class="form-group" style="display: flex; align-items: flex-end;">
+                  <button id="input-structure-search-btn" class="secondary-button">Search</button>
+                </div>
+              </div>
+              <div class="form-group">
+                <label for="input-structure-results-select">Search Results</label>
+                <select id="input-structure-results-select" class="form-control" size="6">
+                  <option value="">Search for a structure above</option>
+                </select>
+              </div>
+              <p class="help-text">Requires characters with <em>esi-search.search_structures.v1</em> and <em>esi-markets.structure_markets.v1</em> scopes. Re-authenticate if these are missing.</p>
             </div>
 
             <!-- Input Pricing Settings -->
@@ -682,6 +720,12 @@
                   <span class="radio-label">Entire Region</span>
                   <span class="radio-description">All systems in a region</span>
                 </label>
+
+                <label class="radio-option">
+                  <input type="radio" name="output-location-type" value="private_structure">
+                  <span class="radio-label">Private Structure</span>
+                  <span class="radio-description">Citadel or Engineering Complex with market</span>
+                </label>
               </div>
 
               <!-- Output Hub Selection -->
@@ -756,6 +800,38 @@
                     <option value="">Loading...</option>
                   </select>
                 </div>
+              </div>
+
+              <!-- Output Private Structure Selection -->
+              <div id="output-private_structure-selection" class="location-option-content" style="display: none;">
+                <div id="output-structure-status" class="selection-status hidden">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <polyline points="20 6 9 17 4 12"></polyline>
+                  </svg>
+                  <span id="output-structure-status-text"></span>
+                </div>
+                <div class="form-group">
+                  <label for="output-structure-character-select">Character for ESI Authentication</label>
+                  <select id="output-structure-character-select" class="form-control">
+                    <option value="">Loading characters...</option>
+                  </select>
+                </div>
+                <div class="form-row">
+                  <div class="form-group">
+                    <label for="output-structure-search">Structure Name Search</label>
+                    <input type="text" id="output-structure-search" class="form-control" placeholder="Type structure name (min 3 chars)...">
+                  </div>
+                  <div class="form-group" style="display: flex; align-items: flex-end;">
+                    <button id="output-structure-search-btn" class="secondary-button">Search</button>
+                  </div>
+                </div>
+                <div class="form-group">
+                  <label for="output-structure-results-select">Search Results</label>
+                  <select id="output-structure-results-select" class="form-control" size="6">
+                    <option value="">Search for a structure above</option>
+                  </select>
+                </div>
+                <p class="help-text">Requires characters with <em>esi-search.search_structures.v1</em> and <em>esi-markets.structure_markets.v1</em> scopes. Re-authenticate if these are missing.</p>
               </div>
             </div>
 

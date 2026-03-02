@@ -10,51 +10,69 @@ const MANUFACTURING_ACTIVITY = 'manufacturing';
 /**
  * Get the location settings for input materials (buying)
  * @param {Object} marketSettings - Market settings object
- * @returns {Object} Location object with regionId, locationId, systemId, locationType
+ * @returns {Object} Location object with regionId, locationId, systemId, locationType, and private structure fields if applicable
  */
 function getInputLocation(marketSettings) {
   const input = marketSettings.inputMaterials;
-  return {
+  const loc = {
     regionId: input.regionId ?? marketSettings.regionId,
     locationId: input.locationId ?? marketSettings.locationId,
     systemId: input.systemId ?? marketSettings.systemId,
     locationType: input.locationType ?? marketSettings.locationType,
   };
+  // Forward private structure fields needed for authenticated refresh
+  if (loc.locationType === 'private_structure') {
+    loc.structureId = input.structureId ?? input.locationId;
+    loc.structureName = input.structureName;
+    loc.characterId = input.characterId;
+  }
+  return loc;
 }
 
 /**
  * Get the location settings for output products (selling)
  * Falls back to input location if useSameLocation is true
  * @param {Object} marketSettings - Market settings object
- * @returns {Object} Location object with regionId, locationId, systemId, locationType
+ * @returns {Object} Location object with regionId, locationId, systemId, locationType, and private structure fields if applicable
  */
 function getOutputLocation(marketSettings) {
   const output = marketSettings.outputProducts;
   if (output.useSameLocation) {
     return getInputLocation(marketSettings);
   }
-  return {
+  const loc = {
     regionId: output.regionId ?? marketSettings.regionId,
     locationId: output.locationId ?? marketSettings.locationId,
     systemId: output.systemId ?? marketSettings.systemId,
     locationType: output.locationType ?? marketSettings.locationType,
   };
+  // Forward private structure fields needed for authenticated refresh
+  if (loc.locationType === 'private_structure') {
+    loc.structureId = output.structureId ?? output.locationId;
+    loc.structureName = output.structureName;
+    loc.characterId = output.characterId;
+  }
+  return loc;
 }
 
 /**
- * Get unique region IDs from both input and output locations
- * Used for determining which regions need to be refreshed
+ * Get unique region IDs from both input and output locations.
+ * Private structure regions are included (for market history fetching),
+ * but the updateAllMarketData handler uses the authenticated path for
+ * structure order refresh rather than the public ESI region endpoint.
  * @param {Object} marketSettings - Market settings object
  * @returns {Array<number>} Array of unique region IDs
  */
 function getUniqueRegions(marketSettings) {
   const input = getInputLocation(marketSettings);
   const output = getOutputLocation(marketSettings);
-  const regions = new Set([input.regionId]);
-  if (output.regionId !== input.regionId) {
+  const regions = new Set();
+  // Only include valid numeric region IDs
+  if (input.regionId) regions.add(input.regionId);
+  if (output.regionId && output.regionId !== input.regionId) {
     regions.add(output.regionId);
   }
-  return Array.from(regions);
+  return Array.from(regions).filter(id => id && !isNaN(id));
 }
 
 /**

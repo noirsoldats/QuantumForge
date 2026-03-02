@@ -963,6 +963,216 @@ async function refreshMultipleRegions(regionIds) {
   };
 }
 
+/**
+ * Search for player-owned structures by name using ESI character search.
+ * Requires 'esi-search.search_structures.v1' and 'esi-universe.read_structures.v1' scopes.
+ * @param {number} characterId - Character ID to authenticate with
+ * @param {string} accessToken - Valid ESI access token
+ * @param {string} searchTerm - Structure name search term (min 3 chars)
+ * @returns {Promise<Array>} Array of { structureId, structureName, solarSystemId, regionId, typeId }
+ */
+async function searchStructures(characterId, accessToken, searchTerm) {
+  const Database = require('better-sqlite3');
+  const { getSdePath } = require('./sde-manager');
+
+  // Search for structures using character-authenticated ESI endpoint
+  const searchUrl = `https://esi.evetech.net/latest/characters/${characterId}/search/?categories=structure&search=${encodeURIComponent(searchTerm)}&datasource=tranquility&strict=false`;
+
+  const searchResponse = await retryFetch(async () => {
+    const res = await fetch(searchUrl, {
+      headers: {
+        'Authorization': `Bearer ${accessToken}`,
+        'User-Agent': getUserAgent(),
+      },
+    });
+    if (!res.ok) {
+      const error = new Error(`Structure search failed: ${res.status} ${res.statusText}`);
+      if (res.status === 403 || res.status === 401) error.noRetry = true;
+      throw error;
+    }
+    return res;
+  });
+
+  const searchData = await searchResponse.json();
+  const structureIds = searchData.structure || [];
+
+  if (structureIds.length === 0) {
+    return [];
+  }
+
+  // Fetch details for each structure (cap at 20 results)
+  const limitedIds = structureIds.slice(0, 20);
+  const sdePath = getSdePath();
+  const sdeDb = sdePath ? new Database(sdePath, { readonly: true }) : null;
+
+  const results = [];
+
+  for (const structureId of limitedIds) {
+    try {
+      const structureUrl = `https://esi.evetech.net/latest/universe/structures/${structureId}/?datasource=tranquility`;
+      const structureResponse = await retryFetch(async () => {
+        const res = await fetch(structureUrl, {
+          headers: {
+            'Authorization': `Bearer ${accessToken}`,
+            'User-Agent': getUserAgent(),
+          },
+        });
+        if (!res.ok) {
+          const error = new Error(`Failed to get structure ${structureId}: ${res.status}`);
+          if (res.status === 403) error.noRetry = true; // No access to this structure
+          throw error;
+        }
+        return res;
+      });
+
+      const structureData = await structureResponse.json();
+      const solarSystemId = structureData.solar_system_id;
+
+      // Look up region ID from SDE
+      let regionId = null;
+      if (sdeDb && solarSystemId) {
+        const row = sdeDb.prepare('SELECT regionID FROM mapSolarSystems WHERE solarSystemID = ?').get(solarSystemId);
+        regionId = row?.regionID ?? null;
+      }
+
+      results.push({
+        structureId,
+        structureName: structureData.name,
+        solarSystemId,
+        regionId,
+        typeId: structureData.type_id,
+      });
+    } catch (err) {
+      // Skip structures we can't access (e.g. 403 Forbidden)
+      console.log(`[searchStructures] Skipping structure ${structureId}: ${err.message}`);
+    }
+  }
+
+  if (sdeDb) sdeDb.close();
+
+  return results;
+}
+
+/**
+ * Fetch market orders from a private player-owned structure via authenticated ESI.
+ * Requires 'esi-markets.structure_markets.v1' scope.
+ * @param {number} structureId - Structure ID (large integer)
+ * @param {number} regionId - Real EVE region ID (from SDE mapSolarSystems)
+ * @param {string} accessToken - Valid ESI access token
+ * @param {boolean} forceRefresh - Force fetch regardless of rate limit
+ * @returns {Promise<Array>} Fetched orders
+ */
+async function fetchStructureMarketOrders(structureId, regionId, accessToken, forceRefresh = false) {
+  const cacheKey = `market_orders_structure_${structureId}`;
+  const minInterval = 30 * 60 * 1000; // 30 minutes
+
+  if (!forceRefresh && !canFetch(cacheKey, minInterval)) {
+    console.log(`[Structure Market] Structure ${structureId} recently fetched, using cache`);
+    return getCachedMarketOrders(regionId, null, { stationId: structureId });
+  }
+
+  console.log(`[Structure Market] Fetching orders for structure ${structureId} (region ${regionId})`);
+
+  try {
+    const baseUrl = `https://esi.evetech.net/latest/markets/structures/${structureId}/?datasource=tranquility`;
+
+    const firstResponse = await retryFetch(async () => {
+      const res = await fetch(`${baseUrl}&page=1`, {
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'User-Agent': getUserAgent(),
+        },
+      });
+      if (!res.ok) {
+        const error = new Error(`Structure market fetch failed: ${res.status} ${res.statusText}`);
+        if (res.status === 403 || res.status === 401) error.noRetry = true;
+        throw error;
+      }
+      return res;
+    });
+
+    const firstPageOrders = await firstResponse.json();
+    const totalPages = parseInt(firstResponse.headers.get('X-Pages') || '1', 10);
+    const expiresAt = getCacheExpiry(firstResponse);
+
+    let allOrders = [...firstPageOrders];
+
+    if (totalPages > 1) {
+      for (let page = 2; page <= totalPages; page++) {
+        try {
+          const pageResponse = await retryFetch(async () => {
+            const res = await fetch(`${baseUrl}&page=${page}`, {
+              headers: {
+                'Authorization': `Bearer ${accessToken}`,
+                'User-Agent': getUserAgent(),
+              },
+            });
+            if (!res.ok) {
+              throw new Error(`Failed to fetch structure market page ${page}: ${res.status}`);
+            }
+            return res;
+          });
+          const pageOrders = await pageResponse.json();
+          allOrders = allOrders.concat(pageOrders);
+          console.log(`[Structure Market] Fetched page ${page}/${totalPages} (${pageOrders.length} orders)`);
+        } catch (err) {
+          console.error(`[Structure Market] Failed to fetch page ${page}: ${err.message}`);
+        }
+      }
+    }
+
+    console.log(`[Structure Market] Fetched ${allOrders.length} orders for structure ${structureId}`);
+
+    // Store under the structure's real region ID.
+    // The location_id on each order will equal the structureId, so price calc
+    // can filter with location_id === structureId to isolate structure orders.
+    // Do NOT preserve structure orders here — we're replacing THIS structure's orders.
+    // We do need to avoid wiping OTHER structures' orders in the same region,
+    // so we delete only orders with this specific location_id.
+    const db = getMarketDatabase();
+    db.prepare('DELETE FROM market_orders WHERE region_id = ? AND location_id = ?').run(regionId, structureId);
+
+    // Re-use the insert logic from storeMarketOrders but without the region-wide delete
+    const fetchedAt = Date.now();
+    const insert = db.prepare(`
+      INSERT INTO market_orders (
+        order_id, type_id, location_id, region_id, system_id,
+        is_buy_order, price, volume_remain, volume_total,
+        min_volume, duration, issued, fetched_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    const insertMany = db.transaction((orders) => {
+      for (const order of orders) {
+        insert.run(
+          order.order_id,
+          order.type_id,
+          order.location_id || structureId,
+          regionId,
+          order.system_id || null,
+          order.is_buy_order ? 1 : 0,
+          order.price,
+          order.volume_remain,
+          order.volume_total,
+          order.min_volume || null,
+          order.duration,
+          order.issued,
+          fetchedAt
+        );
+      }
+    });
+    insertMany(allOrders);
+    console.log(`[Structure Market] Stored ${allOrders.length} orders in database`);
+
+    clearPriceCache(regionId);
+    updateFetchMetadata(cacheKey, expiresAt);
+
+    return allOrders;
+  } catch (error) {
+    console.error(`[Structure Market] Error fetching structure ${structureId}:`, error);
+    return getCachedMarketOrders(regionId, null, { stationId: structureId });
+  }
+}
+
 module.exports = {
   fetchMarketOrders,
   fetchMarketHistory,
@@ -977,4 +1187,6 @@ module.exports = {
   fetchAdjustedPrices,
   manualRefreshAdjustedPrices,
   refreshMultipleRegions,
+  searchStructures,
+  fetchStructureMarketOrders,
 };

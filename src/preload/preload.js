@@ -228,6 +228,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     refreshAdjustedPrices: () => ipcRenderer.invoke('market:refreshAdjustedPrices'),
     refreshMultipleRegions: (regionIds) => ipcRenderer.invoke('market:refreshMultipleRegions', regionIds),
     updateAllMarketData: () => ipcRenderer.invoke('market:updateAllMarketData'),
+    searchStructures: (characterId, searchTerm) =>
+      ipcRenderer.invoke('market:searchStructures', characterId, searchTerm),
+    refreshStructureMarket: (structureId, regionId, characterId) =>
+      ipcRenderer.invoke('market:refreshStructureMarket', structureId, regionId, characterId),
     onFetchProgress: (callback) => ipcRenderer.on('market:fetchProgress', (event, progress) => callback(progress)),
     removeFetchProgressListener: () => ipcRenderer.removeAllListeners('market:fetchProgress'),
     onHistoryProgress: (callback) => ipcRenderer.on('market:historyProgress', (event, progress) => callback(progress)),
