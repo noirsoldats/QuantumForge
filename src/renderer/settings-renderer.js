@@ -723,7 +723,12 @@ async function fetchCharacterDivisionNames(characterId) {
 
     if (!result.success) {
       if (!result.hasScope) {
-        alert('Your character does not have the "esi-corporations.read_divisions.v1" scope. Please re-authenticate to fetch custom division names.');
+        const charInfo = await window.electronAPI.esi.checkMissingScopes(characterId);
+        window.showMissingScopeModal(
+          charInfo.characterName || `Character ${characterId}`,
+          ['esi-corporations.read_divisions.v1'],
+          async () => { await loadIndustryDivisions(); }
+        );
       } else {
         alert(`Failed to fetch division names: ${result.error || 'Unknown error'}`);
       }

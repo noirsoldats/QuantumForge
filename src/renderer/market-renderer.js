@@ -552,7 +552,21 @@ async function handleStructureSearch(prefix) {
     });
   } catch (err) {
     console.error('Structure search failed:', err);
-    resultsSelect.innerHTML = '<option value="">Search failed — check character scopes</option>';
+    const errMsg = err && err.message ? err.message : String(err);
+    const errMsgLower = errMsg.toLowerCase();
+    if (errMsg.includes('401') || errMsg.includes('403') || errMsgLower.includes('unauthorized') || errMsgLower.includes('forbidden')) {
+      const charInfo = await window.electronAPI.esi.checkMissingScopes(characterId);
+      if (charInfo.missing.length > 0) {
+        resultsSelect.innerHTML = '<option value="">Search failed — re-authenticate to grant missing scopes</option>';
+        window.showMissingScopeModal(
+          charInfo.characterName || `Character ${characterId}`,
+          charInfo.missing,
+          () => handleStructureSearch(prefix)
+        );
+        return;
+      }
+    }
+    resultsSelect.innerHTML = '<option value="">Search failed — check character access to this structure</option>';
   }
 }
 

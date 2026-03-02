@@ -26,6 +26,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getDefaultCharacter: () => ipcRenderer.invoke('esi:getDefaultCharacter'),
     clearDefaultCharacter: () => ipcRenderer.invoke('esi:clearDefaultCharacter'),
     onDefaultCharacterChanged: (callback) => ipcRenderer.on('default-character-changed', callback),
+    checkMissingScopes: (characterId) => ipcRenderer.invoke('esi:checkMissingScopes', characterId),
   },
 
   // SDE API

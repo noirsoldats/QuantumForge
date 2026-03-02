@@ -633,6 +633,15 @@ function setupIPCHandlers() {
     return result;
   });
 
+  ipcMain.handle('esi:checkMissingScopes', (event, characterId) => {
+    const { ESI_CONFIG } = require('./esi-auth');
+    const character = getCharacter(characterId);
+    if (!character) return { missing: [], characterName: '' };
+    const granted = character.scopes || [];
+    const missing = ESI_CONFIG.scopes.filter(s => !granted.includes(s));
+    return { missing, characterName: character.characterName };
+  });
+
   // Server Status IPC Handlers
   ipcMain.handle('status:fetch', async () => {
     return await fetchServerStatus();
