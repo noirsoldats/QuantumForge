@@ -276,9 +276,22 @@ function matchTransactionsToPlan(planId, options = {}) {
       throw new Error('Plan not found');
     }
 
-    // Get plan materials and products
-    const materials = db.prepare('SELECT * FROM plan_materials WHERE plan_id = ?').all(planId);
-    const products = db.prepare('SELECT * FROM plan_products WHERE plan_id = ?').all(planId);
+    // Get plan materials and products from plan_material_nodes
+    const materials = db.prepare(`
+      SELECT type_id, SUM(quantity_needed) as quantity,
+             MAX(price_each) as base_price
+      FROM plan_material_nodes
+      WHERE plan_id = ? AND node_type = 'material'
+      GROUP BY type_id
+    `).all(planId);
+
+    const products = db.prepare(`
+      SELECT type_id, SUM(quantity_needed) as quantity,
+             MAX(price_each) as base_price
+      FROM plan_material_nodes
+      WHERE plan_id = ? AND node_type = 'product' AND depth = 0
+      GROUP BY type_id
+    `).all(planId);
 
     if (materials.length === 0 && products.length === 0) {
       return [];

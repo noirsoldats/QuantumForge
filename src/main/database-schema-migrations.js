@@ -567,6 +567,241 @@ const migrations = [
     down: (db) => {
       console.log('[Migration 007] Rollback not implemented');
     }
+  },
+  {
+    id: '008_material_tree_and_ledger',
+    description: 'Create plan_material_nodes and plan_material_ledger tables, migrate acquisitions, drop old tables',
+    up: (db) => {
+      console.log('[Migration 008] Creating material tree and ledger tables...');
+
+      db.exec('BEGIN TRANSACTION');
+
+      try {
+        // Step 1: Create plan_material_nodes table
+        db.exec(`
+          CREATE TABLE IF NOT EXISTS plan_material_nodes (
+            node_id                    TEXT    PRIMARY KEY,
+            plan_id                    TEXT    NOT NULL,
+            plan_blueprint_id          TEXT    NOT NULL,
+            source_plan_blueprint_id   TEXT,
+            parent_node_id             TEXT,
+            type_id                    INTEGER NOT NULL,
+            node_type                  TEXT    NOT NULL CHECK(node_type IN ('product','material','intermediate')),
+            depth                      INTEGER NOT NULL DEFAULT 0,
+            quantity_needed            REAL    NOT NULL,
+            quantity_per_run           REAL,
+            runs_needed                INTEGER,
+            me_level                   INTEGER,
+            is_reaction                INTEGER NOT NULL DEFAULT 0,
+            build_plan                 TEXT    NOT NULL DEFAULT 'raw_materials'
+                                         CHECK(build_plan IN ('raw_materials','components','buy')),
+            price_each                 REAL,
+            price_frozen_at            INTEGER,
+            created_at                 INTEGER NOT NULL,
+            updated_at                 INTEGER NOT NULL,
+            FOREIGN KEY (plan_id) REFERENCES manufacturing_plans(plan_id) ON DELETE CASCADE,
+            FOREIGN KEY (plan_blueprint_id) REFERENCES plan_blueprints(plan_blueprint_id) ON DELETE CASCADE
+          )
+        `);
+
+        db.exec(`
+          CREATE INDEX IF NOT EXISTS idx_pmn_plan          ON plan_material_nodes(plan_id);
+          CREATE INDEX IF NOT EXISTS idx_pmn_blueprint     ON plan_material_nodes(plan_blueprint_id);
+          CREATE INDEX IF NOT EXISTS idx_pmn_parent        ON plan_material_nodes(parent_node_id);
+          CREATE INDEX IF NOT EXISTS idx_pmn_type          ON plan_material_nodes(type_id);
+          CREATE INDEX IF NOT EXISTS idx_pmn_plan_type     ON plan_material_nodes(plan_id, type_id);
+          CREATE INDEX IF NOT EXISTS idx_pmn_plan_nodetype ON plan_material_nodes(plan_id, node_type);
+        `);
+
+        // Step 2: Create plan_material_ledger table
+        db.exec(`
+          CREATE TABLE IF NOT EXISTS plan_material_ledger (
+            ledger_id   TEXT    PRIMARY KEY,
+            plan_id     TEXT    NOT NULL,
+            type_id     INTEGER NOT NULL,
+            event_type  TEXT    NOT NULL CHECK(event_type IN ('acquired','deducted','adjusted')),
+            quantity    REAL    NOT NULL,
+            method      TEXT    NOT NULL CHECK(method IN ('manual','purchased','manufactured','allocated')),
+            unit_price  REAL,
+            note        TEXT,
+            source_ref  TEXT,
+            created_at  INTEGER NOT NULL,
+            FOREIGN KEY (plan_id) REFERENCES manufacturing_plans(plan_id) ON DELETE CASCADE
+          )
+        `);
+
+        db.exec(`
+          CREATE INDEX IF NOT EXISTS idx_pml_plan    ON plan_material_ledger(plan_id);
+          CREATE INDEX IF NOT EXISTS idx_pml_type    ON plan_material_ledger(plan_id, type_id);
+          CREATE INDEX IF NOT EXISTS idx_pml_created ON plan_material_ledger(created_at);
+        `);
+
+        // Step 3: Check if old tables exist before migrating
+        const manualAcqExists = db.prepare(`
+          SELECT name FROM sqlite_master WHERE type='table' AND name='plan_material_manual_acquisitions'
+        `).get();
+
+        if (manualAcqExists) {
+          // Step 3: Migrate acquisitions to ledger
+          const acquisitions = db.prepare(`
+            SELECT plan_id, type_id, quantity, acquisition_method, custom_price, note, created_at
+            FROM plan_material_manual_acquisitions
+          `).all();
+
+          const { randomUUID } = require('crypto');
+          const now = Date.now();
+
+          const insertLedger = db.prepare(`
+            INSERT INTO plan_material_ledger
+              (ledger_id, plan_id, type_id, event_type, quantity, method, unit_price, note, source_ref, created_at)
+            VALUES (?, ?, ?, 'acquired', ?, ?, ?, ?, NULL, ?)
+          `);
+
+          for (const acq of acquisitions) {
+            const method = acq.acquisition_method && ['manual','purchased','manufactured','allocated'].includes(acq.acquisition_method)
+              ? acq.acquisition_method
+              : 'manual';
+            insertLedger.run(
+              randomUUID(),
+              acq.plan_id,
+              acq.type_id,
+              acq.quantity,
+              method,
+              acq.custom_price,
+              acq.note,
+              acq.created_at || now
+            );
+          }
+
+          console.log(`[Migration 008] Migrated ${acquisitions.length} acquisition record(s) to ledger`);
+        }
+
+        // Step 4: Check if plan_materials table exists before migrating
+        const planMaterialsExists = db.prepare(`
+          SELECT name FROM sqlite_master WHERE type='table' AND name='plan_materials'
+        `).get();
+
+        if (planMaterialsExists) {
+          // Migrate plan_materials to plan_material_nodes
+          // Get top-level blueprints for each plan to use as plan_blueprint_id
+          const planBlueprints = db.prepare(`
+            SELECT plan_blueprint_id, plan_id FROM plan_blueprints WHERE is_intermediate = 0 OR is_intermediate IS NULL
+          `).all();
+
+          // Build plan -> first top-level blueprint map
+          const planToBlueprintMap = new Map();
+          for (const bp of planBlueprints) {
+            if (!planToBlueprintMap.has(bp.plan_id)) {
+              planToBlueprintMap.set(bp.plan_id, bp.plan_blueprint_id);
+            }
+          }
+
+          const materials = db.prepare('SELECT * FROM plan_materials').all();
+          const { randomUUID } = require('crypto');
+          const now = Date.now();
+
+          const insertNode = db.prepare(`
+            INSERT INTO plan_material_nodes
+              (node_id, plan_id, plan_blueprint_id, source_plan_blueprint_id, parent_node_id,
+               type_id, node_type, depth, quantity_needed, quantity_per_run, runs_needed, me_level,
+               is_reaction, build_plan, price_each, price_frozen_at, created_at, updated_at)
+            VALUES (?, ?, ?, NULL, NULL, ?, 'material', 1, ?, NULL, NULL, NULL, 0, 'raw_materials', ?, ?, ?, ?)
+          `);
+
+          let migratedMaterials = 0;
+          for (const mat of materials) {
+            const planBlueprintId = planToBlueprintMap.get(mat.plan_id);
+            if (!planBlueprintId) continue; // Skip if no blueprint found
+
+            insertNode.run(
+              randomUUID(),
+              mat.plan_id,
+              planBlueprintId,
+              mat.type_id,
+              mat.quantity,
+              mat.base_price,
+              mat.price_frozen_at,
+              now,
+              now
+            );
+            migratedMaterials++;
+          }
+          console.log(`[Migration 008] Migrated ${migratedMaterials} material row(s) to plan_material_nodes`);
+
+          // Check if plan_products table exists
+          const planProductsExists = db.prepare(`
+            SELECT name FROM sqlite_master WHERE type='table' AND name='plan_products'
+          `).get();
+
+          if (planProductsExists) {
+            // Migrate plan_products to plan_material_nodes
+            const products = db.prepare('SELECT * FROM plan_products').all();
+
+            const insertProductNode = db.prepare(`
+              INSERT INTO plan_material_nodes
+                (node_id, plan_id, plan_blueprint_id, source_plan_blueprint_id, parent_node_id,
+                 type_id, node_type, depth, quantity_needed, quantity_per_run, runs_needed, me_level,
+                 is_reaction, build_plan, price_each, price_frozen_at, created_at, updated_at)
+              VALUES (?, ?, ?, NULL, NULL, ?, ?, 0, ?, NULL, NULL, NULL, 0, 'raw_materials', ?, ?, ?, ?)
+            `);
+
+            let migratedProducts = 0;
+            for (const prod of products) {
+              const planBlueprintId = planToBlueprintMap.get(prod.plan_id);
+              if (!planBlueprintId) continue;
+
+              const nodeType = prod.is_intermediate ? 'intermediate' : 'product';
+              insertProductNode.run(
+                randomUUID(),
+                prod.plan_id,
+                planBlueprintId,
+                prod.type_id,
+                nodeType,
+                prod.quantity,
+                prod.base_price,
+                prod.price_frozen_at,
+                now,
+                now
+              );
+              migratedProducts++;
+            }
+            console.log(`[Migration 008] Migrated ${migratedProducts} product row(s) to plan_material_nodes`);
+
+            // Drop plan_products
+            db.exec('DROP TABLE plan_products');
+            console.log('[Migration 008] Dropped plan_products table');
+          }
+
+          // Drop plan_materials
+          db.exec('DROP TABLE plan_materials');
+          console.log('[Migration 008] Dropped plan_materials table');
+        }
+
+        // Drop old acquisition tables if they exist
+        if (manualAcqExists) {
+          db.exec('DROP TABLE plan_material_manual_acquisitions');
+          console.log('[Migration 008] Dropped plan_material_manual_acquisitions table');
+        }
+
+        const acqLogExists = db.prepare(`
+          SELECT name FROM sqlite_master WHERE type='table' AND name='plan_material_acquisition_log'
+        `).get();
+        if (acqLogExists) {
+          db.exec('DROP TABLE plan_material_acquisition_log');
+          console.log('[Migration 008] Dropped plan_material_acquisition_log table');
+        }
+
+        db.exec('COMMIT');
+        console.log('[Migration 008] Migration completed successfully');
+      } catch (error) {
+        db.exec('ROLLBACK');
+        console.error('[Migration 008] Migration failed:', error);
+        throw error;
+      }
+    },
+    down: (db) => {
+      console.log('[Migration 008] Rollback not implemented');
+    }
   }
   // Add future migrations here
 ];

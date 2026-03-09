@@ -1,6 +1,6 @@
 const { getCharacterDatabase } = require('./character-database');
 const { calculateBlueprintMaterials, getBlueprintProduct, getBlueprintForProduct, getOwnedBlueprintME } = require('./blueprint-calculator');
-const { calculateReactionMaterials, getReactionProduct, getReactionForProduct, getReactionMaterials } = require('./reaction-calculator');
+const { calculateReactionMaterials, getReactionProduct, getReactionForProduct, getReactionMaterials, calculateReactionMaterialQuantity } = require('./reaction-calculator');
 const { calculateRealisticPrice } = require('./market-pricing');
 const { getInputLocation, getOutputLocation } = require('./blueprint-pricing');
 const { getAssets } = require('./esi-assets');
@@ -1280,85 +1280,73 @@ async function markIntermediateBuiltRecursive(intermediateBlueprintId, isBuilt, 
  * Clear all 'manufactured' acquisition data for a plan
  * Preserves acquisitions from other sources (manual, purchased, etc.)
  * @param {string} planId - Plan ID
- * @returns {number} Number of materials cleared
+ * @returns {number} Number of ledger entries cleared
  */
 function clearManufacturedAcquisitions(planId) {
   const db = getCharacterDatabase();
 
-  // Get count for logging (check both old and new tables)
-  const oldCount = db.prepare(`
-    SELECT COUNT(*) as count
-    FROM plan_materials
-    WHERE plan_id = ? AND acquisition_method = 'manufactured'
+  const count = db.prepare(`
+    SELECT COUNT(*) as count FROM plan_material_ledger
+    WHERE plan_id = ? AND method = 'manufactured'
   `).get(planId).count;
 
-  const newCount = db.prepare(`
-    SELECT COUNT(*) as count
-    FROM plan_material_manual_acquisitions
-    WHERE plan_id = ? AND acquisition_method = 'manufactured'
-  `).get(planId).count;
-
-  if (oldCount === 0 && newCount === 0) {
-    console.log(`[Plans] No 'manufactured' acquisitions to clear for plan ${planId}`);
+  if (count === 0) {
+    console.log(`[Plans] No 'manufactured' ledger entries to clear for plan ${planId}`);
     return 0;
   }
 
-  console.log(`[Plans] Clearing 'manufactured' acquisitions for ${oldCount} material(s) in old table, ${newCount} in new table`);
+  console.log(`[Plans] Clearing ${count} 'manufactured' ledger entry(ies) for plan ${planId}`);
 
-  // Log to acquisition log BEFORE deleting
-  if (newCount > 0) {
-    const now = Date.now();
-    db.prepare(`
-      INSERT INTO plan_material_acquisition_log
-        (plan_id, type_id, timestamp, action, quantity_before, quantity_after, performed_by)
-      SELECT plan_id, type_id, ?, 'remove', quantity, 0, 'system'
-      FROM plan_material_manual_acquisitions
-      WHERE plan_id = ? AND acquisition_method = 'manufactured'
-    `).run(now, planId);
-  }
-
-  // Clear 'manufactured' acquisition data from old plan_materials columns
   db.prepare(`
-    UPDATE plan_materials
-    SET manually_acquired_quantity = 0,
-        manually_acquired = 0,
-        acquisition_method = NULL,
-        acquisition_note = NULL
-    WHERE plan_id = ? AND acquisition_method = 'manufactured'
+    DELETE FROM plan_material_ledger
+    WHERE plan_id = ? AND method = 'manufactured'
   `).run(planId);
 
-  // Delete 'manufactured' acquisitions from new table
-  db.prepare(`
-    DELETE FROM plan_material_manual_acquisitions
-    WHERE plan_id = ? AND acquisition_method = 'manufactured'
-  `).run(planId);
-
-  return oldCount + newCount;
+  return count;
 }
 
 /**
- * Recalculate manufactured material acquisitions from all built intermediates and reactions
- * This function accumulates materials from ALL intermediates and reactions with built_runs > 0
+ * Recalculate manufactured material acquisitions from all built intermediates and reactions.
+ *
+ * For each built intermediate/reaction, re-runs the exact same blueprint/reaction expansion
+ * that recalculatePlanMaterials uses, but substituting built_runs for the total planned runs.
+ * This gives the precise raw material quantities actually consumed by those built jobs.
+ *
+ * Results are accumulated across all built intermediates/reactions, then capped at each
+ * material's total plan quantity_needed, and written as 'manufactured' ledger entries.
+ *
  * @param {string} planId - Plan ID
- * @param {number} characterId - Character ID for skill/blueprint calculations
  */
-async function recalculateManufacturedMaterials(planId, characterId) {
+async function recalculateManufacturedMaterials(planId) {
   const db = getCharacterDatabase();
 
-  // Get all intermediate blueprints with built_runs > 0
-  const builtIntermediates = db.prepare(`
-    SELECT plan_blueprint_id, blueprint_type_id, runs, built_runs, me_level, facility_snapshot, use_intermediates
-    FROM plan_blueprints
-    WHERE plan_id = ? AND is_intermediate = 1 AND built_runs > 0
-    ORDER BY plan_blueprint_id
-  `).all(planId);
+  const plan = db.prepare('SELECT character_id FROM manufacturing_plans WHERE plan_id = ?').get(planId);
+  if (!plan) return;
 
-  // Get all built reactions with built_runs > 0
+  // Get built intermediates that are direct children of top-level blueprints only.
+  // Sub-intermediates (children of other intermediates) are expanded recursively inside
+  // expandIntermediate, so processing them here separately would double-count their materials.
+  const builtIntermediates = db.prepare(`
+    SELECT pb.plan_blueprint_id, pb.blueprint_type_id, pb.runs, pb.built_runs,
+           pb.me_level, pb.te_level, pb.facility_snapshot, pb.use_intermediates,
+           pb.parent_blueprint_id
+    FROM plan_blueprints pb
+    WHERE pb.plan_id = ? AND pb.is_intermediate = 1 AND pb.blueprint_type != 'reaction'
+      AND pb.built_runs > 0
+      AND pb.parent_blueprint_id IN (
+        SELECT plan_blueprint_id FROM plan_blueprints
+        WHERE plan_id = ? AND is_intermediate = 0
+      )
+    ORDER BY pb.plan_blueprint_id
+  `).all(planId, planId);
+
+  // Get all built reactions (built_runs > 0)
   const builtReactions = db.prepare(`
-    SELECT plan_blueprint_id, reaction_type_id, runs, built_runs, facility_snapshot
-    FROM plan_blueprints
-    WHERE plan_id = ? AND blueprint_type = 'reaction' AND built_runs > 0
-    ORDER BY plan_blueprint_id
+    SELECT pb.plan_blueprint_id, pb.reaction_type_id, pb.runs, pb.built_runs,
+           pb.facility_snapshot, pb.use_intermediates
+    FROM plan_blueprints pb
+    WHERE pb.plan_id = ? AND pb.blueprint_type = 'reaction' AND pb.built_runs > 0
+    ORDER BY pb.plan_blueprint_id
   `).all(planId);
 
   if (builtIntermediates.length === 0 && builtReactions.length === 0) {
@@ -1368,178 +1356,195 @@ async function recalculateManufacturedMaterials(planId, characterId) {
 
   console.log(`[Plans] Recalculating manufactured materials for ${builtIntermediates.length} built intermediate(s) and ${builtReactions.length} built reaction(s)`);
 
-  // Accumulator for all manufactured materials across ALL intermediates and reactions
-  const totalManufacturedMaterials = {};
+  // Get the plan's total quantity_needed per leaf material type for capping
+  const planMaterialNodes = db.prepare(`
+    SELECT type_id, SUM(quantity_needed) as total_quantity
+    FROM plan_material_nodes
+    WHERE plan_id = ? AND node_type = 'material'
+    GROUP BY type_id
+  `).all(planId);
+  const planMaterialTotals = new Map(planMaterialNodes.map(n => [n.type_id, n.total_quantity]));
 
-  // Calculate materials for each built intermediate
+  // Accumulate exact raw material quantities consumed by all built intermediates/reactions
+  const manufacturedMaterials = new Map(); // typeId -> total manufactured quantity
+
+  function accumulateMaterials(materials) {
+    for (const [typeId, qty] of Object.entries(materials)) {
+      const tid = parseInt(typeId);
+      manufacturedMaterials.set(tid, (manufacturedMaterials.get(tid) || 0) + qty);
+    }
+  }
+
+  // Process each built intermediate: expand exactly built_runs to get consumed materials
   for (const intermediate of builtIntermediates) {
-    const facilitySnapshot = intermediate.facility_snapshot ?
-      JSON.parse(intermediate.facility_snapshot) : null;
+    if (intermediate.built_runs <= 0) continue;
 
-    // Determine how to expand materials based on blueprint's use_intermediates setting
-    // This ensures that if an intermediate is configured to expand to raw materials,
-    // and it has sub-intermediates, those sub-materials are also marked as acquired
-    const useIntermediates = intermediate.use_intermediates || 'raw_materials';
-    const shouldExpandToRaw = (useIntermediates === 'raw_materials' || useIntermediates === 'build_buy');
+    let facility = null;
+    try {
+      facility = intermediate.facility_snapshot ? JSON.parse(intermediate.facility_snapshot) : null;
+    } catch (e) {
+      console.warn(`[Plans] Could not parse facility snapshot for intermediate ${intermediate.plan_blueprint_id}`);
+    }
 
-    // Calculate materials for the FULL built_runs quantity
-    // Important: Must calculate for full runs, not multiply single-run materials,
-    // because ME reductions and rounding happen per-run in Eve Online
-    const calculation = await calculateBlueprintMaterials(
-      intermediate.blueprint_type_id,
-      intermediate.built_runs, // Calculate for actual built runs
-      intermediate.me_level || 0,
-      characterId,
-      facilitySnapshot,
-      shouldExpandToRaw // Expand based on blueprint's configuration
-    );
+    const config = {
+      meLevel: intermediate.me_level ?? 0,
+      teLevel: intermediate.te_level ?? 0,
+      facilitySnapshot: facility,
+      useIntermediates: intermediate.use_intermediates ?? 'raw_materials'
+    };
 
-    console.log(`  - Intermediate ${intermediate.blueprint_type_id}: ${intermediate.built_runs}/${intermediate.runs} runs built (mode: ${useIntermediates}, expand: ${shouldExpandToRaw})`);
+    console.log(`  - Intermediate ${intermediate.blueprint_type_id}: expanding ${intermediate.built_runs} built run(s)`);
 
-    // Extract materials from the calculation result
-    const materials = calculation.materials || {};
+    try {
+      // Calculate the product quantity this blueprint yields per run, so we can
+      // pass the correct unitsNeeded to expandIntermediate (which converts back to runs).
+      // We pass built_runs * productsPerRun as unitsNeeded so the expansion uses
+      // exactly built_runs runs without rounding up.
+      const bpProduct = getBlueprintProduct(intermediate.blueprint_type_id);
+      const productsPerRun = bpProduct ? bpProduct.quantity : 1;
+      const unitsProduced = intermediate.built_runs * productsPerRun;
 
-    // Accumulate materials across all built intermediates
-    for (const [typeId, quantity] of Object.entries(materials)) {
-      const typeIdInt = parseInt(typeId);
+      const expansion = await expandIntermediate(
+        intermediate.blueprint_type_id,
+        unitsProduced,
+        config,
+        facility,
+        plan.character_id,
+        planId,
+        intermediate.plan_blueprint_id,  // own ID so sub-intermediate lookups use correct parent
+        1
+      );
 
-      if (isNaN(typeIdInt)) {
-        console.warn(`    WARNING: Invalid material typeId '${typeId}' in blueprint ${intermediate.blueprint_type_id} - skipping`);
-        continue;
-      }
-
-      totalManufacturedMaterials[typeIdInt] =
-        (totalManufacturedMaterials[typeIdInt] || 0) + quantity;
-
-      console.log(`    - Material ${typeIdInt}: ${quantity} total for ${intermediate.built_runs} runs`);
+      accumulateMaterials(expansion.materials);
+    } catch (err) {
+      console.error(`[Plans] Error expanding intermediate ${intermediate.blueprint_type_id}:`, err);
     }
   }
 
-  // Calculate materials for each built reaction
-  const { calculateReactionMaterials } = require('./reaction-calculator');
-
+  // Process each built reaction: expand exactly built_runs to get consumed materials
   for (const reaction of builtReactions) {
-    const facilitySnapshot = reaction.facility_snapshot ?
-      JSON.parse(reaction.facility_snapshot) : null;
+    if (reaction.built_runs <= 0) continue;
 
-    // Calculate materials for the FULL built_runs quantity
-    const calculation = await calculateReactionMaterials(
-      reaction.reaction_type_id,
-      reaction.built_runs, // Calculate for actual built runs
-      characterId,
-      facilitySnapshot
-    );
+    let facility = null;
+    try {
+      facility = reaction.facility_snapshot ? JSON.parse(reaction.facility_snapshot) : null;
+    } catch (e) {
+      console.warn(`[Plans] Could not parse facility snapshot for reaction ${reaction.plan_blueprint_id}`);
+    }
 
-    console.log(`  - Reaction ${reaction.reaction_type_id}: ${reaction.built_runs}/${reaction.runs} runs built`);
+    const config = {
+      facilitySnapshot: facility,
+      useIntermediates: reaction.use_intermediates ?? 'raw_materials'
+    };
 
-    // Extract materials from the calculation result
-    const materials = calculation.materials || {};
+    console.log(`  - Reaction ${reaction.reaction_type_id}: expanding ${reaction.built_runs} built run(s)`);
 
-    // Accumulate materials across all built reactions
-    for (const [typeId, quantity] of Object.entries(materials)) {
-      const typeIdInt = parseInt(typeId);
+    try {
+      const expansion = await expandReaction(
+        reaction.reaction_type_id,
+        reaction.built_runs,
+        config,
+        facility,
+        plan.character_id,
+        planId,
+        reaction.plan_blueprint_id,
+        0
+      );
 
-      if (isNaN(typeIdInt)) {
-        console.warn(`    WARNING: Invalid material typeId '${typeId}' in reaction ${reaction.reaction_type_id} - skipping`);
-        continue;
-      }
-
-      totalManufacturedMaterials[typeIdInt] =
-        (totalManufacturedMaterials[typeIdInt] || 0) + quantity;
-
-      console.log(`    - Material ${typeIdInt}: ${quantity} total for ${reaction.built_runs} runs`);
+      accumulateMaterials(expansion.materials);
+    } catch (err) {
+      console.error(`[Plans] Error expanding reaction ${reaction.reaction_type_id}:`, err);
     }
   }
 
-  console.log(`[Plans] Updating ${Object.keys(totalManufacturedMaterials).length} material(s) as manufactured`);
+  // Expand any reaction products that were passed through by expandIntermediate.
+  // expandIntermediate leaves reaction product type IDs in its returned materials (as quantities
+  // of the reaction product, not the reaction inputs). We need to replace each such entry
+  // with the reaction's actual raw input materials.
+  //
+  // Get the plan's reaction settings to know which facility to use.
+  const planReactions = db.prepare(`
+    SELECT reaction_type_id, facility_snapshot, use_intermediates
+    FROM plan_blueprints
+    WHERE plan_id = ? AND blueprint_type = 'reaction'
+  `).all(planId);
+  const reactionFacilityMap = new Map();
+  for (const r of planReactions) {
+    let facility = null;
+    try { facility = r.facility_snapshot ? JSON.parse(r.facility_snapshot) : null; } catch (e) { /* ignore */ }
+    reactionFacilityMap.set(r.reaction_type_id, { facility, useIntermediates: r.use_intermediates });
+  }
 
-  // Update plan_materials with accumulated manufactured quantities
-  for (const [typeId, manufacturedQty] of Object.entries(totalManufacturedMaterials)) {
-    // Convert typeId to integer (Object.entries returns string keys)
-    const typeIdInt = parseInt(typeId);
+  // Iteratively expand reaction products until none remain (handles nested reactions)
+  let expansionPasses = 0;
+  const maxPasses = 10;
+  let foundReaction = true;
 
-    if (isNaN(typeIdInt)) {
-      console.warn(`  - Invalid typeId ${typeId} - skipping`);
-      continue;
+  while (foundReaction && expansionPasses < maxPasses) {
+    expansionPasses++;
+    foundReaction = false;
+
+    // Snapshot current keys to iterate (we'll modify the map during iteration)
+    const currentEntries = [...manufacturedMaterials.entries()];
+
+    for (const [typeId, qty] of currentEntries) {
+      if (qty <= 0) continue;
+
+      const reactionTypeId = await getReactionForProduct(typeId);
+      if (!reactionTypeId) continue;
+
+      foundReaction = true;
+
+      // Find this reaction's configured facility from plan_blueprints
+      const reactionEntry = reactionFacilityMap.get(reactionTypeId);
+      const facility = reactionEntry?.facility ?? null;
+      const useIntermediates = reactionEntry?.useIntermediates ?? 'raw_materials';
+
+      // Determine runs needed: qty units ÷ product quantity per run
+      const runsNeeded = await calculateReactionRuns(qty, reactionTypeId);
+
+      console.log(`  - Expanding reaction product ${typeId} (reactionTypeId=${reactionTypeId}): ${qty} units = ${runsNeeded} run(s)`);
+
+      try {
+        const expansion = await expandReaction(
+          reactionTypeId,
+          runsNeeded,
+          { facilitySnapshot: facility, useIntermediates },
+          facility,
+          plan.character_id,
+          planId,
+          null,
+          0
+        );
+
+        // Replace the reaction product entry with the reaction's raw inputs
+        manufacturedMaterials.delete(typeId);
+        accumulateMaterials(expansion.materials);
+      } catch (err) {
+        console.error(`[Plans] Error expanding reaction product ${typeId}:`, err);
+        // Leave as-is — it will be filtered out below if not in planMaterialTotals
+      }
     }
+  }
 
-    // Get current material record
-    const existing = db.prepare(`
-      SELECT manually_acquired_quantity, acquisition_method
-      FROM plan_materials
-      WHERE plan_id = ? AND type_id = ?
-    `).get(planId, typeIdInt);
+  // Cap each material at the plan's total quantity_needed and write ledger entries
+  const now = Date.now();
+  const insertLedger = db.prepare(`
+    INSERT INTO plan_material_ledger
+      (ledger_id, plan_id, type_id, event_type, quantity, method, unit_price, note, source_ref, created_at)
+    VALUES (?, ?, ?, 'acquired', ?, 'manufactured', NULL, 'Auto-acquired from built components', NULL, ?)
+  `);
 
-    if (!existing) {
-      // Material doesn't exist - shouldn't happen after recalculatePlanMaterials
-      console.warn(`  - Material ${typeIdInt} not found in plan_materials - skipping`);
-      continue;
-    }
+  console.log(`[Plans] Writing manufactured ledger entries for ${manufacturedMaterials.size} material type(s)`);
 
-    // Get quantity from non-manufactured sources
-    // (should be 0 since we just cleared manufactured, but handle edge cases)
-    const nonManufacturedQty = existing.acquisition_method === 'manufactured' ?
-      0 : (existing.manually_acquired_quantity || 0);
-
-    const totalAcquired = nonManufacturedQty + manufacturedQty;
-
-    // Determine final acquisition method
-    let finalMethod;
-    let finalNote;
-
-    if (nonManufacturedQty > 0 && manufacturedQty > 0) {
-      // Mixed sources
-      finalMethod = 'mixed';
-      finalNote = `Manufactured: ${manufacturedQty}, ${existing.acquisition_method}: ${nonManufacturedQty}`;
-    } else if (manufacturedQty > 0) {
-      // Only manufactured
-      finalMethod = 'manufactured';
-      finalNote = 'Auto-acquired from built components (intermediates/reactions)';
-    } else {
-      // Only other source (preserve existing)
-      finalMethod = existing.acquisition_method;
-      finalNote = existing.acquisition_note;
-    }
-
-    // Update material with manufactured acquisition (old table for backward compat)
-    db.prepare(`
-      UPDATE plan_materials
-      SET manually_acquired = ?,
-          manually_acquired_quantity = ?,
-          acquisition_method = ?,
-          acquisition_note = ?
-      WHERE plan_id = ? AND type_id = ?
-    `).run(
-      totalAcquired > 0 ? 1 : 0,
-      totalAcquired,
-      finalMethod,
-      finalNote,
-      planId,
-      typeIdInt
-    );
-
-    // Insert/update in new plan_material_manual_acquisitions table
-    const now = Date.now();
-    db.prepare(`
-      INSERT INTO plan_material_manual_acquisitions
-        (plan_id, type_id, quantity, acquisition_method, custom_price, note, created_at, updated_at)
-      VALUES (?, ?, ?, ?, NULL, ?, ?, ?)
-      ON CONFLICT(plan_id, type_id) DO UPDATE SET
-        quantity = excluded.quantity,
-        acquisition_method = excluded.acquisition_method,
-        note = excluded.note,
-        updated_at = excluded.updated_at
-    `).run(planId, typeIdInt, manufacturedQty, 'manufactured', finalNote, now, now);
-
-    // Log the acquisition
-    db.prepare(`
-      INSERT INTO plan_material_acquisition_log
-        (plan_id, type_id, timestamp, action, quantity_before, quantity_after,
-         acquisition_method, custom_price, note, performed_by)
-      VALUES (?, ?, ?, 'set', 0, ?, 'manufactured', NULL, ?, 'system')
-    `).run(planId, typeIdInt, now, manufacturedQty, finalNote);
-
-    console.log(`  - Material ${typeIdInt}: manufactured=${manufacturedQty}, other=${nonManufacturedQty}, total=${totalAcquired}`);
+  for (const [typeId, qty] of manufacturedMaterials) {
+    if (qty <= 0) continue;
+    const planTotal = planMaterialTotals.get(typeId);
+    // Only record if this material is actually in the plan's leaf nodes
+    if (!planTotal) continue;
+    const cappedQty = Math.min(qty, planTotal);
+    insertLedger.run(randomUUID(), planId, typeId, cappedQty, now);
+    console.log(`    - Material ${typeId}: ${cappedQty} manufactured (raw calc: ${qty}, plan total: ${planTotal})`);
   }
 }
 
@@ -1577,17 +1582,11 @@ async function markIntermediateBuilt(intermediateBlueprintId, builtRuns) {
       WHERE plan_blueprint_id = ?
     `).run(builtRuns, builtRuns, intermediateBlueprintId);
 
-    // CRITICAL CHANGE: Clear ALL 'manufactured' acquisitions for the entire plan
-    // This ensures we recalculate from scratch based on current blueprint configs
+    // Refresh manufactured ledger entries from all currently-built intermediates/reactions.
+    // Plan material nodes do not change when built status changes, so a full
+    // recalculatePlanMaterials is not needed — only the ledger needs updating.
     clearManufacturedAcquisitions(intermediate.plan_id);
-
-    // Recalculate ALL manufactured materials from ALL built intermediates
-    // This handles multiple intermediates producing the same material correctly
-    await recalculateManufacturedMaterials(intermediate.plan_id, intermediate.character_id);
-
-    // Recalculate plan materials to ensure overall consistency
-    // This will preserve non-'manufactured' acquisitions (manual, purchased, etc.)
-    await recalculatePlanMaterials(intermediate.plan_id, false);
+    await recalculateManufacturedMaterials(intermediate.plan_id);
 
     // Update plan's updated_at timestamp
     const now = Date.now();
@@ -1602,167 +1601,6 @@ async function markIntermediateBuilt(intermediateBlueprintId, builtRuns) {
     };
   } catch (error) {
     console.error('[Plans] Error marking intermediate built:', error);
-    throw error;
-  }
-}
-
-/**
- * Mark all materials needed for a built intermediate as acquired (manufactured)
- * @param {string} intermediateBlueprintId - Intermediate blueprint ID
- * @param {string} planId - Plan ID
- * @param {number} characterId - Character ID
- */
-async function markIntermediateMaterialsAsAcquired(intermediateBlueprintId, planId, characterId) {
-  try {
-    const db = getCharacterDatabase();
-
-    // Get the intermediate blueprint details
-    const intermediate = db.prepare('SELECT * FROM plan_blueprints WHERE plan_blueprint_id = ?').get(intermediateBlueprintId);
-    if (!intermediate || intermediate.is_intermediate !== 1) {
-      throw new Error('Intermediate blueprint not found');
-    }
-
-    // Calculate raw materials for this built intermediate
-    const facilitySnapshot = intermediate.facility_snapshot ? JSON.parse(intermediate.facility_snapshot) : null;
-
-    const calculation = await calculateBlueprintMaterials(
-      intermediate.blueprint_type_id,
-      intermediate.runs,
-      intermediate.me_level,
-      characterId,
-      facilitySnapshot,
-      false  // Don't break down further - we want raw materials
-    );
-
-    console.log(`[Plans] Marking ${Object.keys(calculation.materials).length} materials as acquired (manufactured) for intermediate ${intermediate.blueprint_type_id}`);
-
-    // Mark each material as acquired with method 'manufactured'
-    for (const [typeId, quantity] of Object.entries(calculation.materials)) {
-      const typeIdInt = parseInt(typeId);
-
-      // Check if this material already exists in plan_materials
-      const existingMaterial = db.prepare(`
-        SELECT manually_acquired_quantity FROM plan_materials
-        WHERE plan_id = ? AND type_id = ?
-      `).get(planId, typeIdInt);
-
-      if (existingMaterial) {
-        // Material exists - add to existing acquisition quantity
-        const currentAcquired = existingMaterial.manually_acquired_quantity || 0;
-        const newTotal = currentAcquired + quantity;
-
-        db.prepare(`
-          UPDATE plan_materials
-          SET manually_acquired = 1,
-              manually_acquired_quantity = ?,
-              acquisition_method = 'manufactured'
-          WHERE plan_id = ? AND type_id = ?
-        `).run(newTotal, planId, typeIdInt);
-
-        console.log(`  - Material ${typeId}: added ${quantity} to existing ${currentAcquired} (total: ${newTotal})`);
-      } else {
-        // Material doesn't exist yet - this shouldn't normally happen since
-        // recalculatePlanMaterials should have already created the entry,
-        // but we'll handle it gracefully
-        console.warn(`  - Material ${typeId} not found in plan_materials - this is unexpected`);
-      }
-    }
-
-    // Recursively mark materials for child intermediates
-    const childIntermediates = db.prepare(`
-      SELECT plan_blueprint_id FROM plan_blueprints
-      WHERE parent_blueprint_id = ? AND is_intermediate = 1
-    `).all(intermediateBlueprintId);
-
-    for (const child of childIntermediates) {
-      await markIntermediateMaterialsAsAcquired(child.plan_blueprint_id, planId, characterId);
-    }
-
-  } catch (error) {
-    console.error('Error marking intermediate materials as acquired:', error);
-    throw error;
-  }
-}
-
-/**
- * Unmark materials that were acquired through a built intermediate
- * @param {string} intermediateBlueprintId - Intermediate blueprint ID
- * @param {string} planId - Plan ID
- */
-async function unmarkIntermediateMaterialsAsAcquired(intermediateBlueprintId, planId) {
-  try {
-    const db = getCharacterDatabase();
-
-    // Get the intermediate blueprint details
-    const intermediate = db.prepare('SELECT * FROM plan_blueprints WHERE plan_blueprint_id = ?').get(intermediateBlueprintId);
-    if (!intermediate || intermediate.is_intermediate !== 1) {
-      throw new Error('Intermediate blueprint not found');
-    }
-
-    // Calculate raw materials for this intermediate (same as when marking)
-    const facilitySnapshot = intermediate.facility_snapshot ? JSON.parse(intermediate.facility_snapshot) : null;
-
-    // We need character_id but it's not in the intermediate record, get from plan
-    const plan = db.prepare('SELECT character_id FROM manufacturing_plans WHERE plan_id = ?').get(planId);
-
-    const calculation = await calculateBlueprintMaterials(
-      intermediate.blueprint_type_id,
-      intermediate.runs,
-      intermediate.me_level,
-      plan.character_id,
-      facilitySnapshot,
-      false
-    );
-
-    console.log(`[Plans] Unmarking ${Object.keys(calculation.materials).length} materials from intermediate ${intermediate.blueprint_type_id}`);
-
-    // Unmark each material
-    for (const [typeId, quantity] of Object.entries(calculation.materials)) {
-      const typeIdInt = parseInt(typeId);
-
-      const existingMaterial = db.prepare(`
-        SELECT manually_acquired_quantity FROM plan_materials
-        WHERE plan_id = ? AND type_id = ?
-      `).get(planId, typeIdInt);
-
-      if (existingMaterial && existingMaterial.manually_acquired_quantity > 0) {
-        const currentAcquired = existingMaterial.manually_acquired_quantity;
-        const newTotal = Math.max(0, currentAcquired - quantity);
-
-        if (newTotal === 0) {
-          // No more manual acquisitions - clear the flags
-          db.prepare(`
-            UPDATE plan_materials
-            SET manually_acquired = 0,
-                manually_acquired_quantity = 0,
-                acquisition_method = NULL
-            WHERE plan_id = ? AND type_id = ?
-          `).run(planId, typeIdInt);
-        } else {
-          // Still have some manual acquisitions remaining
-          db.prepare(`
-            UPDATE plan_materials
-            SET manually_acquired_quantity = ?
-            WHERE plan_id = ? AND type_id = ?
-          `).run(newTotal, planId, typeIdInt);
-        }
-
-        console.log(`  - Material ${typeId}: removed ${quantity} from ${currentAcquired} (remaining: ${newTotal})`);
-      }
-    }
-
-    // Recursively unmark materials for child intermediates
-    const childIntermediates = db.prepare(`
-      SELECT plan_blueprint_id FROM plan_blueprints
-      WHERE parent_blueprint_id = ? AND is_intermediate = 1
-    `).all(intermediateBlueprintId);
-
-    for (const child of childIntermediates) {
-      await unmarkIntermediateMaterialsAsAcquired(child.plan_blueprint_id, planId);
-    }
-
-  } catch (error) {
-    console.error('Error unmarking intermediate materials:', error);
     throw error;
   }
 }
@@ -1929,23 +1767,21 @@ async function expandIntermediate(
   // If this intermediate should expand to raw materials, manually expand sub-intermediates
   if (shouldExpandSubIntermediates) {
     // Classify materials using helper function
-    const { intermediates, rawMaterials } = await classifyMaterials(calculation.materials);
+    const { intermediates, reactions, rawMaterials } = await classifyMaterials(calculation.materials);
+
+    // Pass reaction products through as-is — they remain in aggregatedMaterials so that
+    // Phase 2.5 (in recalculatePlanMaterials) or the caller (in recalculateManufacturedMaterials)
+    // can expand them. Nothing to delete: they're already in aggregatedMaterials from the spread above.
 
     // Process each sub-intermediate
     for (const intermediate of intermediates) {
       const subBlueprintId = intermediate.blueprintTypeId;
       const materialTypeId = intermediate.typeId;
       const materialQuantity = intermediate.quantity;
-      const subProduct = intermediate.product;
 
-      // Calculate runs needed using helper function (no production lines for intermediates)
-      const subRunsNeeded = calculateIntermediateRuns(materialQuantity, subBlueprintId, 1);
-      const unitsPerRun = subProduct ? subProduct.quantity : 1;
-
-      console.log(`[Plans] Sub-intermediate ${subBlueprintId}: need ${materialQuantity} units @ ${unitsPerRun} per run = ${subRunsNeeded} runs (depth ${depth + 1})`);
-
-      // Look up config in plan_blueprints for this sub-intermediate
-      // Filter by parent_blueprint_id to get the correct child intermediate instance
+      // Look up config in plan_blueprints for this sub-intermediate.
+      // parentBlueprintId here is the plan_blueprint_id of the current intermediate
+      // (the one whose materials we just calculated), not its parent.
       const db = getCharacterDatabase();
       const subConfig = db.prepare(`
         SELECT plan_blueprint_id, me_level, te_level, facility_snapshot, use_intermediates, runs
@@ -1954,20 +1790,21 @@ async function expandIntermediate(
         LIMIT 1
       `).get(planId, subBlueprintId, parentBlueprintId);
 
-      // Recursively expand with RUNS, not units
+      // Recursively expand — pass materialQuantity (units needed) directly;
+      // expandIntermediate converts to runs internally via calculateIntermediateRuns.
       const subExpansion = await expandIntermediate(
         subBlueprintId,
-        subRunsNeeded,  // Pass calculated runs, not raw material quantity
+        materialQuantity,
         subConfig ? {
           meLevel: subConfig.me_level,
           teLevel: subConfig.te_level,
           facilitySnapshot: JSON.parse(subConfig.facility_snapshot),
           useIntermediates: subConfig.use_intermediates
         } : null,
-        facility,  // Pass our facility as fallback
+        facility,
         characterId,
-        planId,  // Pass planId for nested lookups
-        subConfig ? subConfig.plan_blueprint_id : null,  // Parent blueprint ID for nested child lookups
+        planId,
+        subConfig ? subConfig.plan_blueprint_id : null,
         depth + 1
       );
 
@@ -2161,18 +1998,21 @@ async function recalculatePlanMaterials(planId, refreshPrices = false) {
     const blueprints = getPlanBlueprints(planId);
 
     if (blueprints.length === 0) {
-      // No blueprints, clear materials and products
-      db.prepare('DELETE FROM plan_materials WHERE plan_id = ?').run(planId);
-      db.prepare('DELETE FROM plan_products WHERE plan_id = ?').run(planId);
+      // No blueprints, clear material nodes
+      db.prepare('DELETE FROM plan_material_nodes WHERE plan_id = ?').run(planId);
       console.log(`Cleared materials for empty plan: ${planId}`);
       return true;
     }
 
-    // Aggregate materials and products across all blueprints
+    // Aggregate materials and products across all blueprints (used for pricing + reaction detection)
     const aggregatedMaterials = {};
     const aggregatedProducts = {};
     const aggregatedIntermediateProducts = []; // Array of {typeId, quantity, depth}
     const blueprintCalculations = new Map(); // Store calculations to identify final products later
+
+    // Node collection: built in parallel to aggregation, with parent linkage for tree view.
+    // Each entry is a node descriptor object with full tree linkage (nodeId, parentNodeId, etc.).
+    const collectedNodes = []; // Array of node descriptor objects
 
     // NOTE: Built intermediate exclusion logic has been removed.
     // Instead, materials for built intermediates are marked as acquired
@@ -2185,6 +2025,293 @@ async function recalculatePlanMaterials(planId, refreshPrices = false) {
     // Intermediate blueprints are auto-created entries that should not be processed separately
     // Their products are already captured via intermediateComponents from parent blueprints
     const topLevelBlueprints = blueprints.filter(bp => !bp.isIntermediate);
+
+    // -------------------------------------------------------------------------
+    // LOCAL TREE-BUILDING HELPERS
+    // These walk the intermediate/reaction hierarchy and push nodes into
+    // collectedNodes with proper parentNodeId linkage.
+    // -------------------------------------------------------------------------
+
+    /**
+     * Recursively walk an intermediate blueprint and push tree nodes.
+     * @param {number} intermediateBlueprintTypeId
+     * @param {number} unitsNeeded
+     * @param {object|null} intermediateConfig  - { meLevel, facilitySnapshot, useIntermediates }
+     * @param {object|null} parentFacility       - fallback facility
+     * @param {string}      rootBlueprintId      - planBlueprintId of the top-level blueprint
+     * @param {string|null} sourcePlanBlueprintId- plan_blueprint_id of the row in plan_blueprints that owns this node
+     * @param {string|null} parentNodeId         - nodeId of parent node
+     * @param {number}      depth
+     * @returns {Promise<string>} nodeId of the intermediate node that was created
+     */
+    async function walkIntermediateNodes(
+      intermediateBlueprintTypeId,
+      unitsNeeded,
+      intermediateConfig,
+      parentFacility,
+      rootBlueprintId,
+      sourcePlanBlueprintId,
+      parentNodeId,
+      depth
+    ) {
+      if (isMaxDepthExceeded(depth, 10, `walkIntermediateNodes for ${intermediateBlueprintTypeId}`)) {
+        return null;
+      }
+
+      const meLevel = intermediateConfig?.meLevel ?? 0;
+      const facility = intermediateConfig?.facilitySnapshot ?? parentFacility;
+      const useIntermediates = intermediateConfig?.useIntermediates ?? 'raw_materials';
+
+      const runsNeeded = calculateIntermediateRuns(unitsNeeded, intermediateBlueprintTypeId);
+      const bpProduct = getBlueprintProduct(intermediateBlueprintTypeId);
+      const productsPerRun = bpProduct?.quantity ?? 1;
+
+      const intermediateNodeId = randomUUID();
+      collectedNodes.push({
+        nodeId: intermediateNodeId,
+        planBlueprintId: rootBlueprintId,
+        sourcePlanBlueprintId: sourcePlanBlueprintId,
+        parentNodeId: parentNodeId,
+        typeId: bpProduct?.typeID ?? intermediateBlueprintTypeId,
+        nodeType: 'intermediate',
+        depth: depth,
+        quantityNeeded: runsNeeded * productsPerRun,
+        quantityPerRun: productsPerRun,
+        runsNeeded: runsNeeded,
+        meLevel: meLevel,
+        isReaction: 0,
+        buildPlan: useIntermediates === 'buy' ? 'buy'
+          : useIntermediates === 'components' ? 'components'
+          : 'raw_materials',
+        price: null,
+        priceFrozenAt: null
+      });
+
+      // If buy or components mode: don't expand children
+      if (useIntermediates === 'buy' || useIntermediates === 'components') {
+        return intermediateNodeId;
+      }
+
+      // Expand this intermediate to get its direct materials
+      const calculation = await calculateBlueprintMaterials(
+        intermediateBlueprintTypeId,
+        runsNeeded,
+        meLevel,
+        plan.character_id,
+        facility,
+        false
+      );
+
+      const { intermediates, reactions, rawMaterials } = await classifyMaterials(calculation.materials);
+
+      // Recurse into sub-intermediates
+      for (const sub of intermediates) {
+        const subConfig = db.prepare(`
+          SELECT plan_blueprint_id, me_level, facility_snapshot, use_intermediates
+          FROM plan_blueprints
+          WHERE plan_id = ? AND blueprint_type_id = ? AND parent_blueprint_id = ? AND is_intermediate = 1
+          LIMIT 1
+        `).get(planId, sub.blueprintTypeId, sourcePlanBlueprintId);
+
+        await walkIntermediateNodes(
+          sub.blueprintTypeId,
+          sub.quantity,
+          subConfig ? {
+            meLevel: subConfig.me_level,
+            facilitySnapshot: JSON.parse(subConfig.facility_snapshot),
+            useIntermediates: subConfig.use_intermediates
+          } : null,
+          facility,
+          rootBlueprintId,
+          subConfig?.plan_blueprint_id ?? null,
+          intermediateNodeId,
+          depth + 1
+        );
+      }
+
+      // Reaction children: expand reactions if plan has reactions enabled
+      if (planReactionsEnabled) {
+        for (const reaction of reactions) {
+          const reactionRunsNeeded = await calculateReactionRuns(reaction.quantity, reaction.reactionTypeId);
+          const reactionProduct = await getReactionProduct(reaction.reactionTypeId);
+          const reactionProductsPerRun = reactionProduct?.quantity ?? 1;
+          const reactionNodeId = randomUUID();
+          collectedNodes.push({
+            nodeId: reactionNodeId,
+            planBlueprintId: rootBlueprintId,
+            sourcePlanBlueprintId: null, // Phase 2.5 fills this in
+            parentNodeId: intermediateNodeId,
+            typeId: reaction.typeId,
+            nodeType: 'intermediate',
+            depth: depth + 1,
+            quantityNeeded: reactionRunsNeeded * reactionProductsPerRun,
+            quantityPerRun: reactionProductsPerRun,
+            runsNeeded: reactionRunsNeeded,
+            meLevel: null,
+            isReaction: 1,
+            buildPlan: 'raw_materials',
+            price: null,
+            priceFrozenAt: null,
+            _reactionTypeId: reaction.reactionTypeId  // keep for Phase 2.5 sourcePlanBlueprintId wiring
+          });
+          await walkReactionNodes(
+            reaction.reactionTypeId,
+            reactionRunsNeeded,
+            facility,
+            rootBlueprintId,
+            null, // sourcePlanBlueprintId filled in later by Phase 2.5
+            reactionNodeId,
+            depth + 1
+          );
+        }
+      } else {
+        // Reactions disabled: add reaction products as raw material leaf nodes
+        for (const reaction of reactions) {
+          collectedNodes.push({
+            nodeId: randomUUID(),
+            planBlueprintId: rootBlueprintId,
+            sourcePlanBlueprintId: null,
+            parentNodeId: intermediateNodeId,
+            typeId: reaction.typeId,
+            nodeType: 'material',
+            depth: depth + 1,
+            quantityNeeded: reaction.quantity,
+            quantityPerRun: null,
+            runsNeeded: null,
+            meLevel: null,
+            isReaction: 0,
+            buildPlan: 'raw_materials',
+            price: null,
+            priceFrozenAt: null
+          });
+        }
+      }
+
+      // Raw material leaf nodes
+      for (const raw of rawMaterials) {
+        collectedNodes.push({
+          nodeId: randomUUID(),
+          planBlueprintId: rootBlueprintId,
+          sourcePlanBlueprintId: null,
+          parentNodeId: intermediateNodeId,
+          typeId: raw.typeId,
+          nodeType: 'material',
+          depth: depth + 1,
+          quantityNeeded: raw.quantity,
+          quantityPerRun: null,
+          runsNeeded: null,
+          meLevel: null,
+          isReaction: 0,
+          buildPlan: 'raw_materials',
+          price: null,
+          priceFrozenAt: null
+        });
+      }
+
+      return intermediateNodeId;
+    }
+
+    /**
+     * Recursively walk a reaction and push tree nodes for its inputs.
+     * @param {number} reactionTypeId
+     * @param {number} runsNeeded
+     * @param {object|null} facility
+     * @param {string}      rootBlueprintId
+     * @param {string|null} reactionPlanBlueprintId - plan_blueprint_id of the reaction row
+     * @param {string|null} reactionParentNodeId    - nodeId of the reaction's intermediate node
+     * @param {number}      depth
+     */
+    async function walkReactionNodes(
+      reactionTypeId,
+      runsNeeded,
+      facility,
+      rootBlueprintId,
+      reactionPlanBlueprintId,
+      reactionParentNodeId,
+      depth
+    ) {
+      if (isMaxDepthExceeded(depth, 10, `walkReactionNodes for ${reactionTypeId}`)) {
+        return;
+      }
+
+      // Use raw SDE inputs (not calculateReactionMaterials which auto-expands sub-reactions)
+      // so we can build the full intermediate hierarchy in the tree.
+      const reactionProduct = await getReactionProduct(reactionTypeId);
+      const directInputs = await getReactionMaterials(reactionTypeId);
+
+      for (const input of directInputs) {
+        const adjustedQty = calculateReactionMaterialQuantity(
+          input.quantity,
+          runsNeeded,
+          facility,
+          reactionProduct?.typeID ?? null
+        );
+
+        const subReactionTypeId = await getReactionForProduct(input.typeID);
+
+        if (subReactionTypeId) {
+          // This input is itself a reaction product — create intermediate node and recurse
+          const subRunsNeeded = await calculateReactionRuns(adjustedQty, subReactionTypeId);
+          const subReactionProductInfo = await getReactionProduct(subReactionTypeId);
+          const subProductsPerRun = subReactionProductInfo?.quantity ?? 1;
+          const subNodeId = randomUUID();
+          collectedNodes.push({
+            nodeId: subNodeId,
+            planBlueprintId: rootBlueprintId,
+            sourcePlanBlueprintId: null,
+            parentNodeId: reactionParentNodeId,
+            typeId: input.typeID,
+            nodeType: 'intermediate',
+            depth: depth + 1,
+            quantityNeeded: subRunsNeeded * subProductsPerRun,
+            quantityPerRun: subProductsPerRun,
+            runsNeeded: subRunsNeeded,
+            meLevel: null,
+            isReaction: 1,
+            buildPlan: 'raw_materials',
+            price: null,
+            priceFrozenAt: null
+          });
+          await walkReactionNodes(
+            subReactionTypeId,
+            subRunsNeeded,
+            facility,
+            rootBlueprintId,
+            null,
+            subNodeId,
+            depth + 1
+          );
+        } else {
+          // Raw material leaf
+          collectedNodes.push({
+            nodeId: randomUUID(),
+            planBlueprintId: rootBlueprintId,
+            sourcePlanBlueprintId: reactionPlanBlueprintId,
+            parentNodeId: reactionParentNodeId,
+            typeId: input.typeID,
+            nodeType: 'material',
+            depth: depth + 1,
+            quantityNeeded: adjustedQty,
+            quantityPerRun: null,
+            runsNeeded: null,
+            meLevel: null,
+            isReaction: 0,
+            buildPlan: 'raw_materials',
+            price: null,
+            priceFrozenAt: null
+          });
+        }
+      }
+    }
+
+    // -------------------------------------------------------------------------
+    // END LOCAL HELPERS
+    // -------------------------------------------------------------------------
+
+    // Fetch plan-level reactions setting early so walkIntermediateNodes can use it
+    const earlyPlanSettings = getPlanIndustrySettings(planId);
+    const planReactionsEnabled = earlyPlanSettings.reactionsAsIntermediates &&
+      topLevelBlueprints.some(bp => bp.useIntermediates === 'raw_materials' || bp.useIntermediates === 'build_buy');
 
     // PHASE 1: Ensure intermediate structure is complete for all top-level blueprints
     // NOTE: Reactions are now detected AFTER aggregation (see PHASE 2.5 below)
@@ -2252,6 +2379,31 @@ async function recalculatePlanMaterials(planId, refreshPrices = false) {
       // Store calculation for later use (to identify final products)
       blueprintCalculations.set(blueprint.planBlueprintId, calculation);
 
+      // ---- Tree: create the product root node for this blueprint ----
+      const bpCalcProduct = calculation.product;
+      const productNodeId = randomUUID();
+      if (bpCalcProduct) {
+        const baseQty = bpCalcProduct.baseQuantity || 1;
+        collectedNodes.push({
+          nodeId: productNodeId,
+          planBlueprintId: blueprint.planBlueprintId,
+          sourcePlanBlueprintId: blueprint.planBlueprintId,
+          parentNodeId: null,
+          typeId: bpCalcProduct.typeID,
+          nodeType: 'product',
+          depth: 0,
+          quantityNeeded: baseQty * blueprint.runs,
+          quantityPerRun: baseQty,
+          runsNeeded: blueprint.runs,
+          meLevel: blueprint.meLevel,
+          isReaction: 0,
+          buildPlan: blueprint.useIntermediates,
+          price: null,
+          priceFrozenAt: null
+        });
+      }
+      // ---- End product root node ----
+
       // Check if we need to expand intermediates and reactions to raw materials
       if (blueprint.useIntermediates === 'raw_materials' || blueprint.useIntermediates === 'build_buy') {
         // Classify materials using helper function
@@ -2287,7 +2439,7 @@ async function recalculatePlanMaterials(planId, refreshPrices = false) {
             console.log(`[Plans] Updated intermediate ${intermediateBlueprintId} runs: ${intermediateConfig.runs} → ${correctRunsNeeded} (parent settings changed)`);
           }
 
-          // Expand this intermediate recursively
+          // Expand this intermediate recursively (aggregation path — unchanged)
           const expansion = await expandIntermediate(
             intermediateBlueprintId,
             totalMaterialsNeeded,  // Total materials needed across all lines
@@ -2311,21 +2463,112 @@ async function recalculatePlanMaterials(planId, refreshPrices = false) {
 
           // Collect intermediate products
           aggregatedIntermediateProducts.push(...expansion.intermediateProducts);
+
+          // ---- Tree: walk the same intermediate to build node tree ----
+          await walkIntermediateNodes(
+            intermediateBlueprintId,
+            totalMaterialsNeeded,
+            intermediateConfig ? {
+              meLevel: intermediateConfig.me_level,
+              facilitySnapshot: JSON.parse(intermediateConfig.facility_snapshot),
+              useIntermediates: intermediateConfig.use_intermediates
+            } : null,
+            facility,
+            blueprint.planBlueprintId,
+            intermediateConfig?.plan_blueprint_id ?? null,
+            productNodeId,
+            1
+          );
+          // ---- End tree walk ----
         }
 
-        // Process reactions - DON'T expand yet, just add products to aggregated materials
-        // Reactions will be detected and expanded in PHASE 2.5 after all materials are aggregated
+        // Process reactions - aggregate quantities for Phase 2.5, and build tree nodes if reactions enabled
         for (const reaction of reactions) {
           const materialTypeId = reaction.typeId;
           const materialQuantity = reaction.quantity;
           const totalQty = materialQuantity * blueprint.lines;
           aggregatedMaterials[materialTypeId] = (aggregatedMaterials[materialTypeId] || 0) + totalQty;
+
+          if (planReactionsEnabled) {
+            // ---- Tree: create reaction node and expand its inputs immediately ----
+            const reactionRunsNeeded = await calculateReactionRuns(totalQty, reaction.reactionTypeId);
+            const reactionProduct = await getReactionProduct(reaction.reactionTypeId);
+            const reactionProductsPerRun = reactionProduct?.quantity ?? 1;
+            const reactionNodeId = randomUUID();
+            collectedNodes.push({
+              nodeId: reactionNodeId,
+              planBlueprintId: blueprint.planBlueprintId,
+              sourcePlanBlueprintId: null, // Phase 2.5 fills this in
+              parentNodeId: productNodeId,
+              typeId: reaction.typeId,
+              nodeType: 'intermediate',
+              depth: 1,
+              quantityNeeded: reactionRunsNeeded * reactionProductsPerRun,
+              quantityPerRun: reactionProductsPerRun,
+              runsNeeded: reactionRunsNeeded,
+              meLevel: null,
+              isReaction: 1,
+              buildPlan: 'raw_materials',
+              price: null,
+              priceFrozenAt: null,
+              _reactionTypeId: reaction.reactionTypeId
+            });
+            await walkReactionNodes(
+              reaction.reactionTypeId,
+              reactionRunsNeeded,
+              blueprint.facilitySnapshot,
+              blueprint.planBlueprintId,
+              null, // sourcePlanBlueprintId set by Phase 2.5
+              reactionNodeId,
+              1
+            );
+            // ---- End reaction tree ----
+          } else {
+            // Reactions disabled: add reaction product as a raw material leaf
+            collectedNodes.push({
+              nodeId: randomUUID(),
+              planBlueprintId: blueprint.planBlueprintId,
+              sourcePlanBlueprintId: null,
+              parentNodeId: productNodeId,
+              typeId: reaction.typeId,
+              nodeType: 'material',
+              depth: 1,
+              quantityNeeded: totalQty,
+              quantityPerRun: null,
+              runsNeeded: null,
+              meLevel: null,
+              isReaction: 0,
+              buildPlan: 'raw_materials',
+              price: null,
+              priceFrozenAt: null
+            });
+          }
         }
 
         // Process raw materials - add them directly
         for (const rawMaterial of rawMaterials) {
           const totalQty = rawMaterial.quantity * blueprint.lines;
           aggregatedMaterials[rawMaterial.typeId] = (aggregatedMaterials[rawMaterial.typeId] || 0) + totalQty;
+
+          // ---- Tree: raw material leaf node as child of productNodeId ----
+          collectedNodes.push({
+            nodeId: randomUUID(),
+            planBlueprintId: blueprint.planBlueprintId,
+            sourcePlanBlueprintId: null,
+            parentNodeId: productNodeId,
+            typeId: rawMaterial.typeId,
+            nodeType: 'material',
+            depth: 1,
+            quantityNeeded: totalQty,
+            quantityPerRun: null,
+            runsNeeded: null,
+            meLevel: null,
+            isReaction: 0,
+            buildPlan: 'raw_materials',
+            price: null,
+            priceFrozenAt: null
+          });
+          // ---- End raw material leaf node ----
         }
       } else if (blueprint.useIntermediates === 'components') {
         // use_intermediates === 'components'
@@ -2333,6 +2576,26 @@ async function recalculatePlanMaterials(planId, refreshPrices = false) {
         for (const [typeId, quantity] of Object.entries(calculation.materials)) {
           const totalQty = quantity * blueprint.lines;
           aggregatedMaterials[typeId] = (aggregatedMaterials[typeId] || 0) + totalQty;
+
+          // ---- Tree: component material leaf as child of productNodeId ----
+          collectedNodes.push({
+            nodeId: randomUUID(),
+            planBlueprintId: blueprint.planBlueprintId,
+            sourcePlanBlueprintId: null,
+            parentNodeId: productNodeId,
+            typeId: parseInt(typeId),
+            nodeType: 'material',
+            depth: 1,
+            quantityNeeded: totalQty,
+            quantityPerRun: null,
+            runsNeeded: null,
+            meLevel: null,
+            isReaction: 0,
+            buildPlan: 'components',
+            price: null,
+            priceFrozenAt: null
+          });
+          // ---- End component material leaf ----
         }
       } else if (blueprint.useIntermediates === 'buy') {
         // use_intermediates === 'buy'
@@ -2369,18 +2632,8 @@ async function recalculatePlanMaterials(planId, refreshPrices = false) {
     // Reactions are created with parent_blueprint_id = NULL (aggregated, not per-parent)
     console.log(`[Plans] Detecting reactions from aggregated materials for plan ${planId}`);
 
-    // Get plan-level reactions setting
-    const planSettings = getPlanIndustrySettings(planId);
-    const planReactionsEnabled = planSettings.reactionsAsIntermediates;
-
-    // Reactions are only processed if:
-    // 1. Plan-level "Calculate Reactions as Intermediates" is enabled, AND
-    // 2. At least one blueprint has useIntermediates set to expand reactions
-    const hasReactionsEnabled = planReactionsEnabled && topLevelBlueprints.some(bp =>
-      bp.useIntermediates === 'raw_materials' || bp.useIntermediates === 'build_buy'
-    );
-
-    if (hasReactionsEnabled) {
+    // planReactionsEnabled already computed above (using earlyPlanSettings)
+    if (planReactionsEnabled) {
       // Iteratively process reactions until no more are found (handles nested reactions)
       // This loop ensures that if a reaction's inputs are themselves reaction products,
       // they will be detected and expanded in subsequent iterations
@@ -2513,6 +2766,53 @@ async function recalculatePlanMaterials(planId, refreshPrices = false) {
 
             // Track reaction products as intermediate products
             aggregatedIntermediateProducts.push(...expansion.intermediateProducts);
+
+            // ---- Tree: wire sourcePlanBlueprintId into pre-expanded reaction nodes ----
+            // Reaction nodes were already created and their inputs expanded during Phase 2 /
+            // walkIntermediateNodes. We just need to back-fill sourcePlanBlueprintId now that
+            // we have the plan_blueprints row ID for this reaction.
+            const rootBlueprintId = topLevelBlueprints[0]?.planBlueprintId ?? null;
+            const pendingReactionNodes = collectedNodes.filter(
+              n => n._reactionTypeId === reactionTypeId && n.sourcePlanBlueprintId === null
+            );
+
+            if (pendingReactionNodes.length > 0) {
+              // Wire ALL matching placeholder nodes with the reaction's plan_blueprint_id
+              for (const n of pendingReactionNodes) {
+                n.sourcePlanBlueprintId = reactionBlueprintId;
+              }
+            } else {
+              // No pre-expanded node found: this reaction only appeared in aggregatedMaterials
+              // via paths we didn't tree-walk (shouldn't normally happen, but handle gracefully).
+              const newReactionNodeId = randomUUID();
+              collectedNodes.push({
+                nodeId: newReactionNodeId,
+                planBlueprintId: rootBlueprintId,
+                sourcePlanBlueprintId: reactionBlueprintId,
+                parentNodeId: null,
+                typeId: materialTypeId,
+                nodeType: 'intermediate',
+                depth: 1,
+                quantityNeeded: totalUnitsNeeded,
+                quantityPerRun: null,
+                runsNeeded: runsNeeded,
+                meLevel: null,
+                isReaction: 1,
+                buildPlan: 'raw_materials',
+                price: null,
+                priceFrozenAt: null
+              });
+              await walkReactionNodes(
+                reactionTypeId,
+                runsNeeded,
+                facility,
+                rootBlueprintId,
+                reactionBlueprintId,
+                newReactionNodeId,
+                0
+              );
+            }
+            // ---- End reaction tree wiring ----
           }
         } else {
           // No more reactions found, exit loop
@@ -2532,11 +2832,15 @@ async function recalculatePlanMaterials(planId, refreshPrices = false) {
     try {
       // Get existing prices before clearing (to preserve them when not refreshing)
       const existingMaterialPrices = {};
-      const existingMaterialAcquisition = {};
       const existingProductPrices = {};
 
       if (!refreshPrices) {
-        const existingMaterials = db.prepare('SELECT type_id, base_price, price_frozen_at FROM plan_materials WHERE plan_id = ?').all(planId);
+        const existingMaterials = db.prepare(`
+          SELECT type_id, MAX(price_frozen_at) as price_frozen_at, price_each as base_price
+          FROM plan_material_nodes
+          WHERE plan_id = ? AND node_type = 'material'
+          GROUP BY type_id
+        `).all(planId);
         for (const mat of existingMaterials) {
           existingMaterialPrices[mat.type_id] = {
             price: mat.base_price,
@@ -2544,7 +2848,12 @@ async function recalculatePlanMaterials(planId, refreshPrices = false) {
           };
         }
 
-        const existingProducts = db.prepare('SELECT type_id, base_price, price_frozen_at FROM plan_products WHERE plan_id = ?').all(planId);
+        const existingProducts = db.prepare(`
+          SELECT type_id, MAX(price_frozen_at) as price_frozen_at, price_each as base_price
+          FROM plan_material_nodes
+          WHERE plan_id = ? AND node_type IN ('product', 'intermediate')
+          GROUP BY type_id
+        `).all(planId);
         for (const prod of existingProducts) {
           existingProductPrices[prod.type_id] = {
             price: prod.base_price,
@@ -2553,76 +2862,23 @@ async function recalculatePlanMaterials(planId, refreshPrices = false) {
         }
       }
 
-      // Track which materials existed before recalculation (for tracking removed acquisitions)
-      const oldMaterials = db.prepare(`
-        SELECT type_id FROM plan_materials WHERE plan_id = ?
-      `).all(planId);
-      const oldMaterialTypeIds = new Set(oldMaterials.map(m => m.type_id));
+      // Clear existing material nodes
+      db.prepare('DELETE FROM plan_material_nodes WHERE plan_id = ?').run(planId);
 
-      // Get all manual acquisitions (for deletion/warning tracking)
-      const existingManualAcquisitions = db.prepare(`
-        SELECT type_id, quantity, acquisition_method
-        FROM plan_material_manual_acquisitions
-        WHERE plan_id = ?
-      `).all(planId);
-
-      // Clear existing materials and products
-      db.prepare('DELETE FROM plan_materials WHERE plan_id = ?').run(planId);
-      db.prepare('DELETE FROM plan_products WHERE plan_id = ?').run(planId);
+      const insertNode = db.prepare(`
+        INSERT INTO plan_material_nodes
+          (node_id, plan_id, plan_blueprint_id, source_plan_blueprint_id, parent_node_id,
+           type_id, node_type, depth, quantity_needed, quantity_per_run, runs_needed, me_level,
+           is_reaction, build_plan, price_each, price_frozen_at, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `);
 
       const now = Date.now();
-
-      // Insert materials with prices
-      const insertMaterial = db.prepare(`
-        INSERT INTO plan_materials (
-          plan_id, type_id, quantity, base_price, price_frozen_at
-        )
-        VALUES (?, ?, ?, ?, ?)
-      `);
 
       // Get location settings for input materials
       const inputLocation = getInputLocation(marketSettings);
 
-      for (const [typeId, quantity] of Object.entries(aggregatedMaterials)) {
-        let price = null;
-        let priceFrozenAt = null;
-
-        if (refreshPrices) {
-          try {
-            const priceResult = await calculateRealisticPrice(
-              parseInt(typeId),
-              inputLocation.regionId,
-              inputLocation.locationId,
-              marketSettings.inputMaterials.priceType,
-              quantity
-            );
-            price = priceResult.price;
-            priceFrozenAt = now;
-          } catch (error) {
-            console.warn(`Could not fetch price for type ${typeId}:`, error.message);
-          }
-        } else {
-          // Preserve existing price
-          const existing = existingMaterialPrices[typeId];
-          if (existing) {
-            price = existing.price;
-            priceFrozenAt = existing.frozenAt;
-          }
-        }
-
-        // No longer inserting acquisition data into plan_materials
-        // (acquisition data lives in separate plan_material_manual_acquisitions table)
-        insertMaterial.run(
-          planId,
-          parseInt(typeId),
-          quantity,
-          price,
-          priceFrozenAt
-        );
-      }
-
       // Determine what is TRULY a final product
-      // Final product = product of a top-level blueprint
       const finalProductTypeIds = new Set();
       for (const blueprint of topLevelBlueprints) {
         const calculation = blueprintCalculations.get(blueprint.planBlueprintId);
@@ -2631,100 +2887,97 @@ async function recalculatePlanMaterials(planId, refreshPrices = false) {
         }
       }
 
-      // Insert products with prices
-      const insertProduct = db.prepare(`
-        INSERT INTO plan_products (plan_id, type_id, quantity, base_price, price_frozen_at, is_intermediate, intermediate_depth)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-      `);
-
       // Get location settings for output products
       const outputLocation = getOutputLocation(marketSettings);
 
-      // Insert final products (is_intermediate = 0, depth = 0)
-      for (const [typeId, quantity] of Object.entries(aggregatedProducts)) {
-        // Skip if this is not a final product
-        if (!finalProductTypeIds.has(parseInt(typeId))) {
-          continue;
+      // ---- Phase 2.5 cleanup: remove stale pending reaction nodes ----
+      // Any node that still has _reactionTypeId but no sourcePlanBlueprintId was never matched
+      // to a real reaction row (e.g. it was aggregated away), so remove it to avoid duplication.
+      for (let i = collectedNodes.length - 1; i >= 0; i--) {
+        const n = collectedNodes[i];
+        if (n._reactionTypeId !== undefined && n.sourcePlanBlueprintId === null) {
+          collectedNodes.splice(i, 1);
         }
+      }
+      // ---- End stale node cleanup ----
+
+      // PHASE 3: Price each collected node and insert in one pass
+      // (Replaces the three separate INSERT loops for materials, products, intermediates)
+
+      for (const node of collectedNodes) {
         let price = null;
         let priceFrozenAt = null;
 
-        if (refreshPrices) {
-          try {
-            const priceResult = await calculateRealisticPrice(
-              parseInt(typeId),
-              outputLocation.regionId,
-              outputLocation.locationId,
-              marketSettings.outputProducts.priceType,
-              quantity
-            );
-            price = priceResult.price;
-            priceFrozenAt = now;
-          } catch (error) {
-            console.warn(`Could not fetch price for type ${typeId}:`, error.message);
+        if (node.nodeType === 'material') {
+          if (refreshPrices) {
+            try {
+              const priceResult = await calculateRealisticPrice(
+                node.typeId,
+                inputLocation.regionId,
+                inputLocation.locationId,
+                marketSettings.inputMaterials.priceType,
+                node.quantityNeeded
+              );
+              price = priceResult.price;
+              priceFrozenAt = now;
+            } catch (error) {
+              console.warn(`Could not fetch price for type ${node.typeId}:`, error.message);
+            }
+          } else {
+            const existing = existingMaterialPrices[node.typeId];
+            if (existing) {
+              price = existing.price;
+              priceFrozenAt = existing.frozenAt;
+            }
           }
         } else {
-          // Preserve existing price
-          const existing = existingProductPrices[typeId];
-          if (existing) {
-            price = existing.price;
-            priceFrozenAt = existing.frozenAt;
+          // 'product' or 'intermediate'
+          if (refreshPrices) {
+            try {
+              const priceResult = await calculateRealisticPrice(
+                node.typeId,
+                outputLocation.regionId,
+                outputLocation.locationId,
+                marketSettings.outputProducts.priceType,
+                node.quantityNeeded
+              );
+              price = priceResult.price;
+              priceFrozenAt = now;
+            } catch (error) {
+              console.warn(`Could not fetch price for type ${node.typeId}:`, error.message);
+            }
+          } else {
+            const existing = existingProductPrices[node.typeId];
+            if (existing) {
+              price = existing.price;
+              priceFrozenAt = existing.frozenAt;
+            }
           }
         }
 
-        insertProduct.run(planId, parseInt(typeId), quantity, price, priceFrozenAt, 0, 0);
-      }
+        // Strip the internal helper field before inserting
+        const { _reactionTypeId, ...insertData } = node;
 
-      // Insert intermediate products (is_intermediate = 1, depth > 0)
-      // First, deduplicate by typeId (sum quantities, keep minimum depth)
-      const intermediateProductMap = new Map();
-      for (const item of aggregatedIntermediateProducts) {
-        const existing = intermediateProductMap.get(item.typeId);
-        if (!existing || item.depth < existing.depth) {
-          intermediateProductMap.set(item.typeId, {
-            quantity: (existing?.quantity || 0) + item.quantity,
-            depth: item.depth
-          });
-        } else {
-          existing.quantity += item.quantity;
-        }
-      }
-
-      // Insert intermediate products (skip if also a final product)
-      for (const [typeId, data] of intermediateProductMap) {
-        // Skip if this type_id is a final product
-        if (finalProductTypeIds.has(typeId)) {
-          console.log(`[Plans] Skipping intermediate product ${typeId} - it's a final product`);
-          continue;
-        }
-
-        let price = null;
-        let priceFrozenAt = null;
-
-        if (refreshPrices) {
-          try {
-            const priceResult = await calculateRealisticPrice(
-              typeId,
-              outputLocation.regionId,
-              outputLocation.locationId,
-              marketSettings.outputProducts.priceType,
-              data.quantity
-            );
-            price = priceResult.price;
-            priceFrozenAt = now;
-          } catch (error) {
-            console.warn(`Could not fetch price for type ${typeId}:`, error.message);
-          }
-        } else {
-          // Preserve existing price
-          const existing = existingProductPrices[typeId];
-          if (existing) {
-            price = existing.price;
-            priceFrozenAt = existing.frozenAt;
-          }
-        }
-
-        insertProduct.run(planId, typeId, data.quantity, price, priceFrozenAt, 1, data.depth);
+        insertNode.run(
+          insertData.nodeId,
+          planId,
+          insertData.planBlueprintId,
+          insertData.sourcePlanBlueprintId,
+          insertData.parentNodeId,
+          insertData.typeId,
+          insertData.nodeType,
+          insertData.depth,
+          insertData.quantityNeeded,
+          insertData.quantityPerRun,
+          insertData.runsNeeded,
+          insertData.meLevel,
+          insertData.isReaction,
+          insertData.buildPlan,
+          price,
+          priceFrozenAt,
+          now,
+          now
+        );
       }
 
       // Clean up orphaned intermediates before committing
@@ -2732,92 +2985,59 @@ async function recalculatePlanMaterials(planId, refreshPrices = false) {
 
       db.exec('COMMIT');
       console.log(`Recalculated materials and products for plan ${planId} (${Object.keys(aggregatedMaterials).length} materials, ${Object.keys(aggregatedProducts).length} products)`);
-
-      // Recalculate manufactured materials from built intermediates
-      // This is done AFTER the transaction commits to ensure materials table is updated
-      // Note: We only recalculate if there are built intermediates (otherwise this is a no-op)
-      await recalculateManufacturedMaterials(planId, plan.character_id);
-
-      // After inserting new materials, check for acquisition issues
-      const newMaterials = db.prepare(`
-        SELECT type_id, quantity FROM plan_materials WHERE plan_id = ?
-      `).all(planId);
-      const newMaterialTypeIds = new Set(newMaterials.map(m => m.type_id));
-      const warnings = [];
-
-      // Find materials that were removed (had manual acquisition but no longer in plan)
-      const removedAcquisitions = [];
-      for (const acq of existingManualAcquisitions) {
-        if (!newMaterialTypeIds.has(acq.type_id)) {
-          removedAcquisitions.push({
-            typeId: acq.type_id,
-            typeName: getTypeName(acq.type_id),
-            acquiredQuantity: acq.quantity,
-            method: acq.acquisition_method
-          });
-        }
-      }
-
-      // Delete manual acquisitions for removed materials
-      if (removedAcquisitions.length > 0) {
-        const removedTypeIds = removedAcquisitions.map(r => r.typeId);
-        const placeholders = removedTypeIds.map(() => '?').join(',');
-
-        db.prepare(`
-          DELETE FROM plan_material_manual_acquisitions
-          WHERE plan_id = ? AND type_id IN (${placeholders})
-        `).run(planId, ...removedTypeIds);
-
-        // Log the removals
-        const logStmt = db.prepare(`
-          INSERT INTO plan_material_acquisition_log
-            (plan_id, type_id, timestamp, action, quantity_before, quantity_after, performed_by)
-          VALUES (?, ?, ?, 'remove', ?, 0, 'system')
-        `);
-
-        removedAcquisitions.forEach(acq => {
-          logStmt.run(planId, acq.typeId, now, acq.acquiredQuantity);
-        });
-
-        warnings.push({
-          type: 'removed_acquisitions',
-          materials: removedAcquisitions
-        });
-
-        console.log(`[Plans] Removed ${removedAcquisitions.length} manual acquisition(s) for materials no longer in plan ${planId}`);
-      }
-
-      // Check for materials with excess acquisitions (acquired > needed)
-      const excessMaterials = db.prepare(`
-        SELECT pm.type_id, pm.quantity, ma.quantity as acquired_quantity
-        FROM plan_materials pm
-        JOIN plan_material_manual_acquisitions ma
-          ON pm.plan_id = ma.plan_id AND pm.type_id = ma.type_id
-        WHERE pm.plan_id = ?
-          AND ma.quantity > pm.quantity
-      `).all(planId);
-
-      if (excessMaterials.length > 0) {
-        warnings.push({
-          type: 'excess_acquisitions',
-          materials: excessMaterials.map(m => ({
-            typeId: m.type_id,
-            typeName: getTypeName(m.type_id),
-            needed: m.quantity,
-            acquired: m.acquired_quantity,
-            excess: m.acquired_quantity - m.quantity
-          }))
-        });
-
-        console.log(`[Plans] Found ${excessMaterials.length} material(s) with excess acquisitions in plan ${planId}`);
-      }
-
-      // Return success with warnings
-      return { success: true, warnings };
     } catch (error) {
       db.exec('ROLLBACK');
       throw error;
     }
+
+    // Post-commit: recalculate manufactured acquisitions from any built intermediates/reactions.
+    clearManufacturedAcquisitions(planId);
+    await recalculateManufacturedMaterials(planId);
+
+    const warnings = [];
+
+    // Check for materials with excess acquisitions (ledger net > needed)
+    const newMaterials = db.prepare(`
+      SELECT type_id, SUM(quantity_needed) as quantity_needed
+      FROM plan_material_nodes
+      WHERE plan_id = ? AND node_type = 'material'
+      GROUP BY type_id
+    `).all(planId);
+
+    const ledgerTotals = db.prepare(`
+      SELECT type_id, SUM(quantity) as net_acquired
+      FROM plan_material_ledger
+      WHERE plan_id = ?
+      GROUP BY type_id
+    `).all(planId);
+
+    const ledgerMap = new Map(ledgerTotals.map(l => [l.type_id, l.net_acquired]));
+    const nodeTypeIds = new Set(newMaterials.map(m => m.type_id));
+
+    for (const ledgerEntry of ledgerTotals) {
+      if (!nodeTypeIds.has(ledgerEntry.type_id) && ledgerEntry.net_acquired > 0) {
+        warnings.push({
+          type: 'orphaned_ledger',
+          typeId: ledgerEntry.type_id,
+          netAcquired: ledgerEntry.net_acquired
+        });
+      }
+    }
+
+    for (const mat of newMaterials) {
+      const netAcquired = ledgerMap.get(mat.type_id) || 0;
+      if (netAcquired > mat.quantity_needed) {
+        warnings.push({
+          type: 'excess_acquisitions',
+          typeId: mat.type_id,
+          needed: mat.quantity_needed,
+          acquired: netAcquired,
+          excess: netAcquired - mat.quantity_needed
+        });
+      }
+    }
+
+    return { success: true, warnings };
   } catch (error) {
     console.error('Error recalculating plan materials:', error);
     return false;
@@ -2834,26 +3054,35 @@ async function getPlanMaterials(planId, includeAssets = false) {
   try {
     const db = getCharacterDatabase();
 
-    const materials = db.prepare(`
-      SELECT
-        pm.*,
-        ma.quantity as manually_acquired_quantity,
-        ma.acquisition_method,
-        ma.custom_price,
-        ma.note as acquisition_note,
-        ma.updated_at as acquisition_updated_at
-      FROM plan_materials pm
-      LEFT JOIN plan_material_manual_acquisitions ma
-        ON pm.plan_id = ma.plan_id AND pm.type_id = ma.type_id
-      WHERE pm.plan_id = ?
-      ORDER BY pm.quantity DESC
+    // Get aggregated materials from plan_material_nodes
+    const materialNodes = db.prepare(`
+      SELECT type_id, SUM(quantity_needed) as quantity_needed,
+             price_each, MAX(price_frozen_at) as price_frozen_at
+      FROM plan_material_nodes
+      WHERE plan_id = ? AND node_type = 'material'
+      GROUP BY type_id
+      ORDER BY SUM(quantity_needed) DESC
     `).all(planId);
+
+    // Get ledger net acquired per type
+    const ledgerEntries = db.prepare(`
+      SELECT type_id, SUM(quantity) as net_acquired,
+             MAX(CASE WHEN unit_price IS NOT NULL THEN unit_price END) as custom_price,
+             MAX(CASE WHEN method != 'manufactured' THEN method END) as acquisition_method,
+             MAX(note) as acquisition_note,
+             MAX(created_at) as acquisition_updated_at
+      FROM plan_material_ledger
+      WHERE plan_id = ?
+      GROUP BY type_id
+    `).all(planId);
+
+    const ledgerMap = new Map(ledgerEntries.map(l => [l.type_id, l]));
 
     // Query confirmed transaction matches (material purchases)
     const confirmedPurchases = {};
-    if (materials.length > 0) {
+    if (materialNodes.length > 0) {
       try {
-        const typeIds = materials.map(m => m.type_id);
+        const typeIds = materialNodes.map(m => m.type_id);
         const placeholders = typeIds.map(() => '?').join(',');
         const purchases = db.prepare(`
           SELECT type_id,
@@ -2875,17 +3104,15 @@ async function getPlanMaterials(planId, includeAssets = false) {
         }
       } catch (error) {
         console.error('Error querying confirmed purchases:', error);
-        // Continue with empty confirmedPurchases
       }
     }
 
     // Query confirmed industry job matches (manufactured materials)
     const confirmedManufacturing = {};
-    if (materials.length > 0) {
+    if (materialNodes.length > 0) {
       try {
-        const typeIds = materials.map(m => m.type_id);
+        const typeIds = materialNodes.map(m => m.type_id);
 
-        // Get confirmed jobs with their blueprint types
         const confirmedJobs = db.prepare(`
           SELECT jm.job_id, ij.blueprint_type_id, ij.runs
           FROM plan_job_matches jm
@@ -2895,15 +3122,11 @@ async function getPlanMaterials(planId, includeAssets = false) {
         `).all(planId);
 
         if (confirmedJobs.length > 0) {
-          // Open SDE database synchronously
           let sdeDb = null;
           try {
             sdeDb = new Database(getSdePath(), { readonly: true });
-
             const blueprintTypeIds = confirmedJobs.map(j => j.blueprint_type_id);
             const placeholders = blueprintTypeIds.map(() => '?').join(',');
-
-            // Get products for these blueprints
             const products = sdeDb.prepare(`
               SELECT typeID, productTypeID, quantity
               FROM industryActivityProducts
@@ -2911,18 +3134,13 @@ async function getPlanMaterials(planId, includeAssets = false) {
                 AND typeID IN (${placeholders})
             `).all(...blueprintTypeIds);
 
-            // Map jobs to their products
             for (const job of confirmedJobs) {
               const jobProducts = products.filter(p => p.typeID === job.blueprint_type_id);
               for (const product of jobProducts) {
-                // Only count if this product is in our materials list
                 if (typeIds.includes(product.productTypeID)) {
                   const totalQuantity = job.runs * product.quantity;
                   if (!confirmedManufacturing[product.productTypeID]) {
-                    confirmedManufacturing[product.productTypeID] = {
-                      quantity: 0,
-                      count: 0
-                    };
+                    confirmedManufacturing[product.productTypeID] = { quantity: 0, count: 0 };
                   }
                   confirmedManufacturing[product.productTypeID].quantity += totalQuantity;
                   confirmedManufacturing[product.productTypeID].count += 1;
@@ -2932,124 +3150,80 @@ async function getPlanMaterials(planId, includeAssets = false) {
           } catch (error) {
             console.error('Error accessing SDE database for manufacturing matches:', error);
           } finally {
-            if (sdeDb) {
-              sdeDb.close();
-            }
+            if (sdeDb) sdeDb.close();
           }
         }
       } catch (error) {
         console.error('Error querying confirmed manufacturing jobs:', error);
-        // Continue with empty confirmedManufacturing
       }
     }
 
-    const result = materials.map(m => ({
-      typeId: m.type_id,
-      quantity: m.quantity,
-      basePrice: m.base_price,
-      priceFrozenAt: m.price_frozen_at,
-      manuallyAcquired: m.manually_acquired_quantity ? 1 : 0, // For backward compatibility
-      manuallyAcquiredQuantity: m.manually_acquired_quantity || 0,
-      acquisitionMethod: m.acquisition_method || null,
-      customPrice: m.custom_price || null,
-      acquisitionNote: m.acquisition_note || null,
-      acquisitionUpdatedAt: m.acquisition_updated_at || null,
-      purchasedQuantity: confirmedPurchases[m.type_id]?.quantity || 0,
-      purchaseMatchCount: confirmedPurchases[m.type_id]?.count || 0,
-      manufacturedQuantity: confirmedManufacturing[m.type_id]?.quantity || 0,
-      manufacturingMatchCount: confirmedManufacturing[m.type_id]?.count || 0,
-      ownedPersonal: 0,
-      ownedCorp: 0,
-    }));
+    const result = materialNodes.map(m => {
+      const ledger = ledgerMap.get(m.type_id);
+      const netAcquired = ledger?.net_acquired || 0;
+      return {
+        typeId: m.type_id,
+        quantity: m.quantity_needed,
+        basePrice: m.price_each,
+        priceFrozenAt: m.price_frozen_at,
+        manuallyAcquired: netAcquired > 0 ? 1 : 0,
+        manuallyAcquiredQuantity: netAcquired,
+        acquisitionMethod: ledger?.acquisition_method || null,
+        customPrice: ledger?.custom_price || null,
+        acquisitionNote: ledger?.acquisition_note || null,
+        acquisitionUpdatedAt: ledger?.acquisition_updated_at || null,
+        purchasedQuantity: confirmedPurchases[m.type_id]?.quantity || 0,
+        purchaseMatchCount: confirmedPurchases[m.type_id]?.count || 0,
+        manufacturedQuantity: confirmedManufacturing[m.type_id]?.quantity || 0,
+        manufacturingMatchCount: confirmedManufacturing[m.type_id]?.count || 0,
+        ownedPersonal: 0,
+        ownedCorp: 0,
+      };
+    });
 
     if (includeAssets) {
       // Get plan to find character ID
       const plan = db.prepare('SELECT character_id FROM manufacturing_plans WHERE plan_id = ?').get(planId);
-      if (!plan) {
-        return result; // No plan found, skip assets
-      }
+      if (!plan) return result;
 
-      // Get plan industry settings for character selection
       const planSettings = getPlanIndustrySettings(planId);
-
-      // Determine which characters to use
       let characterIds = planSettings.defaultCharacters || [];
-      if (characterIds.length === 0) {
-        // Fallback: use plan's default character only
-        characterIds = [plan.character_id];
-      }
-
-      // Get enabled divisions per character
+      if (characterIds.length === 0) characterIds = [plan.character_id];
       const enabledDivisions = planSettings.enabledDivisions || {};
 
-      // Aggregate assets across all selected characters
-      const personalAssetMap = {};  // typeId -> quantity
-      const corpAssetMap = {};      // typeId -> quantity
-      const personalAssetDetails = {}; // typeId -> array of { characterId, characterName, quantity }
-      const corpAssetDetails = {};     // typeId -> array of { corporationId, corporationName, divisionId, divisionName, quantity }
-      const processedCorps = new Set(); // Track corporations to avoid double-counting
+      const personalAssetMap = {};
+      const corpAssetMap = {};
+      const personalAssetDetails = {};
+      const corpAssetDetails = {};
+      const processedCorps = new Set();
 
       for (const characterId of characterIds) {
-        // Get character info to find corporation
         const { getCharacter } = require('./settings-manager');
         const character = getCharacter(characterId);
+        if (!character) continue;
 
-        if (!character) {
-          console.warn(`[Plans] Character ${characterId} not found, skipping assets`);
-          continue;
-        }
-
-        // Fetch personal assets for this character
         const personalAssets = getAssets(characterId, false);
         for (const asset of personalAssets) {
-          // Aggregate totals (existing logic)
           personalAssetMap[asset.typeId] = (personalAssetMap[asset.typeId] || 0) + asset.quantity;
-
-          // NEW: Preserve per-character details
-          if (!personalAssetDetails[asset.typeId]) {
-            personalAssetDetails[asset.typeId] = [];
-          }
-
-          // Find existing entry for this character, or create new one
+          if (!personalAssetDetails[asset.typeId]) personalAssetDetails[asset.typeId] = [];
           let charEntry = personalAssetDetails[asset.typeId].find(e => e.characterId === characterId);
           if (!charEntry) {
-            charEntry = {
-              characterId: characterId,
-              characterName: character.characterName,
-              quantity: 0
-            };
+            charEntry = { characterId, characterName: character.characterName, quantity: 0 };
             personalAssetDetails[asset.typeId].push(charEntry);
           }
           charEntry.quantity += asset.quantity;
         }
 
-        // Fetch corporation assets (with division filtering and deduplication)
         const corpId = character.corporationId;
         if (corpId && !processedCorps.has(corpId)) {
-          processedCorps.add(corpId);  // Mark corporation as processed
-
-          // Get enabled divisions for this character
+          processedCorps.add(corpId);
           const charEnabledDivisions = enabledDivisions[characterId] || [];
-
-          // Fetch all corp assets for this character
           const corpAssets = getAssets(characterId, true);
-
-          // Filter by enabled divisions
           for (const asset of corpAssets) {
-            // Check if asset is in an enabled division
             if (isAssetInEnabledDivision(asset, charEnabledDivisions)) {
-              // Aggregate totals (existing logic)
               corpAssetMap[asset.typeId] = (corpAssetMap[asset.typeId] || 0) + asset.quantity;
-
-              // NEW: Preserve per-division details
-              if (!corpAssetDetails[asset.typeId]) {
-                corpAssetDetails[asset.typeId] = [];
-              }
-
-              // Extract division ID from location_flag (e.g., "CorpSAG2" -> division 2)
+              if (!corpAssetDetails[asset.typeId]) corpAssetDetails[asset.typeId] = [];
               const divisionId = extractDivisionId(asset.locationFlag);
-
-              // Find existing entry for this corp/division, or create new one
               let corpEntry = corpAssetDetails[asset.typeId].find(
                 e => e.corporationId === corpId && e.divisionId === divisionId
               );
@@ -3057,7 +3231,7 @@ async function getPlanMaterials(planId, includeAssets = false) {
                 corpEntry = {
                   corporationId: corpId,
                   corporationName: character.corporationName || `Corporation ${corpId}`,
-                  divisionId: divisionId,
+                  divisionId,
                   divisionName: getDivisionName(characterId, divisionId),
                   quantity: 0
                 };
@@ -3069,7 +3243,6 @@ async function getPlanMaterials(planId, includeAssets = false) {
         }
       }
 
-      // Apply aggregated assets to materials
       for (const material of result) {
         material.ownedPersonal = personalAssetMap[material.typeId] || 0;
         material.ownedCorp = corpAssetMap[material.typeId] || 0;
@@ -3162,7 +3335,14 @@ function getPlanProducts(planId) {
     const db = getCharacterDatabase();
 
     const products = db.prepare(`
-      SELECT * FROM plan_products WHERE plan_id = ? ORDER BY is_intermediate DESC, quantity DESC
+      SELECT type_id, SUM(quantity_needed) as quantity, price_each as base_price,
+             MAX(price_frozen_at) as price_frozen_at,
+             CASE WHEN node_type = 'intermediate' THEN 1 ELSE 0 END as is_intermediate,
+             depth as intermediate_depth
+      FROM plan_material_nodes
+      WHERE plan_id = ? AND node_type IN ('product', 'intermediate')
+      GROUP BY type_id, node_type, depth
+      ORDER BY is_intermediate DESC, quantity DESC
     `).all(planId);
 
     return products.map(p => ({
@@ -3459,9 +3639,13 @@ async function getPlanAnalytics(planId) {
     // For display purposes, show confirmed jobs count (actuals already has this)
     const jobsConfirmed = actuals.confirmedJobsCount || 0;
 
-    // Calculate material purchase progress - total quantity of materials
-    const materials = db.prepare('SELECT quantity FROM plan_materials WHERE plan_id = ?').all(planId);
-    const totalMaterialQuantity = materials.reduce((sum, mat) => sum + mat.quantity, 0);
+    // Calculate material purchase progress - total quantity of materials from nodes
+    const materialsAgg = db.prepare(`
+      SELECT SUM(quantity_needed) as total_quantity
+      FROM plan_material_nodes
+      WHERE plan_id = ? AND node_type = 'material'
+    `).get(planId);
+    const totalMaterialQuantity = materialsAgg?.total_quantity || 0;
 
     // Sum quantity of confirmed material purchases from transactions
     const materialsPurchasedResult = db.prepare(`
@@ -3472,14 +3656,14 @@ async function getPlanAnalytics(planId) {
 
     const materialQuantityFromTransactions = materialsPurchasedResult?.total_quantity || 0;
 
-    // Sum manually acquired materials
+    // Sum manually acquired materials from ledger
     const manualsAcquiredResult = db.prepare(`
-      SELECT SUM(manually_acquired_quantity) as total_quantity
-      FROM plan_materials
-      WHERE plan_id = ? AND manually_acquired = 1
+      SELECT SUM(quantity) as total_quantity
+      FROM plan_material_ledger
+      WHERE plan_id = ?
     `).get(planId);
 
-    const materialQuantityManuallyAcquired = manualsAcquiredResult?.total_quantity || 0;
+    const materialQuantityManuallyAcquired = Math.max(0, manualsAcquiredResult?.total_quantity || 0);
 
     // Total acquired = transactions + manually acquired
     const materialQuantityPurchased = materialQuantityFromTransactions + materialQuantityManuallyAcquired;
@@ -3493,7 +3677,12 @@ async function getPlanAnalytics(planId) {
     console.log(`[Analytics]   Progress: ${materialPurchasePercent.toFixed(2)}%`);
 
     // Calculate product sales progress - total quantity of FINAL products only (not intermediates)
-    const products = db.prepare('SELECT quantity FROM plan_products WHERE plan_id = ? AND is_intermediate = 0').all(planId);
+    const products = db.prepare(`
+      SELECT SUM(quantity_needed) as quantity
+      FROM plan_material_nodes
+      WHERE plan_id = ? AND node_type = 'product'
+      GROUP BY type_id
+    `).all(planId);
     const totalProductQuantity = products.reduce((sum, prod) => sum + prod.quantity, 0);
 
     // Sum quantity of confirmed product sales
@@ -3592,7 +3781,7 @@ async function getPlanAnalytics(planId) {
  * @param {boolean} options.validateAssets - Whether to validate against owned assets (default false)
  * @returns {object} Result with success, newTotal, hasExcess, excessAmount, and assetWarning
  */
-function markMaterialAcquired(planId, typeId, options = {}) {
+async function markMaterialAcquired(planId, typeId, options = {}) {
   const {
     quantity,
     acquisitionMethod = 'other',
@@ -3609,29 +3798,31 @@ function markMaterialAcquired(planId, typeId, options = {}) {
   const db = getCharacterDatabase();
 
   try {
-    // Get current material info
+    // Check material exists in plan nodes
     const currentMaterial = db.prepare(`
-      SELECT quantity FROM plan_materials
-      WHERE plan_id = ? AND type_id = ?
+      SELECT SUM(quantity_needed) as quantity_needed
+      FROM plan_material_nodes
+      WHERE plan_id = ? AND type_id = ? AND node_type = 'material'
     `).get(planId, typeId);
 
-    if (!currentMaterial) {
+    if (!currentMaterial || currentMaterial.quantity_needed === null) {
       throw new Error('Material not found in plan');
     }
 
-    // Get current manual acquisition if exists
-    const currentAcquisition = db.prepare(`
-      SELECT quantity FROM plan_material_manual_acquisitions
+    // Get current ledger net for this type
+    const currentLedger = db.prepare(`
+      SELECT SUM(quantity) as net_acquired
+      FROM plan_material_ledger
       WHERE plan_id = ? AND type_id = ?
     `).get(planId, typeId);
 
-    const currentAcquiredQty = currentAcquisition?.quantity || 0;
+    const currentAcquiredQty = currentLedger?.net_acquired || 0;
 
     // Calculate new total based on mode
     let newTotal;
     if (mode === 'add') {
       newTotal = currentAcquiredQty + quantity;
-    } else { // 'set'
+    } else {
       newTotal = quantity;
     }
 
@@ -3639,48 +3830,40 @@ function markMaterialAcquired(planId, typeId, options = {}) {
       throw new Error('Quantity cannot be negative');
     }
 
-    const hasExcess = newTotal > currentMaterial.quantity;
+    const hasExcess = newTotal > currentMaterial.quantity_needed;
 
-    // Asset validation (if requested and method is 'owned')
+    // Asset validation
     let assetWarning = null;
     if (acquisitionMethod === 'owned' && validateAssets) {
-      const materials = getPlanMaterials(planId, true);
+      const materials = await getPlanMaterials(planId, true);
       const material = materials.find(m => m.typeId === typeId);
       if (material) {
         const totalOwned = (material.ownedPersonal || 0) + (material.ownedCorp || 0);
         if (newTotal > totalOwned) {
-          assetWarning = {
-            requested: newTotal,
-            available: totalOwned,
-            shortfall: newTotal - totalOwned
-          };
+          assetWarning = { requested: newTotal, available: totalOwned, shortfall: newTotal - totalOwned };
         }
       }
     }
 
     const now = Date.now();
+    const method = ['manual','purchased','manufactured','allocated'].includes(acquisitionMethod)
+      ? acquisitionMethod : 'manual';
 
-    // Insert or update manual acquisition record
-    db.prepare(`
-      INSERT INTO plan_material_manual_acquisitions
-        (plan_id, type_id, quantity, acquisition_method, custom_price, note, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(plan_id, type_id) DO UPDATE SET
-        quantity = excluded.quantity,
-        acquisition_method = excluded.acquisition_method,
-        custom_price = excluded.custom_price,
-        note = excluded.note,
-        updated_at = excluded.updated_at
-    `).run(planId, typeId, newTotal, acquisitionMethod, customPrice, acquisitionNote, now, now);
+    // Insert ledger entry
+    // If mode='set', first insert a deduct entry to zero out current, then acquire
+    if (mode === 'set' && currentAcquiredQty !== 0) {
+      db.prepare(`
+        INSERT INTO plan_material_ledger
+          (ledger_id, plan_id, type_id, event_type, quantity, method, unit_price, note, source_ref, created_at)
+        VALUES (?, ?, ?, 'adjusted', ?, ?, ?, ?, NULL, ?)
+      `).run(randomUUID(), planId, typeId, -currentAcquiredQty, method, customPrice, acquisitionNote, now);
+    }
 
-    // Log the acquisition
     db.prepare(`
-      INSERT INTO plan_material_acquisition_log
-        (plan_id, type_id, timestamp, action, quantity_before, quantity_after,
-         acquisition_method, custom_price, note, performed_by)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'user')
-    `).run(planId, typeId, now, mode, currentAcquiredQty, newTotal,
-           acquisitionMethod, customPrice, acquisitionNote);
+      INSERT INTO plan_material_ledger
+        (ledger_id, plan_id, type_id, event_type, quantity, method, unit_price, note, source_ref, created_at)
+      VALUES (?, ?, ?, 'acquired', ?, ?, ?, ?, NULL, ?)
+    `).run(randomUUID(), planId, typeId, newTotal, method, customPrice, acquisitionNote, now);
 
     console.log(`[Plans] Marked ${newTotal} units of material ${typeId} as acquired for plan ${planId} (mode: ${mode})`);
 
@@ -3688,7 +3871,7 @@ function markMaterialAcquired(planId, typeId, options = {}) {
       success: true,
       newTotal,
       hasExcess,
-      excessAmount: hasExcess ? newTotal - currentMaterial.quantity : 0,
+      excessAmount: hasExcess ? newTotal - currentMaterial.quantity_needed : 0,
       assetWarning
     };
   } catch (error) {
@@ -3707,28 +3890,25 @@ function unmarkMaterialAcquired(planId, typeId) {
   const db = getCharacterDatabase();
 
   try {
-    // Get current quantity before deletion for logging
-    const currentAcq = db.prepare(`
-      SELECT quantity FROM plan_material_manual_acquisitions
+    // Get current net from ledger
+    const currentLedger = db.prepare(`
+      SELECT SUM(quantity) as net_acquired
+      FROM plan_material_ledger
       WHERE plan_id = ? AND type_id = ?
     `).get(planId, typeId);
 
-    if (!currentAcq) {
-      return { success: true, message: 'No manual acquisition to remove' };
+    const netAcquired = currentLedger?.net_acquired || 0;
+
+    if (netAcquired === 0) {
+      return { success: true, message: 'No acquisition to remove' };
     }
 
-    // Delete the manual acquisition
+    // Insert deducted entry to zero out
     db.prepare(`
-      DELETE FROM plan_material_manual_acquisitions
-      WHERE plan_id = ? AND type_id = ?
-    `).run(planId, typeId);
-
-    // Log the removal
-    db.prepare(`
-      INSERT INTO plan_material_acquisition_log
-        (plan_id, type_id, timestamp, action, quantity_before, quantity_after, performed_by)
-      VALUES (?, ?, ?, 'remove', ?, 0, 'user')
-    `).run(planId, typeId, Date.now(), currentAcq.quantity);
+      INSERT INTO plan_material_ledger
+        (ledger_id, plan_id, type_id, event_type, quantity, method, unit_price, note, source_ref, created_at)
+      VALUES (?, ?, ?, 'deducted', ?, 'manual', NULL, 'User unmarked acquisition', NULL, ?)
+    `).run(randomUUID(), planId, typeId, -netAcquired, Date.now());
 
     console.log(`[Plans] Unmarked material ${typeId} as acquired for plan ${planId}`);
     return { success: true };
@@ -3751,34 +3931,23 @@ function updateMaterialAcquisition(planId, typeId, updates = {}) {
   const db = getCharacterDatabase();
 
   try {
-    // Build dynamic update
-    const setClauses = [];
-    const params = [];
-
     if (quantity !== null) {
-      setClauses.push('manually_acquired_quantity = ?');
-      params.push(quantity);
-    }
-
-    if (customPrice !== null) {
-      setClauses.push('custom_price = ?');
-      params.push(customPrice);
-    }
-
-    if (setClauses.length === 0) {
-      throw new Error('No updates provided');
-    }
-
-    params.push(planId, typeId);
-
-    const result = db.prepare(`
-      UPDATE plan_materials
-      SET ${setClauses.join(', ')}
-      WHERE plan_id = ? AND type_id = ?
-    `).run(...params);
-
-    if (result.changes === 0) {
-      throw new Error('Material not found in plan');
+      markMaterialAcquired(planId, typeId, {
+        quantity,
+        customPrice,
+        mode: 'set'
+      });
+    } else if (customPrice !== null) {
+      // Update the most recent non-manufactured ledger entry's unit_price
+      db.prepare(`
+        UPDATE plan_material_ledger
+        SET unit_price = ?
+        WHERE ledger_id = (
+          SELECT ledger_id FROM plan_material_ledger
+          WHERE plan_id = ? AND type_id = ? AND method != 'manufactured'
+          ORDER BY created_at DESC LIMIT 1
+        )
+      `).run(customPrice, planId, typeId);
     }
 
     console.log(`[Plans] Updated acquisition for material ${typeId} in plan ${planId}`);
@@ -3799,16 +3968,20 @@ function updateMaterialCustomPrice(planId, typeId, customPrice) {
 
   try {
     const result = db.prepare(`
-      UPDATE plan_materials
-      SET custom_price = ?
-      WHERE plan_id = ? AND type_id = ?
+      UPDATE plan_material_ledger
+      SET unit_price = ?
+      WHERE ledger_id = (
+        SELECT ledger_id FROM plan_material_ledger
+        WHERE plan_id = ? AND type_id = ? AND method != 'manufactured'
+        ORDER BY created_at DESC LIMIT 1
+      )
     `).run(customPrice, planId, typeId);
 
     if (result.changes === 0) {
-      throw new Error('Material not found in plan');
+      console.log(`[Plans] No ledger entry found to update custom price for material ${typeId}`);
+    } else {
+      console.log(`[Plans] Updated custom price for material ${typeId} in plan ${planId}`);
     }
-
-    console.log(`[Plans] Updated custom price for material ${typeId} in plan ${planId}`);
   } catch (error) {
     console.error('[Plans] Error updating material custom price:', error);
     throw error;
@@ -3825,54 +3998,48 @@ function cleanupExcessAcquisitions(planId, typeId = null) {
   const db = getCharacterDatabase();
 
   try {
-    // Find acquisitions that exceed needed quantity
+    // Find types where ledger net > node quantity_needed
     let query = `
-      SELECT pm.type_id, pm.quantity as needed, ma.quantity as acquired
-      FROM plan_materials pm
-      JOIN plan_material_manual_acquisitions ma
-        ON pm.plan_id = ma.plan_id AND pm.type_id = ma.type_id
-      WHERE pm.plan_id = ?
-        AND ma.quantity > pm.quantity
+      SELECT pmn.type_id,
+             SUM(pmn.quantity_needed) as needed,
+             SUM(pml.quantity) as net_acquired
+      FROM plan_material_nodes pmn
+      LEFT JOIN plan_material_ledger pml
+        ON pmn.plan_id = pml.plan_id AND pmn.type_id = pml.type_id
+      WHERE pmn.plan_id = ? AND pmn.node_type = 'material'
+      GROUP BY pmn.type_id
+      HAVING net_acquired > needed
     `;
 
     const params = [planId];
     if (typeId) {
-      query += ' AND pm.type_id = ?';
+      query = query.replace('WHERE pmn.plan_id = ?', 'WHERE pmn.plan_id = ? AND pmn.type_id = ?');
       params.push(typeId);
     }
 
     const excessMaterials = db.prepare(query).all(...params);
 
     if (excessMaterials.length === 0) {
-      return { adjusted: 0 };
+      return { success: true, adjusted: 0 };
     }
 
     const now = Date.now();
-    const updateStmt = db.prepare(`
-      UPDATE plan_material_manual_acquisitions
-      SET quantity = ?, updated_at = ?
-      WHERE plan_id = ? AND type_id = ?
+    const insertLedger = db.prepare(`
+      INSERT INTO plan_material_ledger
+        (ledger_id, plan_id, type_id, event_type, quantity, method, unit_price, note, source_ref, created_at)
+      VALUES (?, ?, ?, 'deducted', ?, 'manual', NULL, 'Excess cleanup', NULL, ?)
     `);
 
-    const logStmt = db.prepare(`
-      INSERT INTO plan_material_acquisition_log
-        (plan_id, type_id, timestamp, action, quantity_before, quantity_after, performed_by)
-      VALUES (?, ?, ?, 'cleanup', ?, ?, 'user')
-    `);
-
-    excessMaterials.forEach(m => {
-      // Update acquisition to match needed quantity
-      updateStmt.run(m.needed, now, planId, m.type_id);
-
-      // Log the adjustment
-      logStmt.run(planId, m.type_id, now, m.acquired, m.needed);
-    });
+    for (const m of excessMaterials) {
+      const excess = m.net_acquired - m.needed;
+      insertLedger.run(randomUUID(), planId, m.type_id, -excess, now);
+    }
 
     console.log(`[Plans] Cleaned up ${excessMaterials.length} excess acquisitions for plan ${planId}`);
-    return { adjusted: excessMaterials.length };
+    return { success: true, adjusted: excessMaterials.length };
   } catch (error) {
     console.error('[Plans] Error cleaning up excess acquisitions:', error);
-    throw error;
+    return { success: false, error: error.message };
   }
 }
 
@@ -3889,15 +4056,13 @@ function getAcquisitionLog(planId, typeId = null) {
     let query = `
       SELECT
         type_id,
-        timestamp,
-        action,
-        quantity_before,
-        quantity_after,
-        acquisition_method,
-        custom_price,
-        note,
-        performed_by
-      FROM plan_material_acquisition_log
+        created_at as timestamp,
+        event_type as action,
+        quantity,
+        method as acquisition_method,
+        unit_price as custom_price,
+        note
+      FROM plan_material_ledger
       WHERE plan_id = ?
     `;
 
@@ -3907,7 +4072,7 @@ function getAcquisitionLog(planId, typeId = null) {
       params.push(typeId);
     }
 
-    query += ' ORDER BY timestamp DESC LIMIT 100'; // Most recent 100 entries
+    query += ' ORDER BY created_at DESC LIMIT 100';
 
     const logEntries = db.prepare(query).all(...params);
 
@@ -3917,17 +4082,113 @@ function getAcquisitionLog(planId, typeId = null) {
       timestamp: entry.timestamp,
       timestampFormatted: new Date(entry.timestamp).toLocaleString(),
       action: entry.action,
-      quantityBefore: entry.quantity_before,
-      quantityAfter: entry.quantity_after,
-      quantityChange: entry.quantity_after - (entry.quantity_before || 0),
+      quantityBefore: null,
+      quantityAfter: null,
+      quantityChange: entry.quantity,
       acquisitionMethod: entry.acquisition_method,
       customPrice: entry.custom_price,
       note: entry.note,
-      performedBy: entry.performed_by
+      performedBy: 'user'
     }));
   } catch (error) {
     console.error('[Plans] Error getting acquisition log:', error);
     throw error;
+  }
+}
+
+/**
+ * Get the material tree for a plan, optionally filtered by blueprint
+ * @param {string} planId - Plan ID
+ * @param {string|null} planBlueprintId - Optional: filter to specific blueprint subtree
+ * @returns {Array} Array of root nodes with children recursively attached
+ */
+async function getMaterialTree(planId, planBlueprintId = null) {
+  try {
+    const db = getCharacterDatabase();
+
+    // Query nodes
+    let query = 'SELECT * FROM plan_material_nodes WHERE plan_id = ?';
+    const params = [planId];
+    if (planBlueprintId) {
+      query += ' AND plan_blueprint_id = ?';
+      params.push(planBlueprintId);
+    }
+    query += ' ORDER BY depth, node_id';
+
+    const nodes = db.prepare(query).all(...params);
+
+    if (nodes.length === 0) {
+      return [];
+    }
+
+    // Batch fetch type names from SDE
+    const typeIds = [...new Set(nodes.map(n => n.type_id))];
+    const typeNames = {};
+
+    try {
+      const sdePath = getSdePath();
+      const sdeDb = new Database(sdePath, { readonly: true });
+      try {
+        const placeholders = typeIds.map(() => '?').join(',');
+        const types = sdeDb.prepare(`
+          SELECT typeID, typeName FROM invTypes WHERE typeID IN (${placeholders})
+        `).all(...typeIds);
+        for (const t of types) {
+          typeNames[t.typeID] = t.typeName;
+        }
+      } finally {
+        sdeDb.close();
+      }
+    } catch (error) {
+      console.error('[Plans] Error fetching type names for material tree:', error);
+    }
+
+    // Get ledger net acquired per type
+    const ledgerEntries = db.prepare(`
+      SELECT type_id, SUM(quantity) as net_acquired
+      FROM plan_material_ledger
+      WHERE plan_id = ?
+      GROUP BY type_id
+    `).all(planId);
+    const ledgerMap = new Map(ledgerEntries.map(l => [l.type_id, l.net_acquired]));
+
+    // Build node map and tree structure
+    const nodeMap = new Map();
+    for (const node of nodes) {
+      nodeMap.set(node.node_id, {
+        nodeId: node.node_id,
+        typeId: node.type_id,
+        typeName: typeNames[node.type_id] || `Type ${node.type_id}`,
+        nodeType: node.node_type,
+        depth: node.depth,
+        quantityNeeded: node.quantity_needed,
+        quantityPerRun: node.quantity_per_run,
+        runsNeeded: node.runs_needed,
+        meLevel: node.me_level,
+        isReaction: node.is_reaction === 1,
+        buildPlan: node.build_plan,
+        priceEach: node.price_each,
+        sourcePlanBlueprintId: node.source_plan_blueprint_id,
+        acquiredQuantity: ledgerMap.get(node.type_id) || 0,
+        children: []
+      });
+    }
+
+    // Attach children to parents
+    const roots = [];
+    for (const node of nodes) {
+      const nodeObj = nodeMap.get(node.node_id);
+      if (node.parent_node_id && nodeMap.has(node.parent_node_id)) {
+        nodeMap.get(node.parent_node_id).children.push(nodeObj);
+      } else {
+        roots.push(nodeObj);
+      }
+    }
+
+    return roots;
+  } catch (error) {
+    console.error('[Plans] Error getting material tree:', error);
+    return [];
   }
 }
 
@@ -4016,7 +4277,7 @@ async function markReactionBuilt(planBlueprintId, builtRuns) {
 
     // Recalculate manufactured materials
     // This will mark reaction base materials as acquired based on built runs
-    await recalculateManufacturedMaterials(reaction.plan_id, reaction.character_id);
+    await recalculateManufacturedMaterials(reaction.plan_id);
 
     return true;
   } catch (error) {
@@ -4176,4 +4437,5 @@ module.exports = {
   getReactions,
   markReactionBuilt,
   getProductOwnedAssets,
+  getMaterialTree,
 };

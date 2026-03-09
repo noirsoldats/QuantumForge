@@ -57,6 +57,8 @@ body {
 }
 
 .search-input {
+  display: block;
+  width: calc(100% - 32px);
   margin: 16px;
   padding: 10px 12px;
   background-color: #1e1e2e;
@@ -64,6 +66,7 @@ body {
   border-radius: 6px;
   color: #ffffff;
   font-size: 14px;
+  box-sizing: border-box;
 }
 
 .search-input::placeholder {
@@ -2185,6 +2188,89 @@ tr[data-editing="true"] {
 .badge-raw {
   background: #7289da;
   color: white;
+}
+
+/* Material Tree View (scoped to .material-tree to avoid colliding with .reaction-tree) */
+.material-tree {
+  padding: 4px 0;
+}
+
+.material-tree .tree-node {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: 4px;
+  min-height: 32px;
+  margin: 2px 0;
+  transition: background-color 0.15s;
+}
+
+.material-tree .tree-node:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.material-tree .tree-node-product {
+  background: linear-gradient(90deg, rgba(88, 101, 242, 0.12), transparent);
+  border-left: 3px solid #5865f2;
+  font-weight: 600;
+}
+
+.material-tree .tree-node-intermediate {
+  border-left: 3px solid #43b581;
+}
+
+.material-tree .tree-node-material {
+  border-left: 3px solid #4f545c;
+  opacity: 0.9;
+}
+
+.tree-collapse-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--text-secondary);
+  padding: 0 4px;
+  font-size: 10px;
+  flex-shrink: 0;
+  width: 20px;
+  text-align: center;
+}
+
+.tree-collapse-btn:hover {
+  color: var(--text-primary);
+}
+
+.tree-collapse-placeholder {
+  width: 20px;
+  flex-shrink: 0;
+  display: inline-block;
+}
+
+.tree-node-name {
+  flex: 1;
+  color: var(--text-primary);
+  font-size: 13px;
+}
+
+.qty-needed {
+  font-family: 'Courier New', monospace;
+  font-size: 12px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.qty-intermediate {
+  font-family: 'Courier New', monospace;
+  font-size: 12px;
+  color: #43b581;
+  white-space: nowrap;
+}
+
+.tree-node-price {
+  font-size: 11px;
+  color: var(--text-secondary);
+  white-space: nowrap;
 }
 
 /* Empty States */

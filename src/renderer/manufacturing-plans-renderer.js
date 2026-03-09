@@ -28,6 +28,8 @@ let currentCharacterId = null;
 let activeTab = 'overview';
 let selectedBlueprintTypeId = null;
 let facilities = [];
+let materialsTreeView = false;
+const materialsNodeCollapsed = new Map();
 let autoRefreshInterval = null;
 let bulkEditMode = false;
 
@@ -654,6 +656,71 @@ window.toggleCategory = function(category) {
   }
 }
 
+/**
+ * Render the material tree view from plan_material_nodes
+ * @param {Array} treeNodes - Root nodes with children recursively attached
+ */
+function renderMaterialTree(treeNodes) {
+  // Prefer the dedicated tree wrapper if it exists (inside loadMaterials tree-view branch)
+  const wrapper = document.getElementById('materialsList') || document.getElementById('materials-list-tab');
+  if (!wrapper) return;
+
+  if (!treeNodes || treeNodes.length === 0) {
+    wrapper.innerHTML = renderEmptyState('No material tree data', 'Recalculate the plan to build the material tree.', null);
+    return;
+  }
+
+  let html = '<div class="material-tree">';
+
+  function renderNode(node, depth) {
+    const indent = depth * 16;
+    const isCollapsed = materialsNodeCollapsed.get(node.nodeId);
+    const hasChildren = node.children && node.children.length > 0;
+    const collapseBtn = hasChildren
+      ? `<button class="tree-collapse-btn" data-node-id="${node.nodeId}">${isCollapsed ? '&#9654;' : '&#9660;'}</button>`
+      : '<span class="tree-collapse-placeholder"></span>';
+
+    const nodeTypeClass = `tree-node-${node.nodeType}`;
+    const qtyBadge = node.nodeType === 'material'
+      ? `<span class="qty-needed">${node.quantityNeeded.toLocaleString()}</span>`
+      : `<span class="qty-intermediate">${node.quantityNeeded.toLocaleString()}</span>`;
+
+    html += `<div class="tree-node ${nodeTypeClass}" style="padding-left: ${indent}px" data-node-id="${node.nodeId}" ${hasChildren && isCollapsed ? 'data-collapsed="true"' : ''}>`;
+    html += collapseBtn;
+    html += `<span class="tree-node-name">${node.typeName}</span>`;
+    html += qtyBadge;
+    if (node.nodeType !== 'product' && node.priceEach) {
+      html += `<span class="tree-node-price">${formatISK(node.priceEach)}/ea</span>`;
+    }
+    html += '</div>';
+
+    if (hasChildren && !isCollapsed) {
+      for (const child of node.children) {
+        renderNode(child, depth + 1);
+      }
+    }
+  }
+
+  for (const rootNode of treeNodes) {
+    renderNode(rootNode, 0);
+  }
+
+  html += '</div>';
+  wrapper.innerHTML = html;
+
+  // Wire collapse buttons
+  wrapper.querySelectorAll('.tree-collapse-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      const nodeId = e.target.dataset.nodeId;
+      const currentlyCollapsed = materialsNodeCollapsed.get(nodeId);
+      materialsNodeCollapsed.set(nodeId, !currentlyCollapsed);
+      window.electronAPI.plans.getMaterialTree(selectedPlanId).then(treeData => {
+        renderMaterialTree(treeData);
+      });
+    });
+  });
+}
+
 // Load materials tab
 async function loadMaterials() {
   const includeAssets = document.getElementById('include-assets-checkbox').checked;
@@ -666,6 +733,32 @@ async function loadMaterials() {
       'Add blueprints to this plan and materials will be calculated automatically.',
       '<rect x="2" y="7" width="20" height="14" rx="2"></rect><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"></path>'
     );
+    return;
+  }
+
+  // Add tree/flat view toggle at top of container
+  const toggleHtml = `
+    <div class="materials-view-toggle" style="display:flex;gap:8px;margin-bottom:12px;">
+      <button id="materialsFlatViewBtn" class="btn btn-sm${!materialsTreeView ? ' active' : ''}" title="Show flat list of all materials">Flat View</button>
+      <button id="materialsTreeViewBtn" class="btn btn-sm${materialsTreeView ? ' active' : ''}" title="Show materials as a tree by blueprint">Tree View</button>
+    </div>`;
+
+  if (materialsTreeView) {
+    container.innerHTML = toggleHtml;
+    const treeData = await window.electronAPI.plans.getMaterialTree(selectedPlanId);
+    // Append a list container for the tree
+    const treeWrapper = document.createElement('div');
+    treeWrapper.id = 'materialsList';
+    container.appendChild(treeWrapper);
+    renderMaterialTree(treeData);
+    document.getElementById('materialsFlatViewBtn')?.addEventListener('click', () => {
+      materialsTreeView = false;
+      loadMaterials();
+    });
+    document.getElementById('materialsTreeViewBtn')?.addEventListener('click', () => {
+      materialsTreeView = true;
+      loadMaterials();
+    });
     return;
   }
 
@@ -684,7 +777,11 @@ async function loadMaterials() {
   const categoryOrder = ['Minerals', 'Reaction Materials', 'Planetary Materials', 'Gas Cloud Materials', 'Salvage Materials', 'Other'];
 
   // Build HTML with collapsible category sections
-  let html = '';
+  let html = `
+    <div class="materials-view-toggle" style="display:flex;gap:8px;margin-bottom:12px;">
+      <button id="materialsFlatViewBtn" class="btn btn-sm active" title="Show flat list of all materials">Flat View</button>
+      <button id="materialsTreeViewBtn" class="btn btn-sm" title="Show materials as a tree by blueprint">Tree View</button>
+    </div>`;
 
   for (const category of categoryOrder) {
     const categoryMaterials = groupedMaterials[category];
@@ -884,6 +981,16 @@ async function loadMaterials() {
 
   container.innerHTML = html;
 
+  // Wire view toggle buttons (flat view)
+  document.getElementById('materialsFlatViewBtn')?.addEventListener('click', () => {
+    materialsTreeView = false;
+    loadMaterials();
+  });
+  document.getElementById('materialsTreeViewBtn')?.addEventListener('click', () => {
+    materialsTreeView = true;
+    loadMaterials();
+  });
+
   // Attach event listeners after rendering
   // Category header click handlers
   container.querySelectorAll('.category-header').forEach(header => {
@@ -1015,8 +1122,7 @@ function renderMaterialWarnings(warnings) {
               </li>
             `).join('')}
           </ul>
-          <button class="warning-button"
-                  onclick="cleanupAllExcessAcquisitions()">
+          <button class="warning-button cleanup-all-excess-btn">
             Fix All
           </button>
         </div>
@@ -1037,7 +1143,7 @@ function renderMaterialWarnings(warnings) {
               </li>
             `).join('')}
           </ul>
-          <button class="secondary-button" onclick="dismissWarning('removed_acquisitions')">
+          <button class="secondary-button dismiss-warning-btn" data-warning-type="removed_acquisitions">
             Dismiss
           </button>
         </div>
@@ -1048,7 +1154,7 @@ function renderMaterialWarnings(warnings) {
   warningsContainer.innerHTML = warningsHtml;
   warningsContainer.style.display = 'block';
 
-  // Attach event listeners to inline cleanup buttons
+  // Attach event listeners to warning buttons
   warningsContainer.querySelectorAll('.cleanup-excess-btn-warning').forEach(btn => {
     btn.addEventListener('click', () => {
       const typeId = parseInt(btn.dataset.typeId);
@@ -1056,6 +1162,29 @@ function renderMaterialWarnings(warnings) {
       cleanupExcessAcquisition(typeId, materialName);
     });
   });
+
+  const cleanupAllBtn = warningsContainer.querySelector('.cleanup-all-excess-btn');
+  if (cleanupAllBtn) {
+    cleanupAllBtn.addEventListener('click', () => window.cleanupAllExcessAcquisitions());
+  }
+
+  warningsContainer.querySelectorAll('.dismiss-warning-btn').forEach(btn => {
+    btn.addEventListener('click', () => dismissWarning(btn.dataset.warningType));
+  });
+}
+
+// Dismiss a warning section by type
+function dismissWarning(warningType) {
+  const warningsContainer = document.getElementById('materials-warnings');
+  if (!warningsContainer) return;
+  warningsContainer.querySelectorAll('.alert').forEach(alert => {
+    if (alert.querySelector(`[data-warning-type="${warningType}"]`)) {
+      alert.remove();
+    }
+  });
+  if (!warningsContainer.querySelector('.alert')) {
+    warningsContainer.style.display = 'none';
+  }
 }
 
 // Cleanup all excess acquisitions
@@ -2065,7 +2194,7 @@ async function searchBlueprints(e) {
       return;
     }
 
-    container.innerHTML = results.slice(0, 20).map(bp => `
+    container.innerHTML = results.slice(0, 100).map(bp => `
       <div class="search-result-item" data-type-id="${bp.typeID}">
         <strong>${escapeHtml(bp.typeName)}</strong>
       </div>

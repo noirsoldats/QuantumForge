@@ -180,25 +180,43 @@ function initializeCharacterDatabase() {
   `);
 
   database.exec(`
-    CREATE TABLE IF NOT EXISTS plan_materials (
-      plan_id TEXT NOT NULL,
-      type_id INTEGER NOT NULL,
-      quantity INTEGER NOT NULL,
-      base_price REAL,
-      price_frozen_at INTEGER,
-      PRIMARY KEY (plan_id, type_id),
-      FOREIGN KEY (plan_id) REFERENCES manufacturing_plans(plan_id) ON DELETE CASCADE
+    CREATE TABLE IF NOT EXISTS plan_material_nodes (
+      node_id                    TEXT    PRIMARY KEY,
+      plan_id                    TEXT    NOT NULL,
+      plan_blueprint_id          TEXT    NOT NULL,
+      source_plan_blueprint_id   TEXT,
+      parent_node_id             TEXT,
+      type_id                    INTEGER NOT NULL,
+      node_type                  TEXT    NOT NULL CHECK(node_type IN ('product','material','intermediate')),
+      depth                      INTEGER NOT NULL DEFAULT 0,
+      quantity_needed            REAL    NOT NULL,
+      quantity_per_run           REAL,
+      runs_needed                INTEGER,
+      me_level                   INTEGER,
+      is_reaction                INTEGER NOT NULL DEFAULT 0,
+      build_plan                 TEXT    NOT NULL DEFAULT 'raw_materials'
+                                   CHECK(build_plan IN ('raw_materials','components','buy')),
+      price_each                 REAL,
+      price_frozen_at            INTEGER,
+      created_at                 INTEGER NOT NULL,
+      updated_at                 INTEGER NOT NULL,
+      FOREIGN KEY (plan_id) REFERENCES manufacturing_plans(plan_id) ON DELETE CASCADE,
+      FOREIGN KEY (plan_blueprint_id) REFERENCES plan_blueprints(plan_blueprint_id) ON DELETE CASCADE
     )
   `);
 
   database.exec(`
-    CREATE TABLE IF NOT EXISTS plan_products (
-      plan_id TEXT NOT NULL,
-      type_id INTEGER NOT NULL,
-      quantity INTEGER NOT NULL,
-      base_price REAL,
-      price_frozen_at INTEGER,
-      PRIMARY KEY (plan_id, type_id),
+    CREATE TABLE IF NOT EXISTS plan_material_ledger (
+      ledger_id   TEXT    PRIMARY KEY,
+      plan_id     TEXT    NOT NULL,
+      type_id     INTEGER NOT NULL,
+      event_type  TEXT    NOT NULL CHECK(event_type IN ('acquired','deducted','adjusted')),
+      quantity    REAL    NOT NULL,
+      method      TEXT    NOT NULL CHECK(method IN ('manual','purchased','manufactured','allocated')),
+      unit_price  REAL,
+      note        TEXT,
+      source_ref  TEXT,
+      created_at  INTEGER NOT NULL,
       FOREIGN KEY (plan_id) REFERENCES manufacturing_plans(plan_id) ON DELETE CASCADE
     )
   `);
@@ -303,6 +321,15 @@ function initializeCharacterDatabase() {
     CREATE INDEX IF NOT EXISTS idx_job_matches_status ON plan_job_matches(status);
     CREATE INDEX IF NOT EXISTS idx_transaction_matches_plan ON plan_transaction_matches(plan_id);
     CREATE INDEX IF NOT EXISTS idx_transaction_matches_status ON plan_transaction_matches(status);
+    CREATE INDEX IF NOT EXISTS idx_pmn_plan          ON plan_material_nodes(plan_id);
+    CREATE INDEX IF NOT EXISTS idx_pmn_blueprint     ON plan_material_nodes(plan_blueprint_id);
+    CREATE INDEX IF NOT EXISTS idx_pmn_parent        ON plan_material_nodes(parent_node_id);
+    CREATE INDEX IF NOT EXISTS idx_pmn_type          ON plan_material_nodes(type_id);
+    CREATE INDEX IF NOT EXISTS idx_pmn_plan_type     ON plan_material_nodes(plan_id, type_id);
+    CREATE INDEX IF NOT EXISTS idx_pmn_plan_nodetype ON plan_material_nodes(plan_id, node_type);
+    CREATE INDEX IF NOT EXISTS idx_pml_plan          ON plan_material_ledger(plan_id);
+    CREATE INDEX IF NOT EXISTS idx_pml_type          ON plan_material_ledger(plan_id, type_id);
+    CREATE INDEX IF NOT EXISTS idx_pml_created       ON plan_material_ledger(created_at);
   `);
 
   // Migration: Add use_intermediates column to plan_blueprints if it doesn't exist
@@ -314,20 +341,6 @@ function initializeCharacterDatabase() {
     if (!hasUseIntermediates) {
       console.log('[Character Database] Adding use_intermediates column to plan_blueprints table');
       database.exec(`ALTER TABLE plan_blueprints ADD COLUMN use_intermediates TEXT DEFAULT 'raw_materials'`);
-    }
-  } catch (error) {
-    console.error('[Character Database] Migration error:', error);
-  }
-
-  // Migration: Add is_intermediate column to plan_products if it doesn't exist
-  // This column tracks whether a product is an intermediate component or final product
-  try {
-    const columns = database.pragma('table_info(plan_products)');
-    const hasIsIntermediate = columns.some(col => col.name === 'is_intermediate');
-
-    if (!hasIsIntermediate) {
-      console.log('[Character Database] Adding is_intermediate column to plan_products table');
-      database.exec(`ALTER TABLE plan_products ADD COLUMN is_intermediate INTEGER DEFAULT 0`);
     }
   } catch (error) {
     console.error('[Character Database] Migration error:', error);
@@ -371,20 +384,6 @@ function initializeCharacterDatabase() {
     }
   } catch (error) {
     console.error('[Character Database] Intermediate blueprint migration error:', error);
-  }
-
-  // Migration: Add intermediate_depth column to plan_products
-  // This column tracks the depth level of intermediates (0=final, 1=level 1 intermediate, 2=level 2, etc.)
-  try {
-    const columns = database.pragma('table_info(plan_products)');
-    const hasIntermediateDepth = columns.some(col => col.name === 'intermediate_depth');
-
-    if (!hasIntermediateDepth) {
-      console.log('[Character Database] Adding intermediate_depth column to plan_products table');
-      database.exec(`ALTER TABLE plan_products ADD COLUMN intermediate_depth INTEGER DEFAULT 0`);
-    }
-  } catch (error) {
-    console.error('[Character Database] Migration error:', error);
   }
 
   // Migration: Add reaction support to plan_blueprints
