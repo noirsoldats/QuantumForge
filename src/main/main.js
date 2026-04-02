@@ -805,9 +805,11 @@ function setupIPCHandlers() {
       // If successful, save validation status to settings
       if (result.success) {
         const { updateSettings } = require('./settings-manager');
+        const { getCurrentVersion } = require('./sde-manager');
         updateSettings('sde', {
           validationStatus: {
             passed: result.validationResults.passed,
+            sdeVersion: getCurrentVersion(),
             date: new Date().toISOString(),
             summary: result.validationResults.summary,
             totalChecks: result.validationResults.totalChecks,
@@ -829,9 +831,11 @@ function setupIPCHandlers() {
 
       // Save validation status to settings
       const { updateSettings } = require('./settings-manager');
+      const { getCurrentVersion } = require('./sde-manager');
       updateSettings('sde', {
         validationStatus: {
           passed: result.passed,
+          sdeVersion: getCurrentVersion(),
           date: new Date().toISOString(),
           summary: result.summary || result.error || 'Validation completed',
           totalChecks: result.totalChecks || 0,
@@ -1215,8 +1219,8 @@ function setupIPCHandlers() {
     return matchTransactionsToPlan(planId, options);
   });
 
-  ipcMain.handle('plans:saveTransactionMatches', (event, matches) => {
-    return saveTransactionMatches(matches);
+  ipcMain.handle('plans:saveTransactionMatches', (event, planId, matches) => {
+    return saveTransactionMatches(planId, matches);
   });
 
   ipcMain.handle('plans:confirmJobMatch', (event, matchId) => {
@@ -1459,12 +1463,18 @@ function setupIPCHandlers() {
     return searchReactions(searchTerm, limit);
   });
 
-  ipcMain.handle('reactions:calculateMaterials', async (event, reactionTypeId, runs, characterId, facilityId) => {
-    // Get facility if facilityId is provided
+  ipcMain.handle('reactions:calculateMaterials', async (event, reactionTypeId, runs, characterId, facilityOrId) => {
+    // Accept either a facility snapshot object or a facilityId string/number
     let facility = null;
-    if (facilityId) {
-      const { getManufacturingFacility } = require('./settings-manager');
-      facility = getManufacturingFacility(facilityId);
+    if (facilityOrId) {
+      if (typeof facilityOrId === 'object') {
+        // Caller passed a snapshot directly — use it as-is
+        facility = facilityOrId;
+      } else {
+        // Caller passed an ID — look up current facility from settings
+        const { getManufacturingFacility } = require('./settings-manager');
+        facility = getManufacturingFacility(facilityOrId);
+      }
 
       // Get system security status from SDE if we have a systemId
       if (facility && facility.systemId) {

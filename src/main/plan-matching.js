@@ -75,7 +75,7 @@ function matchJobsToPlan(planId, options = {}) {
           (character_id IN (${charPlaceholders}) AND is_corporation = 0)
           OR (corporation_id IN (${corpPlaceholders}) AND is_corporation = 1)
         )
-          AND activity_id = 1
+          AND activity_id IN (1, 9)
           AND start_date >= ?
         ORDER BY start_date DESC
       `).all(...charIds, ...corpIds, Math.floor(timeWindow / 1000));
@@ -86,7 +86,7 @@ function matchJobsToPlan(planId, options = {}) {
         SELECT * FROM esi_industry_jobs
         WHERE character_id IN (${charPlaceholders})
           AND is_corporation = 0
-          AND activity_id = 1
+          AND activity_id IN (1, 9)
           AND start_date >= ?
         ORDER BY start_date DESC
       `).all(...charIds, Math.floor(timeWindow / 1000));
@@ -97,7 +97,7 @@ function matchJobsToPlan(planId, options = {}) {
         SELECT * FROM esi_industry_jobs
         WHERE corporation_id IN (${corpPlaceholders})
           AND is_corporation = 1
-          AND activity_id = 1
+          AND activity_id IN (1, 9)
           AND start_date >= ?
         ORDER BY start_date DESC
       `).all(...corpIds, Math.floor(timeWindow / 1000));
@@ -466,7 +466,7 @@ function calculateTransactionMatchScore(transaction, planItem, matchType, plan) 
 /**
  * Save transaction matches to database
  */
-function saveTransactionMatches(matches) {
+function saveTransactionMatches(planId, matches) {
   const db = getCharacterDatabase();
 
   const insert = db.prepare(`
@@ -481,7 +481,7 @@ function saveTransactionMatches(matches) {
       const matchId = uuidv4();
       insert.run(
         matchId,
-        match.planItem.plan_id,
+        planId,
         match.transaction.transaction_id,
         match.transaction.type_id,
         match.matchType,

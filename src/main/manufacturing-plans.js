@@ -14,6 +14,21 @@ const Database = require('better-sqlite3');
 // ============================================================================
 
 /**
+ * Enrich a facility snapshot with securityStatus from SDE.
+ * The rig bonus calculator uses `facility.securityStatus ?? 0.5` — if securityStatus
+ * is missing the wrong rig bonus is applied. This matches what the reactions:calculateMaterials
+ * IPC handler does before calling calculateReactionMaterials.
+ */
+async function enrichFacilityWithSecurityStatus(facility) {
+  if (!facility || !facility.systemId || facility.securityStatus != null) {
+    return facility;
+  }
+  const { getSystemSecurityStatus } = require('./sde-database');
+  facility.securityStatus = await getSystemSecurityStatus(facility.systemId);
+  return facility;
+}
+
+/**
  * Classify materials into intermediates, reactions, and raw materials
  * @param {object} materials - Materials object from calculateBlueprintMaterials or calculateReactionMaterials
  * @returns {object} { intermediates: [{typeId, quantity, blueprintTypeId, product}], reactions: [{typeId, quantity, reactionTypeId, product}], rawMaterials: [{typeId, quantity}] }
@@ -2154,15 +2169,10 @@ async function recalculatePlanMaterials(planId, refreshPrices = false) {
             priceFrozenAt: null,
             _reactionTypeId: reaction.reactionTypeId  // keep for Phase 2.5 sourcePlanBlueprintId wiring
           });
-          await walkReactionNodes(
-            reaction.reactionTypeId,
-            reactionRunsNeeded,
-            facility,
-            rootBlueprintId,
-            null, // sourcePlanBlueprintId filled in later by Phase 2.5
-            reactionNodeId,
-            depth + 1
-          );
+          // Do NOT call walkReactionNodes here — the reaction's own facility (Athanor/Tatara)
+          // is only known in Phase 2.5 after aggregation. Phase 2.5 will walk child nodes once
+          // with the correct facility. Walking here would use the wrong parent facility AND
+          // create duplicate leaf nodes when Phase 2.5 also walks.
         }
       } else {
         // Reactions disabled: add reaction products as raw material leaf nodes
@@ -2490,7 +2500,11 @@ async function recalculatePlanMaterials(planId, refreshPrices = false) {
           aggregatedMaterials[materialTypeId] = (aggregatedMaterials[materialTypeId] || 0) + totalQty;
 
           if (planReactionsEnabled) {
-            // ---- Tree: create reaction node and expand its inputs immediately ----
+            // ---- Tree: create placeholder reaction node ----
+            // Do NOT call walkReactionNodes here — the reaction's own facility (Athanor/Tatara)
+            // is only known in PHASE 2.5 after aggregation. Walking here would use the
+            // manufacturing blueprint's facility (Sotiyo/Azbel), producing wrong quantities.
+            // PHASE 2.5 will wire sourcePlanBlueprintId and walk with the correct facility.
             const reactionRunsNeeded = await calculateReactionRuns(totalQty, reaction.reactionTypeId);
             const reactionProduct = await getReactionProduct(reaction.reactionTypeId);
             const reactionProductsPerRun = reactionProduct?.quantity ?? 1;
@@ -2513,16 +2527,7 @@ async function recalculatePlanMaterials(planId, refreshPrices = false) {
               priceFrozenAt: null,
               _reactionTypeId: reaction.reactionTypeId
             });
-            await walkReactionNodes(
-              reaction.reactionTypeId,
-              reactionRunsNeeded,
-              blueprint.facilitySnapshot,
-              blueprint.planBlueprintId,
-              null, // sourcePlanBlueprintId set by Phase 2.5
-              reactionNodeId,
-              1
-            );
-            // ---- End reaction tree ----
+            // ---- End placeholder reaction node ----
           } else {
             // Reactions disabled: add reaction product as a raw material leaf
             collectedNodes.push({
@@ -2672,6 +2677,7 @@ async function recalculatePlanMaterials(planId, refreshPrices = false) {
               facilityId = savedFacility.facilityId;
               try {
                 facility = savedFacility.facilitySnapshot ? JSON.parse(savedFacility.facilitySnapshot) : null;
+                facility = await enrichFacilityWithSecurityStatus(facility);
 
                 // Verify facility has necessary fields for bonus calculation
                 if (facility) {
@@ -2680,7 +2686,8 @@ async function recalculatePlanMaterials(planId, refreshPrices = false) {
                     name: facility.name,
                     hasRigs: !!facility.rigs,
                     rigCount: facility.rigs?.length || 0,
-                    structureTypeId: facility.structureTypeId
+                    structureTypeId: facility.structureTypeId,
+                    securityStatus: facility.securityStatus
                   });
 
                   // Ensure rigs array exists
@@ -2702,11 +2709,13 @@ async function recalculatePlanMaterials(planId, refreshPrices = false) {
                 bp.useIntermediates === 'raw_materials' || bp.useIntermediates === 'build_buy'
               );
               facility = firstParent ? firstParent.facilitySnapshot : null;
+              facility = await enrichFacilityWithSecurityStatus(facility);
               facilityId = facility ? facility.id : null;
               console.log(`[Plans] Using default facility for new reaction ${reactionTypeId}:`, {
                 name: facility?.name || 'none',
                 hasRigs: !!facility?.rigs,
-                rigCount: facility?.rigs?.length || 0
+                rigCount: facility?.rigs?.length || 0,
+                securityStatus: facility?.securityStatus
               });
             }
 
@@ -2777,10 +2786,26 @@ async function recalculatePlanMaterials(planId, refreshPrices = false) {
             );
 
             if (pendingReactionNodes.length > 0) {
-              // Wire ALL matching placeholder nodes with the reaction's plan_blueprint_id
+              // Wire ALL placeholder nodes with the aggregated reaction's plan_blueprint_id
+              // and update their quantities to the aggregated total.
               for (const n of pendingReactionNodes) {
                 n.sourcePlanBlueprintId = reactionBlueprintId;
+                n.runsNeeded = runsNeeded;
+                n.quantityNeeded = runsNeeded * (n.quantityPerRun ?? 1);
               }
+              // Walk reaction inputs ONCE using the correct reaction facility.
+              // Use the first pending node as the parent for leaf nodes so the tree
+              // is rooted correctly. Multiple pending nodes represent the same reaction
+              // appearing under different parents — one set of leaf nodes covers all.
+              await walkReactionNodes(
+                reactionTypeId,
+                runsNeeded,
+                facility,
+                pendingReactionNodes[0].planBlueprintId,
+                reactionBlueprintId,
+                pendingReactionNodes[0].nodeId,
+                1
+              );
             } else {
               // No pre-expanded node found: this reaction only appeared in aggregatedMaterials
               // via paths we didn't tree-walk (shouldn't normally happen, but handle gracefully).

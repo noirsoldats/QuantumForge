@@ -1,6 +1,6 @@
 const { ipcMain } = require('electron');
 const { initializeMarketDatabase } = require('./market-database');
-const { checkUpdateRequired, sdeExists, downloadAndValidateSDE, getSdePath } = require('./sde-manager');
+const { checkUpdateRequired, sdeExists, downloadAndValidateSDE, getSdePath, getCurrentVersion } = require('./sde-manager');
 const { loadSettings, updateSettings } = require('./settings-manager');
 const { needsMigration, migrateToGitHub } = require('./sde-source-migration');
 
@@ -586,8 +586,12 @@ async function performSDEDownload(splashWindow) {
   });
 
   try {
+    // Clear cached validation status so runSDEValidation performs a fresh check on the new SDE
+    const { updateSettings } = require('./settings-manager');
+    updateSettings('sde', { validationStatus: null });
+
     // Download and validate with progress callback
-    await downloadAndValidateSDE((progress) => {
+    const downloadResult = await downloadAndValidateSDE((progress) => {
       // Map the progress from downloadAndValidateSDE to splash screen format
       let status = 'Downloading...';
       let percentage = progress.percent || 0;
@@ -651,9 +655,11 @@ async function performSDEDownload(splashWindow) {
 async function runSDEValidation(splashWindow) {
   const settings = loadSettings();
 
-  // Skip validation if already validated
-  if (settings.sde?.validationStatus?.passed) {
-    console.log('[Startup] SDE already validated, skipping');
+  // Skip validation if already validated for the current SDE version
+  const validationStatus = settings.sde?.validationStatus;
+  const installedVersion = getCurrentVersion();
+  if (validationStatus?.passed && validationStatus?.sdeVersion && validationStatus.sdeVersion === installedVersion) {
+    console.log('[Startup] SDE already validated for version', installedVersion, '- skipping');
     splashWindow.webContents.send('startup:progress', {
       task: 'sdeValidate',
       status: 'Previously validated',
@@ -681,6 +687,7 @@ async function runSDEValidation(splashWindow) {
       updateSettings('sde', {
         validationStatus: {
           passed: true,
+          sdeVersion: getCurrentVersion(),
           date: new Date().toISOString(),
           summary: 'Quick validation passed',
           totalChecks: 1,

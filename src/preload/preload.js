@@ -177,7 +177,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     matchJobs: (planId, options) => ipcRenderer.invoke('plans:matchJobs', planId, options),
     saveJobMatches: (matches) => ipcRenderer.invoke('plans:saveJobMatches', matches),
     matchTransactions: (planId, options) => ipcRenderer.invoke('plans:matchTransactions', planId, options),
-    saveTransactionMatches: (matches) => ipcRenderer.invoke('plans:saveTransactionMatches', matches),
+    saveTransactionMatches: (planId, matches) => ipcRenderer.invoke('plans:saveTransactionMatches', planId, matches),
     confirmJobMatch: (matchId) => ipcRenderer.invoke('plans:confirmJobMatch', matchId),
     rejectJobMatch: (matchId) => ipcRenderer.invoke('plans:rejectJobMatch', matchId),
     confirmTransactionMatch: (matchId) => ipcRenderer.invoke('plans:confirmTransactionMatch', matchId),

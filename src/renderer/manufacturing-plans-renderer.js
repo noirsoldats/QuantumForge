@@ -1629,12 +1629,13 @@ async function loadReactions() {
     // No frontend aggregation needed
     for (const reaction of reactions) {
       try {
-        // Get reaction calculation with runs
+        // Get reaction calculation with runs — use the frozen facilitySnapshot so the
+        // Reactions tab uses the same facility configuration as the stored Materials tab.
         const calculation = await window.electronAPI.reactions.calculateMaterials(
           reaction.reactionTypeId,
           reaction.runs,
           null, // characterId
-          reaction.facilityId
+          reaction.facilitySnapshot || reaction.facilityId
         );
 
         html += await renderReactionTree(reaction, calculation);
@@ -3360,7 +3361,7 @@ async function matchTransactions() {
       return;
     }
 
-    await window.electronAPI.plans.saveTransactionMatches(matches);
+    await window.electronAPI.plans.saveTransactionMatches(selectedPlanId, matches);
     await loadTransactions();
     showToast(`Found ${matches.length} potential transaction match${matches.length > 1 ? 'es' : ''}`, 'success');
   } catch (error) {
