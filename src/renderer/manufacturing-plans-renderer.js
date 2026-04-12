@@ -728,6 +728,11 @@ async function loadMaterials() {
   const container = document.getElementById('materials-list-tab');
 
   if (materials.length === 0) {
+    const warningsContainer = document.getElementById('material-warnings');
+    if (warningsContainer) {
+      warningsContainer.innerHTML = '';
+      warningsContainer.style.display = 'none';
+    }
     container.innerHTML = renderEmptyState(
       'No materials yet',
       'Add blueprints to this plan and materials will be calculated automatically.',
