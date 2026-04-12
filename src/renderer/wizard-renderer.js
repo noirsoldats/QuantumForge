@@ -946,52 +946,50 @@ function toggleAdvancedSection(section) {
 // Step 5: Save Market Settings
 async function saveMarketSettings() {
   try {
-    const marketSettings = {
-      // Legacy location settings (for backward compatibility)
-      locationType: wizardState.marketSettings.locationType,
-      locationId: wizardState.marketSettings.locationId,
-      regionId: wizardState.marketSettings.regionId,
-      systemId: wizardState.marketSettings.systemId,
+    // Check if any Market Sets already exist (e.g., prior wizard run or migration)
+    const existingSets = await window.electronAPI.market.getMarketSets();
+    if (existingSets && existingSets.length > 0) {
+      // Already have sets — skip creating duplicate
+      return;
+    }
 
-      // Input materials settings (includes location for new structure)
+    const setName = wizardState.marketSettings.hubName || 'Default';
+    const marketSetData = {
+      name: setName,
+      isDefault: true,
       inputMaterials: {
-        // Location fields
         locationType: wizardState.marketSettings.locationType,
         locationId: wizardState.marketSettings.locationId,
         regionId: wizardState.marketSettings.regionId,
         systemId: wizardState.marketSettings.systemId,
-        // Pricing fields
+        structureId: null,
+        structureName: null,
+        characterId: null,
         priceType: wizardState.marketSettings.inputPriceType,
         priceMethod: wizardState.marketSettings.inputPricingMethod,
-        priceModifier: wizardState.marketSettings.inputPriceModifier / 100, // Convert from percentage
-        percentile: wizardState.marketSettings.inputPercentile / 100, // Convert from percentage
+        priceModifier: wizardState.marketSettings.inputPriceModifier / 100,
+        percentile: wizardState.marketSettings.inputPercentile / 100,
         minVolume: wizardState.marketSettings.inputMinVolume,
       },
-
-      // Output products settings (uses same location as input by default in wizard)
       outputProducts: {
-        useSameLocation: true, // Wizard sets up same location for input/output
-        // Location fields (same as input, will be used if useSameLocation is changed later)
+        useSameLocation: true,
         locationType: wizardState.marketSettings.locationType,
         locationId: wizardState.marketSettings.locationId,
         regionId: wizardState.marketSettings.regionId,
         systemId: wizardState.marketSettings.systemId,
-        // Pricing fields
+        structureId: null,
+        structureName: null,
+        characterId: null,
         priceType: wizardState.marketSettings.outputPriceType,
         priceMethod: wizardState.marketSettings.outputPricingMethod,
-        priceModifier: wizardState.marketSettings.outputPriceModifier / 100, // Convert from percentage
-        percentile: wizardState.marketSettings.outputPercentile / 100, // Convert from percentage
+        priceModifier: wizardState.marketSettings.outputPriceModifier / 100,
+        percentile: wizardState.marketSettings.outputPercentile / 100,
         minVolume: wizardState.marketSettings.outputMinVolume,
       },
-
-      warningThreshold: wizardState.marketSettings.warningThreshold / 100, // Convert from percentage
+      warningThreshold: wizardState.marketSettings.warningThreshold / 100,
     };
 
-    const result = await window.electronAPI.market.updateSettings(marketSettings);
-
-    if (!result) {
-      console.warn('Failed to save market settings');
-    }
+    await window.electronAPI.market.addMarketSet(marketSetData);
   } catch (error) {
     console.error('Error saving market settings:', error);
     // Non-critical - settings will use defaults

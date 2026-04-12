@@ -169,7 +169,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getProducts: (planId) => ipcRenderer.invoke('plans:getProducts', planId),
     getProductOwnedAssets: (planId, typeId) => ipcRenderer.invoke('plans:getProductOwnedAssets', planId, typeId),
     getSummary: (planId) => ipcRenderer.invoke('plans:getSummary', planId),
-    recalculateMaterials: (planId, refreshPrices) => ipcRenderer.invoke('plans:recalculateMaterials', planId, refreshPrices),
+    recalculateMaterials: (planId, refreshPrices, marketSetId) => ipcRenderer.invoke('plans:recalculateMaterials', planId, refreshPrices, marketSetId),
     refreshESIData: (characterId) => ipcRenderer.invoke('plans:refreshESIData', characterId),
     refreshPlanESIData: (planId) => ipcRenderer.invoke('plans:refreshPlanESIData', planId),
     openWindow: () => ipcRenderer.invoke('plans:openWindow'),
@@ -208,16 +208,25 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // Market API
   market: {
-    getSettings: () => ipcRenderer.invoke('market:getSettings'),
-    updateSettings: (updates) => ipcRenderer.invoke('market:updateSettings', updates),
+    // Market Sets CRUD
+    getMarketSets: () => ipcRenderer.invoke('market:getMarketSets'),
+    addMarketSet: (setData) => ipcRenderer.invoke('market:addMarketSet', setData),
+    updateMarketSet: (id, updates) => ipcRenderer.invoke('market:updateMarketSet', id, updates),
+    deleteMarketSet: (id) => ipcRenderer.invoke('market:deleteMarketSet', id),
+    setDefaultMarketSet: (id) => ipcRenderer.invoke('market:setDefaultMarketSet', id),
+    getMarketSetForTool: (toolKey) => ipcRenderer.invoke('market:getMarketSetForTool', toolKey),
+    setMarketSetForTool: (toolKey, id) => ipcRenderer.invoke('market:setMarketSetForTool', toolKey, id),
+    getRegionDashboard: () => ipcRenderer.invoke('market:getRegionDashboard'),
+    updateRegion: (regionId) => ipcRenderer.invoke('market:updateRegion', regionId),
+    // Market data
     fetchOrders: (regionId, typeId, locationFilter) => ipcRenderer.invoke('market:fetchOrders', regionId, typeId, locationFilter),
     fetchHistory: (regionId, typeId) => ipcRenderer.invoke('market:fetchHistory', regionId, typeId),
     fetchData: (regionId, typeId) => ipcRenderer.invoke('market:fetchData', regionId, typeId),
     fetchFuzzwork: (typeId, regionId) => ipcRenderer.invoke('market:fetchFuzzwork', typeId, regionId),
     fetchJitaPrice: (typeId) => ipcRenderer.invoke('market:fetchJitaPrice', typeId),
     fetchBulkPrices: (typeIds, regionId) => ipcRenderer.invoke('market:fetchBulkPrices', typeIds, regionId),
-    calculatePrice: (typeId, regionId, locationId, priceType, quantity) =>
-      ipcRenderer.invoke('market:calculatePrice', typeId, regionId, locationId, priceType, quantity),
+    calculatePrice: (typeId, regionId, locationId, priceType, quantity, marketSetId) =>
+      ipcRenderer.invoke('market:calculatePrice', typeId, regionId, locationId, priceType, quantity, marketSetId),
     getPriceOverride: (typeId) => ipcRenderer.invoke('market:getPriceOverride', typeId),
     setPriceOverride: (typeId, price, notes) => ipcRenderer.invoke('market:setPriceOverride', typeId, price, notes),
     removePriceOverride: (typeId) => ipcRenderer.invoke('market:removePriceOverride', typeId),
@@ -245,8 +254,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Blueprint Calculator API
   calculator: {
     searchBlueprints: (searchTerm, limit) => ipcRenderer.invoke('calculator:searchBlueprints', searchTerm, limit),
-    calculateMaterials: (blueprintTypeId, runs, meLevel, characterId, facilityId) =>
-      ipcRenderer.invoke('calculator:calculateMaterials', blueprintTypeId, runs, meLevel, characterId, facilityId),
+    calculateMaterials: (blueprintTypeId, runs, meLevel, characterId, facilityId, marketSetId) =>
+      ipcRenderer.invoke('calculator:calculateMaterials', blueprintTypeId, runs, meLevel, characterId, facilityId, marketSetId),
     getBlueprintProduct: (blueprintTypeId) => ipcRenderer.invoke('calculator:getBlueprintProduct', blueprintTypeId),
     getTypeName: (typeId) => ipcRenderer.invoke('calculator:getTypeName', typeId),
     getOwnedBlueprintME: (characterId, blueprintTypeId) => ipcRenderer.invoke('calculator:getOwnedBlueprintME', characterId, blueprintTypeId),
@@ -259,16 +268,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getBlueprintMaterials: (blueprintTypeId) => ipcRenderer.invoke('calculator:getBlueprintMaterials', blueprintTypeId),
     calculateInventionProbability: (baseProbability, skills, decryptorMultiplier) =>
       ipcRenderer.invoke('calculator:calculateInventionProbability', baseProbability, skills, decryptorMultiplier),
-    findBestDecryptor: (inventionData, materialPrices, productPrice, skills, facility, optimizationStrategy, customVolume) =>
-      ipcRenderer.invoke('calculator:findBestDecryptor', inventionData, materialPrices, productPrice, skills, facility, optimizationStrategy, customVolume),
+    findBestDecryptor: (inventionData, materialPrices, productPrice, skills, facility, optimizationStrategy, customVolume, marketSetId) =>
+      ipcRenderer.invoke('calculator:findBestDecryptor', inventionData, materialPrices, productPrice, skills, facility, optimizationStrategy, customVolume, marketSetId),
     clearCaches: () => ipcRenderer.invoke('calculator:clearCaches'),
   },
 
   // Reactions Calculator API
   reactions: {
     searchReactions: (searchTerm, limit) => ipcRenderer.invoke('reactions:searchReactions', searchTerm, limit),
-    calculateMaterials: (reactionTypeId, runs, characterId, facilityId) =>
-      ipcRenderer.invoke('reactions:calculateMaterials', reactionTypeId, runs, characterId, facilityId),
+    calculateMaterials: (reactionTypeId, runs, characterId, facilityId, marketSetId) =>
+      ipcRenderer.invoke('reactions:calculateMaterials', reactionTypeId, runs, characterId, facilityId, marketSetId),
     getReactionProduct: (reactionTypeId) => ipcRenderer.invoke('reactions:getReactionProduct', reactionTypeId),
     getTypeName: (typeId) => ipcRenderer.invoke('reactions:getTypeName', typeId),
     getReactionTime: (reactionTypeId) => ipcRenderer.invoke('reactions:getReactionTime', reactionTypeId),

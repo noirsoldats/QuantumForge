@@ -28,12 +28,13 @@ function getSDEPath() {
  * @param {number} characterId - Character ID (affects owned blueprint ME lookups)
  * @returns {string} Cache key
  */
-function getMaterialCacheKey(blueprintTypeId, runs, meLevel, facility, characterId, useIntermediates = true) {
-    const facilityKey = facility ?
-                        `${facility.systemId}_${facility.structureTypeId}_${(facility.rigs || []).map(r => r.typeId).sort().join(',')}` :
-                        'none';
-    const charKey     = characterId || 'none';
-    return `${blueprintTypeId}_${runs}_${meLevel}_${facilityKey}_${charKey}_${useIntermediates ? '1' : '0'}`;
+function getMaterialCacheKey(blueprintTypeId, runs, meLevel, facility, characterId, useIntermediates = true, marketSet = null) {
+    const facilityKey  = facility ?
+                         `${facility.systemId}_${facility.structureTypeId}_${(facility.rigs || []).map(r => r.typeId).sort().join(',')}` :
+                         'none';
+    const charKey      = characterId || 'none';
+    const marketSetKey = marketSet?.id || 'none';
+    return `${blueprintTypeId}_${runs}_${meLevel}_${facilityKey}_${charKey}_${useIntermediates ? '1' : '0'}_${marketSetKey}`;
 }
 
 /**
@@ -329,7 +330,7 @@ function getProductGroupId(productTypeId, db = null) {
  * @param db
  * @returns {Object} Calculation result with materials and breakdown
  */
-async function calculateBlueprintMaterials(blueprintTypeId, runs = 1, meLevel = 0, characterId = null, facility = null, useIntermediates = true, depth = 0, db = null) {
+async function calculateBlueprintMaterials(blueprintTypeId, runs = 1, meLevel = 0, characterId = null, facility = null, useIntermediates = true, depth = 0, db = null, marketSet = null) {
     const MAX_DEPTH = 10; // Prevent infinite recursion
 
     if (depth > MAX_DEPTH) {
@@ -343,7 +344,7 @@ async function calculateBlueprintMaterials(blueprintTypeId, runs = 1, meLevel = 
 
     // Check cache (only for top-level calls, depth 0)
     if (depth === 0) {
-        const cacheKey     = getMaterialCacheKey(blueprintTypeId, runs, meLevel, facility, characterId, useIntermediates);
+        const cacheKey     = getMaterialCacheKey(blueprintTypeId, runs, meLevel, facility, characterId, useIntermediates, marketSet);
         const cachedResult = materialTreeCache.get(cacheKey);
 
         if (cachedResult) {
@@ -395,7 +396,8 @@ async function calculateBlueprintMaterials(blueprintTypeId, runs = 1, meLevel = 
                 facility,  // Pass facility through recursion
                 useIntermediates,  // Pass useIntermediates flag through recursion
                 depth + 1,
-                db  // Pass db connection through recursion
+                db,  // Pass db connection through recursion
+                marketSet  // Pass marketSet through recursion
             );
 
             // Add sub-materials to our total
@@ -475,19 +477,22 @@ async function calculateBlueprintMaterials(blueprintTypeId, runs = 1, meLevel = 
             }
 
             const {calculateBlueprintPricing} = require('./blueprint-pricing');
-            pricing                           = await calculateBlueprintPricing(
-                adjustedMaterials,
-                {
-                    typeID:   product.typeID,
-                    quantity: product.quantity * runs
-                },
-                facility.systemId,
-                facility,
-                accountingSkillLevel,
-                blueprintTypeId, // Pass blueprint type ID for EIV calculation
-                runs, // Pass runs for EIV calculation
-                brokerRelationsSkillLevel
-            );
+            if (marketSet) {
+                pricing = await calculateBlueprintPricing(
+                    adjustedMaterials,
+                    {
+                        typeID:   product.typeID,
+                        quantity: product.quantity * runs
+                    },
+                    facility.systemId,
+                    facility,
+                    accountingSkillLevel,
+                    blueprintTypeId, // Pass blueprint type ID for EIV calculation
+                    runs, // Pass runs for EIV calculation
+                    brokerRelationsSkillLevel,
+                    marketSet
+                );
+            }
         } catch (error) {
             console.error('Error calculating blueprint pricing:', error);
             pricing = null;
@@ -508,7 +513,7 @@ async function calculateBlueprintMaterials(blueprintTypeId, runs = 1, meLevel = 
 
     // Cache result (only for top-level calls, depth 0)
     if (depth === 0) {
-        const cacheKey = getMaterialCacheKey(blueprintTypeId, runs, meLevel, facility, characterId, useIntermediates);
+        const cacheKey = getMaterialCacheKey(blueprintTypeId, runs, meLevel, facility, characterId, useIntermediates, marketSet);
         materialTreeCache.set(cacheKey, structuredClone(result));
 
         // Limit cache size to prevent memory issues
@@ -1014,7 +1019,7 @@ function calculateInventionCost(inventionData, materialPrices, probability, decr
  * @param {Database} db - Optional database connection to reuse
  * @returns {Object} Manufacturing cost breakdown
  */
-async function calculateManufacturingCost(inventedBlueprintTypeId, meLevel, runs, facility, materialPrices, db = null) {
+async function calculateManufacturingCost(inventedBlueprintTypeId, meLevel, runs, facility, materialPrices, db = null, marketSet = null) {
     let returnObject = {
         materialCost: 0,
         jobCost:      0,
@@ -1037,8 +1042,10 @@ async function calculateManufacturingCost(inventedBlueprintTypeId, meLevel, runs
             meLevel,
             null,  // characterId - not needed for this calculation
             facility,
+            true,  // useIntermediates
             0,     // depth
-            db     // Pass db connection
+            db,    // Pass db connection
+            marketSet  // Pass marketSet through
         );
 
         console.log('[Manufacturing Cost] Material calculation result:', materialCalc);
@@ -1095,10 +1102,12 @@ async function calculateManufacturingCost(inventedBlueprintTypeId, meLevel, runs
 
         console.log(`[Manufacturing Cost] Job Cost: ${jobCost} ISK`);
 
-        returnObject.materialCost = materialCalc?.pricing?.inputCosts?.totalCost;
-        returnObject.jobCost = materialCalc?.pricing?.jobCostBreakdown?.totalJobCost;
-        returnObject.totalCost = returnObject.materialCost + returnObject.jobCost;
-        returnObject.costPerRun = runs > 0 ? (returnObject.totalCost) / runs : 0
+        // Use pricing if available (when marketSet was provided), otherwise fall back
+        // to totalMaterialCost computed directly from the passed-in materialPrices map.
+        returnObject.materialCost = materialCalc?.pricing?.inputCosts?.totalCost ?? totalMaterialCost;
+        returnObject.jobCost      = materialCalc?.pricing?.jobCostBreakdown?.totalJobCost ?? jobCost;
+        returnObject.totalCost    = returnObject.materialCost + returnObject.jobCost;
+        returnObject.costPerRun   = runs > 0 ? returnObject.totalCost / runs : 0;
         returnObject.blueprintResult = materialCalc;
 
         return returnObject;
@@ -1183,7 +1192,7 @@ function calculateManufacturingTime(inventedBlueprintTypeId, teLevel, runs, faci
  * @param {number} customVolume - Number of items to manufacture (used with 'custom-volume' strategy)
  * @returns {Promise<Object>} Best decryptor analysis with comparison
  */
-async function findBestDecryptor(inventionData, materialPrices, productPrice, skills = {}, facility = null, optimizationStrategy = 'total-per-item', customVolume = 1) {
+async function findBestDecryptor(inventionData, materialPrices, productPrice, skills = {}, facility = null, optimizationStrategy = 'total-per-item', customVolume = 1, marketSet = null) {
     console.log(`[findBestDecryptor] Called with optimizationStrategy: ${optimizationStrategy}, customVolume: ${customVolume}`);
 
     // Create single database connection for all calculations
@@ -1221,12 +1230,12 @@ async function findBestDecryptor(inventionData, materialPrices, productPrice, sk
                 console.log(`  - Final ME: ${finalME}, Final TE: ${finalTE}, Runs per BPC: ${invCost.runsPerBPC}`);
 
                 // Manufacturing cost for 1 item
-                mfgCost1 = await calculateManufacturingCost(inventedBlueprintTypeId, finalME, 1, facility, materialPrices, sdeDb);
+                mfgCost1 = await calculateManufacturingCost(inventedBlueprintTypeId, finalME, 1, facility, materialPrices, sdeDb, marketSet);
                 mfgCostPerItem = mfgCost1.costPerRun;
                 console.log(`  - Manufacturing cost per item: ${mfgCostPerItem} ISK`);
 
                 // Manufacturing cost for all runs on BPC
-                const mfgCostAll = await calculateManufacturingCost(inventedBlueprintTypeId, finalME, invCost.runsPerBPC, facility, materialPrices, sdeDb);
+                const mfgCostAll = await calculateManufacturingCost(inventedBlueprintTypeId, finalME, invCost.runsPerBPC, facility, materialPrices, sdeDb, marketSet);
                 mfgCostFullBPC   = mfgCostAll.totalCost;
                 console.log(`  - Manufacturing cost full BPC: ${mfgCostFullBPC} ISK`);
 

@@ -7,11 +7,12 @@
   <title>Market Manager - Quantum Forge</title>
   <link rel="stylesheet" href="shared/variables.css">
   <link rel="stylesheet" href="shared/components.css">
+  <link rel="stylesheet" href="shared/layout.css">
   <link rel="stylesheet" href="styles.css">
   <link rel="stylesheet" href="market.css">
 </head>
 <body>
-  <div id="market-app">
+  <div id="market-app" class="page-layout">
     <!-- Settings Button -->
     <button id="settings-btn" class="settings-icon" title="Settings" aria-label="Open Settings">
       <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -55,7 +56,7 @@
       </div>
     </div>
 
-    <header class="market-header">
+    <header class="market-header page-header">
       <div class="header-content">
         <button class="back-btn" id="back-btn" title="Back to Main">
           <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -70,7 +71,7 @@
       </div>
     </header>
 
-    <div class="tabs-container">
+    <div class="tabs-container page-tabs">
       <div class="tabs">
         <button class="tab-btn active" data-tab="update">
           <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -81,10 +82,11 @@
         </button>
         <button class="tab-btn" data-tab="settings">
           <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <circle cx="12" cy="12" r="3"></circle>
-            <path d="M12 1v6m0 6v6"></path>
+            <rect x="2" y="3" width="20" height="4" rx="1"></rect>
+            <rect x="2" y="10" width="20" height="4" rx="1"></rect>
+            <rect x="2" y="17" width="20" height="4" rx="1"></rect>
           </svg>
-          Market Settings
+          Market Sets
         </button>
         <button class="tab-btn" data-tab="viewer">
           <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -104,47 +106,35 @@
       </div>
     </div>
 
-    <div class="tab-content-container">
+    <div class="tab-content-container page-content">
       <!-- Update Market Data Tab -->
       <div id="update-tab" class="tab-content active">
         <div class="settings-section">
           <h2>Update Market Data</h2>
           <p class="section-description">Manually refresh market data from ESI and Fuzzwork APIs. Updates are limited to once every 30 minutes.</p>
 
-          <!-- Quick Update -->
-          <div class="settings-group">
-            <h3>Quick Update</h3>
-            <p class="settings-description">Update all market data for your configured region</p>
-
-            <div class="market-refresh-container">
-              <button class="primary-button" id="refresh-market-data-btn">
+          <!-- Region Status Dashboard -->
+          <div class="settings-group" id="region-dashboard-group">
+            <div class="region-dashboard-header">
+              <div>
+                <h3>Region Status</h3>
+                <p class="settings-description">Market data status for all regions across your configured Market Sets. Updates are rate-limited to once every 30 minutes per region.</p>
+              </div>
+              <button class="primary-button" id="update-all-regions-btn">
                 <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                   <polyline points="23 4 23 10 17 10"></polyline>
                   <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
                 </svg>
-                Update All Market Data
+                Update All Regions
+                <span id="update-all-queue-badge" class="queue-badge hidden"></span>
               </button>
-              <div class="last-fetch-info">
-                <div class="last-fetch-label">Last Updated:</div>
-                <div id="last-fetch-time" class="last-fetch-time">Never</div>
-              </div>
             </div>
-
-            <!-- Progress Bar -->
-            <div id="fetch-progress-container" class="fetch-progress-container hidden">
-              <div class="progress-header">
-                <span id="progress-label">Fetching market data...</span>
-                <span id="progress-percentage">0%</span>
-              </div>
-              <div class="progress-bar-bg">
-                <div id="progress-bar-fill" class="progress-bar-fill"></div>
-              </div>
-              <div class="progress-details">
-                <span id="progress-details-text">Page 0 of 0</span>
-              </div>
+            <div id="region-dashboard-list" class="region-dashboard-list">
+              <div class="loading-spinner-inline">Loading regions...</div>
             </div>
+          </div>
 
-            <!-- History Data Update -->
+          <!-- History Data Update -->
             <div class="history-update-section">
               <h4>History Data</h4>
               <p class="settings-description">Update historical price data for all items with current market data</p>
@@ -176,7 +166,6 @@
                 </div>
               </div>
             </div>
-          </div>
 
           <!-- Category Selection -->
 <!--          <div class="settings-group">-->
@@ -485,11 +474,45 @@
         </div>
       </div>
 
-      <!-- Market Settings Tab -->
+      <!-- Market Settings Tab (combined list + form) -->
       <div id="settings-tab" class="tab-content">
-        <div class="settings-section">
-          <h2>Market Settings</h2>
-          <p class="section-description">Configure how market prices are calculated for manufacturing and profit calculations.</p>
+        <div class="market-sets-layout">
+
+          <!-- Left column: list of sets -->
+          <section class="market-sets-list-section">
+            <div class="market-sets-list-header">
+              <h2>Market Sets</h2>
+              <button class="primary-button small-btn" id="add-market-set-btn">
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <line x1="12" y1="5" x2="12" y2="19"></line>
+                  <line x1="5" y1="12" x2="19" y2="12"></line>
+                </svg>
+                Add
+              </button>
+            </div>
+            <p class="section-description">Each tool can use a different Market Set for independent pricing.</p>
+            <div id="market-sets-list" class="market-sets-list">
+              <div class="loading-spinner-inline">Loading...</div>
+            </div>
+          </section>
+
+          <!-- Right column: add/edit form -->
+          <section class="market-set-form-section" id="market-set-form-section">
+            <div class="market-set-form-header">
+              <h2 id="market-set-form-title">Add Market Set</h2>
+              <button class="secondary-button small-btn" id="cancel-edit-market-set-btn" style="display:none;">Cancel</button>
+            </div>
+
+            <!-- Market Set Name -->
+            <div class="settings-group" id="market-set-name-group">
+              <div class="form-row">
+                <div class="form-group">
+                  <label for="market-set-name-input">Market Set Name</label>
+                  <input type="text" id="market-set-name-input" class="form-control" maxlength="50" placeholder="e.g. Jita Primary, Amarr Secondary">
+                  <span class="help-text">Alphanumeric, spaces, and _ - ( ) + only. Max 50 characters.</span>
+                </div>
+              </div>
+            </div>
 
           <!-- Input Materials Settings -->
           <div class="settings-group">
@@ -901,7 +924,7 @@
                 <polyline points="17 21 17 13 7 13 7 21"></polyline>
                 <polyline points="7 3 7 8 15 8"></polyline>
               </svg>
-              Save Settings
+              <span id="save-settings-btn-label">Save Market Set</span>
             </button>
             <button class="secondary-button" id="reset-settings-btn">
               <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -910,7 +933,8 @@
               Reset to Defaults
             </button>
           </div>
-        </div>
+          </section><!-- end market-set-form-section -->
+        </div><!-- end market-sets-layout -->
       </div>
 
       <!-- Market Data Viewer Tab -->
@@ -1073,59 +1097,12 @@
       </div>
     </div>
 
-    <!-- Status Footer -->
-    <footer id="status-footer" class="status-footer">
-      <div class="footer-content">
-        <div class="footer-item" id="character-count-item">
-          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
-            <circle cx="12" cy="7" r="4"></circle>
-          </svg>
-          <span id="character-count">0</span> <span class="label">Characters</span>
-        </div>
-
-        <div class="footer-item" id="eve-time-item">
-          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <circle cx="12" cy="12" r="10"></circle>
-            <polyline points="12 6 12 12 16 14"></polyline>
-          </svg>
-          <span id="eve-time">--:--:--</span> <span class="label">EVE Time</span>
-        </div>
-
-        <div class="footer-item" id="players-online-item">
-          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
-            <circle cx="9" cy="7" r="4"></circle>
-            <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
-            <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
-          </svg>
-          <span id="players-online">--</span> <span class="label">Players</span>
-        </div>
-
-        <div class="footer-item" id="server-status-item" title="Server Status: Loading...">
-          <svg id="server-status-icon" class="status-icon status-loading" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <!-- Default loading icon -->
-            <circle cx="12" cy="12" r="10"></circle>
-            <line x1="12" y1="8" x2="12" y2="12"></line>
-            <line x1="12" y1="16" x2="12.01" y2="16"></line>
-          </svg>
-          <span id="server-status-text" class="label">Loading</span>
-        </div>
-
-        <div class="footer-item footer-clickable" id="esi-status-item" title="ESI Status: Loading...">
-          <svg id="esi-status-icon" class="status-icon status-loading" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <circle cx="12" cy="12" r="10"></circle>
-            <path d="M12 6v6l4 2"></path>
-          </svg>
-          <span id="esi-status-text" class="label">ESI Status</span>
-        </div>
-      </div>
-    </footer>
   </div>
 
   <script src="vendor/chart.umd.js"></script>
   <script src="shared/scope-error.js"></script>
   <script src="../src/renderer/footer-utils.js"></script>
+  <script src="shared/footer.js"></script>
   <script src="../src/renderer/market-renderer.js"></script>
 </body>
 </html>

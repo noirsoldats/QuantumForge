@@ -579,3 +579,41 @@
   color: var(--color-error);
   border: 1px solid rgba(239, 68, 68, 0.3);
 }
+
+/* ---- Market Set Selector (per-tool) ---- */
+
+.market-set-selector-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.market-set-selector-group label {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+  font-weight: 500;
+}
+
+.compact-select {
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  color: var(--color-text-primary);
+  padding: 4px 8px;
+  border-radius: var(--radius-sm, 3px);
+  font-size: 12px;
+  cursor: pointer;
+  min-width: 140px;
+  max-width: 200px;
+}
+
+.compact-select:focus {
+  outline: none;
+  border-color: var(--color-accent);
+}
+
+.compact-select option {
+  background: var(--color-bg-elevated);
+  color: var(--color-text-primary);
+}

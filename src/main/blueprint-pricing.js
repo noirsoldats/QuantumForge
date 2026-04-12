@@ -1,6 +1,5 @@
 const { calculateRealisticPrice, getPriceOverride } = require('./market-pricing');
 const { getCostIndices } = require('./esi-cost-indices');
-const { getMarketSettings } = require('./settings-manager');
 
 /**
  * Manufacturing activity type for cost indices
@@ -392,8 +391,9 @@ function calculateManufacturingTaxes(materialsCost, outputValue, accountingSkill
  * @param {number} brokerRelationsSkillLevel - Broker Relations skill level (0-5)
  * @returns {Promise<Object>} Complete pricing breakdown
  */
-async function calculateBlueprintPricing(materials, product, systemId, facility = null, accountingSkillLevel = 0, blueprintTypeId = null, runs = 1, brokerRelationsSkillLevel = 0) {
-  const marketSettings = getMarketSettings();
+async function calculateBlueprintPricing(materials, product, systemId, facility = null, accountingSkillLevel = 0, blueprintTypeId = null, runs = 1, brokerRelationsSkillLevel = 0, marketSet = null) {
+  const marketSettings = marketSet;
+  if (!marketSettings) throw new Error('calculateBlueprintPricing: marketSet is required');
 
   // Calculate input material costs
   const inputCosts = await calculateInputMaterialsCost(materials, marketSettings);

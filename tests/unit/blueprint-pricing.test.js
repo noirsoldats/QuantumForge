@@ -101,6 +101,30 @@ jest.mock('../../src/main/market-database', () => ({
 }));
 
 describe('Blueprint Pricing Calculations', () => {
+  const mockMarketSet = {
+    id: 'test-market-set',
+    inputMaterials: {
+      regionId: marketData.THE_FORGE_REGION_ID,
+      locationId: marketData.JITA_STATION_ID,
+      priceType: 'sell',
+      priceModifier: 1.0,
+      priceMethod: 'vwap',
+      percentile: 0.2,
+      minVolume: 1000,
+    },
+    outputProducts: {
+      useSameLocation: true,
+      regionId: marketData.THE_FORGE_REGION_ID,
+      locationId: marketData.JITA_STATION_ID,
+      priceType: 'sell',
+      priceModifier: 1.0,
+      priceMethod: 'vwap',
+      percentile: 0.2,
+      minVolume: 1000,
+    },
+    warningThreshold: 0.3,
+  };
+
   describe('calculateInputMaterialsCost', () => {
     const mockMaterials = {
       34: 1000,  // Tritanium
@@ -398,7 +422,8 @@ describe('Blueprint Pricing Calculations', () => {
         0,  // Accounting
         810,  // Blueprint type ID
         1,  // Runs
-        0   // Broker Relations
+        0,  // Broker Relations
+        mockMarketSet
       );
 
       expect(result).toBeDefined();
@@ -420,7 +445,8 @@ describe('Blueprint Pricing Calculations', () => {
         0,
         810,
         1,
-        0
+        0,
+        mockMarketSet
       );
 
       // Profit = Output Value - Total Costs
@@ -441,7 +467,8 @@ describe('Blueprint Pricing Calculations', () => {
         0,
         810,
         1,
-        0
+        0,
+        mockMarketSet
       );
 
       const expectedTotal = result.inputCosts.totalCost +
@@ -460,7 +487,8 @@ describe('Blueprint Pricing Calculations', () => {
         0,  // No Accounting
         810,
         1,
-        0   // No Broker Relations
+        0,  // No Broker Relations
+        mockMarketSet
       );
 
       const resultWithSkills = await calculateBlueprintPricing(
@@ -471,7 +499,8 @@ describe('Blueprint Pricing Calculations', () => {
         5,  // Accounting 5
         810,
         1,
-        5   // Broker Relations 5
+        5,  // Broker Relations 5
+        mockMarketSet
       );
 
       expect(resultWithSkills.taxesBreakdown.totalTaxes).toBeLessThan(resultNoSkills.taxesBreakdown.totalTaxes);
@@ -497,7 +526,8 @@ describe('Blueprint Pricing Calculations', () => {
         0,
         810,
         1,
-        0
+        0,
+        mockMarketSet
       );
 
       const resultWithFacility = await calculateBlueprintPricing(
@@ -508,7 +538,8 @@ describe('Blueprint Pricing Calculations', () => {
         0,
         810,
         1,
-        0
+        0,
+        mockMarketSet
       );
 
       expect(resultWithFacility.jobCostBreakdown.jobBaseCost).toBeLessThan(resultNoFacility.jobCostBreakdown.jobBaseCost);
@@ -524,7 +555,8 @@ describe('Blueprint Pricing Calculations', () => {
         0,
         810,
         1,
-        0
+        0,
+        mockMarketSet
       );
 
       // Legacy fields for backwards compatibility
@@ -568,7 +600,8 @@ describe('Blueprint Pricing Calculations', () => {
         0,
         810,
         1,
-        0
+        0,
+        mockMarketSet
       );
 
       expect(result.profit).toBeLessThan(0);

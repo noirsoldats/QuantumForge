@@ -13,6 +13,32 @@ let aggregatedAssets = {};
 let assetSources = [];
 let allCharacters = [];
 
+// Market Set state
+const TOOL_KEY_CLEANUP = 'cleanupToolMarketSetId';
+let activeMarketSet = null;
+
+async function initMarketSetSelector() {
+  try {
+    const sets = await window.electronAPI.market.getMarketSets();
+    const { marketSet } = await window.electronAPI.market.getMarketSetForTool(TOOL_KEY_CLEANUP);
+    activeMarketSet = marketSet;
+
+    const select = document.getElementById('market-set-selector');
+    if (!select) return;
+    select.innerHTML = sets.map(s =>
+      `<option value="${s.id}"${s.id === activeMarketSet?.id ? ' selected' : ''}>${s.name}${s.isDefault ? ' (Default)' : ''}</option>`
+    ).join('');
+
+    select.addEventListener('change', async () => {
+      await window.electronAPI.market.setMarketSetForTool(TOOL_KEY_CLEANUP, select.value);
+      const result = await window.electronAPI.market.getMarketSetForTool(TOOL_KEY_CLEANUP);
+      activeMarketSet = result.marketSet;
+    });
+  } catch (err) {
+    console.error('[MarketSetSelector] Error:', err);
+  }
+}
+
 // Generic setting load/save helpers
 function loadSetting(key, defaultValue, isJson = false) {
   try {
@@ -113,6 +139,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   await loadFacilities();
   await loadCharacters();
   await loadAssetSources();
+  await initMarketSetSelector();
   setupEventListeners();
   renderTableHeaders();
   syncFiltersWithUI();
@@ -872,9 +899,7 @@ async function calculateBuildable() {
     const defaultCharacter = await window.electronAPI.esi.getDefaultCharacter();
     const characterId = defaultCharacter?.characterId;
 
-    // Get market settings for pricing
-    const marketSettings = await window.electronAPI.market.getSettings();
-    console.log(`[Cleanup Tool] Using market region: ${marketSettings?.regionId || 10000002}`);
+    console.log(`[Cleanup Tool] Using market region: ${activeMarketSet?.inputMaterials?.regionId || 10000002}`);
 
     // Batch processing
     const BATCH_SIZE = 6;
@@ -896,7 +921,7 @@ async function calculateBuildable() {
       showLoading(`Calculating... ${processedCount}/${totalBlueprints}`);
 
       const batchPromises = batch.map(blueprint =>
-        calculateBlueprintData(blueprint, facility, characterId, threshold, marketSettings)
+        calculateBlueprintData(blueprint, facility, characterId, threshold, activeMarketSet)
           .catch(error => {
             console.error(`Error calculating ${blueprint.typeName}:`, error);
             return null;
@@ -932,7 +957,7 @@ async function calculateBuildable() {
 }
 
 // Calculate data for a single blueprint
-async function calculateBlueprintData(blueprint, facility, characterId, threshold, marketSettings) {
+async function calculateBlueprintData(blueprint, facility, characterId, threshold, marketSet) {
   try {
     const blueprintTypeId = blueprint.blueprintTypeId || blueprint.typeId;
     const meLevel = blueprint.meLevel || 0;
@@ -945,7 +970,8 @@ async function calculateBlueprintData(blueprint, facility, characterId, threshol
       1, // Always 1 run for per-run calculations
       meLevel,
       characterId,
-      facility?.id
+      facility?.id,
+      marketSet?.id
     );
 
     if (!materialResult || !materialResult.materials) {
@@ -1044,8 +1070,7 @@ async function calculateSVR(productTypeId, period, productionTimeHours) {
       return 0;
     }
 
-    const marketSettings = await window.electronAPI.market.getSettings();
-    const regionId = marketSettings.regionId || 10000002;
+    const regionId = activeMarketSet?.inputMaterials?.regionId || 10000002;
 
     // Get market history for the product
     const allHistory = await window.electronAPI.market.fetchHistory(regionId, productTypeId);

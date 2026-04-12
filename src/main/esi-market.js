@@ -1180,6 +1180,7 @@ module.exports = {
   getCachedMarketOrders,
   getCachedMarketHistory,
   getLastMarketFetchTime,
+  getLastMarketFetchTimeForRegion,
   getLastHistoryFetchTime,
   getHistoryDataStatus,
   manualRefreshMarketData,

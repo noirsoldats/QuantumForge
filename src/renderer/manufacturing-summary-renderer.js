@@ -9,6 +9,35 @@ let currentSort = { column: 'profit', direction: 'desc' };
 let selectedBlueprints = new Set(); // Track selected blueprint typeIds
 let calculationAbortController = null; // For cancelling calculations
 
+// Market Set state
+const TOOL_KEY_SUMMARY = 'manufacturingSummaryMarketSetId';
+let activeMarketSet = null;
+
+async function initMarketSetSelector() {
+  try {
+    const sets = await window.electronAPI.market.getMarketSets();
+    const { marketSet } = await window.electronAPI.market.getMarketSetForTool(TOOL_KEY_SUMMARY);
+    activeMarketSet = marketSet;
+
+    const select = document.getElementById('market-set-selector');
+    if (!select) return;
+    select.innerHTML = sets.map(s =>
+      `<option value="${s.id}"${s.id === activeMarketSet?.id ? ' selected' : ''}>${s.name}${s.isDefault ? ' (Default)' : ''}</option>`
+    ).join('');
+
+    select.addEventListener('change', async () => {
+      await window.electronAPI.market.setMarketSetForTool(TOOL_KEY_SUMMARY, select.value);
+      const result = await window.electronAPI.market.getMarketSetForTool(TOOL_KEY_SUMMARY);
+      activeMarketSet = result.marketSet;
+      // Recalculate with new market set
+      const calcBtn = document.getElementById('calculate-btn');
+      if (calcBtn) calcBtn.click();
+    });
+  } catch (err) {
+    console.error('[MarketSetSelector] Error:', err);
+  }
+}
+
 // Market filter state
 let marketFilters = {
   svrThreshold: null,
@@ -55,7 +84,7 @@ function saveFilterConfig() {
 // Load/Save Speculative Invention Settings (from backend settings)
 async function loadSpeculativeInventionSettings() {
   try {
-    const settings = await window.electronAPI.settings.get('market', 'speculativeInvention');
+    const settings = await window.electronAPI.settings.get('manufacturingSummary', 'speculativeInvention');
     if (settings) {
       speculativeInventionSettings = {
         enabled: settings.enabled || false,
@@ -70,7 +99,7 @@ async function loadSpeculativeInventionSettings() {
 
 async function saveSpeculativeInventionSettings() {
   try {
-    await window.electronAPI.settings.update('market', {
+    await window.electronAPI.settings.update('manufacturingSummary', {
       speculativeInvention: speculativeInventionSettings
     });
   } catch (error) {
@@ -192,6 +221,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   await loadReactionFacilities();
   await loadCharacters();
   await loadSpeculativeInventionSettings();
+  await initMarketSetSelector();
   setupEventListeners();
   renderTableHeaders(); // Initialize table headers with saved/default columns
   syncFiltersWithUI(); // Sync saved filters with main UI checkboxes
@@ -1073,9 +1103,8 @@ async function calculateSpeculativeInventionData(blueprint, facility, svrPeriod,
     }
 
     // Get market settings for pricing
-    const marketSettings = await window.electronAPI.market.getSettings();
-    const regionId = marketSettings.regionId || 10000002;
-    const locationId = marketSettings.locationId || null;
+    const regionId = activeMarketSet?.inputMaterials?.regionId || 10000002;
+    const locationId = activeMarketSet?.inputMaterials?.locationId || null;
 
     // Fetch real market prices for invention materials (datacores, etc.)
     const inventionMaterialPrices = {};
@@ -1093,8 +1122,9 @@ async function calculateSpeculativeInventionData(blueprint, facility, svrPeriod,
             parsedTypeId,
             regionId,
             locationId,
-            marketSettings.inputMaterials?.priceType || 'sell',
-            1
+            activeMarketSet?.inputMaterials?.priceType || 'sell',
+            1,
+            activeMarketSet?.id
           );
           inventionMaterialPrices[typeId] = priceData.price;
         } catch (error) {
@@ -1111,7 +1141,8 @@ async function calculateSpeculativeInventionData(blueprint, facility, svrPeriod,
       1,
       0, // ME level = 0 for invented BPCs
       characterId,
-      facility.id
+      facility.id,
+      activeMarketSet?.id
     );
 
     if (!t2Result || !t2Result.pricing) {
@@ -1182,7 +1213,8 @@ async function calculateSpeculativeInventionData(blueprint, facility, svrPeriod,
       characterSkills,
       facility,
       speculativeInventionSettings.decryptorStrategy,
-      speculativeInventionSettings.customVolume
+      speculativeInventionSettings.customVolume,
+      activeMarketSet?.id
     );
 
     if (!decryptorResult || !decryptorResult.best) {
@@ -1336,7 +1368,8 @@ async function calculateBlueprintData(blueprint, facility, svrPeriod, defaultCha
       1, // 1 run
       meLevel,
       characterId,
-      facility.id
+      facility.id,
+      activeMarketSet?.id
     );
 
     if (!result || !result.pricing) {
@@ -1488,7 +1521,8 @@ async function calculateReactionData(reaction, facility, svrPeriod, defaultChara
       reaction.blueprintTypeId,  // reactionTypeId
       runs,
       characterId,  // May be null if not owned
-      facility ? facility.id : null
+      facility ? facility.id : null,
+      activeMarketSet?.id
     );
 
     console.log(`[calculateReactionData] Result:`, result);
@@ -1663,8 +1697,7 @@ async function calculateSVR(productTypeId, period, productionTimeHours) {
       return 0;
     }
 
-    const marketSettings = await window.electronAPI.market.getSettings();
-    const regionId = marketSettings.regionId || 10000002;
+    const regionId = activeMarketSet?.inputMaterials?.regionId || 10000002;
 
     // Get market history for the product
     const allHistory = await window.electronAPI.market.fetchHistory(regionId, productTypeId);
@@ -1711,15 +1744,15 @@ async function calculateTotalSellVolume(productTypeId) {
       return 0;
     }
 
-    const marketSettings = await window.electronAPI.market.getSettings();
-    const regionId = marketSettings.regionId || 10000002; // Default to The Forge
+    const regionId = activeMarketSet?.inputMaterials?.regionId || 10000002; // Default to The Forge
+    const msInput = activeMarketSet?.inputMaterials || {};
 
     // Get location filter based on market settings
     let locationFilter = null;
-    if (marketSettings.locationType === 'system' && marketSettings.systemId) {
-      locationFilter = { type: 'system', id: marketSettings.systemId };
-    } else if (marketSettings.locationType === 'station' && marketSettings.locationId) {
-      locationFilter = { type: 'station', id: marketSettings.locationId };
+    if (msInput.locationType === 'system' && msInput.systemId) {
+      locationFilter = { type: 'system', id: msInput.systemId };
+    } else if (msInput.locationType === 'station' && msInput.locationId) {
+      locationFilter = { type: 'station', id: msInput.locationId };
     }
 
     // Fetch market orders
@@ -1750,8 +1783,7 @@ async function calculateProfitVelocity(productTypeId, profitPerUnit, period = 30
       return 0;
     }
 
-    const marketSettings = await window.electronAPI.market.getSettings();
-    const regionId = marketSettings.regionId || 10000002;
+    const regionId = activeMarketSet?.inputMaterials?.regionId || 10000002;
 
     const allHistory = await window.electronAPI.market.fetchHistory(regionId, productTypeId);
     if (!allHistory || allHistory.length === 0) return 0;
@@ -1784,8 +1816,7 @@ async function calculateMarketSaturation(productTypeId, totalSellVolume, period 
       return 0;
     }
 
-    const marketSettings = await window.electronAPI.market.getSettings();
-    const regionId = marketSettings.regionId || 10000002;
+    const regionId = activeMarketSet?.inputMaterials?.regionId || 10000002;
 
     const allHistory = await window.electronAPI.market.fetchHistory(regionId, productTypeId);
     if (!allHistory || allHistory.length === 0) return 0;
@@ -1821,8 +1852,7 @@ async function calculatePriceMomentum(productTypeId) {
       return 0;
     }
 
-    const marketSettings = await window.electronAPI.market.getSettings();
-    const regionId = marketSettings.regionId || 10000002;
+    const regionId = activeMarketSet?.inputMaterials?.regionId || 10000002;
 
     const allHistory = await window.electronAPI.market.fetchHistory(regionId, productTypeId);
     if (!allHistory || allHistory.length < 30) return 0; // Need at least 30 days
@@ -1859,8 +1889,7 @@ async function calculateProfitStability(productTypeId, currentProfit, period = 2
       return 0;
     }
 
-    const marketSettings = await window.electronAPI.market.getSettings();
-    const regionId = marketSettings.regionId || 10000002;
+    const regionId = activeMarketSet?.inputMaterials?.regionId || 10000002;
 
     const allHistory = await window.electronAPI.market.fetchHistory(regionId, productTypeId);
     if (!allHistory || allHistory.length < period) return 0;
@@ -1901,8 +1930,7 @@ async function calculateDemandGrowth(productTypeId) {
       return 0;
     }
 
-    const marketSettings = await window.electronAPI.market.getSettings();
-    const regionId = marketSettings.regionId || 10000002;
+    const regionId = activeMarketSet?.inputMaterials?.regionId || 10000002;
 
     const allHistory = await window.electronAPI.market.fetchHistory(regionId, productTypeId);
     if (!allHistory || allHistory.length < 14) return 0; // Need at least 14 days
@@ -1935,8 +1963,7 @@ async function calculateMaterialCostVolatility(materials, period = 30) {
   try {
     if (!materials || Object.keys(materials).length === 0) return 0;
 
-    const marketSettings = await window.electronAPI.market.getSettings();
-    const regionId = marketSettings.regionId || 10000002;
+    const regionId = activeMarketSet?.inputMaterials?.regionId || 10000002;
 
     // Collect price history for all materials
     const materialPriceHistories = [];

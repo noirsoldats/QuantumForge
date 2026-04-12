@@ -27,44 +27,18 @@ const defaultSettings = {
   accounts: {
     characters: [],
   },
-  market: {
-    // Legacy fields kept for backward compatibility during migration
-    locationType: 'hub', // 'hub', 'station', 'system', 'region'
-    locationId: 60003760, // Jita IV - Moon 4
-    regionId: 10000002, // The Forge
-    systemId: 30000142, // Jita
-    inputMaterials: {
-      // Location fields (new)
-      locationType: 'hub',
-      locationId: 60003760,
-      regionId: 10000002,
-      systemId: 30000142,
-      // Pricing fields
-      priceType: 'sell', // 'buy' or 'sell'
-      priceMethod: 'hybrid', // 'vwap', 'percentile', 'historical', 'hybrid'
-      priceModifier: 1.0, // Multiplier (1.0 = 100%)
-      percentile: 0.2, // For percentile method
-      minVolume: 1000, // Minimum volume threshold
-    },
-    outputProducts: {
-      // Toggle for using same location as input
-      useSameLocation: true,
-      // Location fields (used when useSameLocation=false)
-      locationType: 'hub',
-      locationId: 60003760,
-      regionId: 10000002,
-      systemId: 30000142,
-      // Pricing fields
-      priceType: 'sell',
-      priceMethod: 'hybrid',
-      priceModifier: 1.0, // 100% (no adjustment by default)
-      percentile: 0.2,
-      minVolume: 1000,
-    },
-    warningThreshold: 0.3, // Warn if price deviates >30% from historical
+  marketSets: [],
+  toolPreferences: {
+    manufacturingSummaryMarketSetId: null,
+    manufacturingPlansMarketSetId: null,
+    cleanupToolMarketSetId: null,
+    blueprintCalculatorMarketSetId: null,
+    reactionsCalculatorMarketSetId: null,
+  },
+  manufacturingSummary: {
     speculativeInvention: {
-      enabled: false, // Default OFF for performance
-      decryptorStrategy: 'total-per-item', // Recommended default
+      enabled: false,
+      decryptorStrategy: 'total-per-item',
       customVolume: 1,
       showOnlyProfitable: true,
       minProfitThreshold: 0,
@@ -94,10 +68,12 @@ function loadSettings() {
       const data = fs.readFileSync(settingsFilePath, 'utf8');
       const loadedSettings = JSON.parse(data);
 
-      // Migrate market location settings if needed
-      if (loadedSettings.market) {
+      // Run old sub-migration first if market key still present (handles partial state)
+      if (loadedSettings.market && !Array.isArray(loadedSettings.marketSets)) {
         loadedSettings.market = migrateMarketLocationSettings(loadedSettings.market);
       }
+      // Migrate settings.market → settings.marketSets (idempotent)
+      migrateMarketToMarketSets(loadedSettings);
 
       // Merge with defaults to ensure all keys exist
       return mergeWithDefaults(loadedSettings, defaultSettings);
@@ -1105,27 +1081,312 @@ function getEffectiveBlueprintValues(itemId) {
   }
 }
 
+// ============================================================
+// Market Sets Management
+// ============================================================
+
+/** Default Market Set shape used when building the migration set */
+const DEFAULT_MARKET_SET_TEMPLATE = {
+  inputMaterials: {
+    locationType: 'hub',
+    locationId: 60003760,
+    regionId: 10000002,
+    systemId: 30000142,
+    structureId: null,
+    structureName: null,
+    characterId: null,
+    priceType: 'sell',
+    priceMethod: 'hybrid',
+    priceModifier: 1.0,
+    percentile: 0.2,
+    minVolume: 1000,
+  },
+  outputProducts: {
+    useSameLocation: true,
+    locationType: 'hub',
+    locationId: 60003760,
+    regionId: 10000002,
+    systemId: 30000142,
+    structureId: null,
+    structureName: null,
+    characterId: null,
+    priceType: 'sell',
+    priceMethod: 'hybrid',
+    priceModifier: 1.0,
+    percentile: 0.2,
+    minVolume: 1000,
+  },
+  warningThreshold: 0.3,
+};
+
 /**
- * Get market settings
- * @returns {Object} Market settings
+ * Migrate settings.market → settings.marketSets (idempotent, mutates the passed object).
+ * Also moves speculativeInvention from market → manufacturingSummary.
+ * @param {Object} settings - Settings object (mutated in-place)
  */
-function getMarketSettings() {
-  try {
-    const settings = loadSettings();
-    return settings.market || defaultSettings.market;
-  } catch (error) {
-    console.error('Error getting market settings:', error);
-    return defaultSettings.market;
+function migrateMarketToMarketSets(settings) {
+  if (Array.isArray(settings.marketSets)) {
+    return; // Already migrated
   }
+
+  console.log('[Settings Migration] Migrating settings.market → settings.marketSets');
+
+  const oldMarket = settings.market || {};
+
+  // Move speculativeInvention to manufacturingSummary if present
+  if (oldMarket.speculativeInvention) {
+    settings.manufacturingSummary = settings.manufacturingSummary || {};
+    settings.manufacturingSummary.speculativeInvention = { ...oldMarket.speculativeInvention };
+    console.log('[Settings Migration] Moved speculativeInvention → manufacturingSummary');
+  }
+
+  // Build the Default Market Set from old market settings
+  const id = Date.now().toString() + Math.random().toString(36).substr(2, 9);
+  const now = Date.now();
+
+  const inputMaterials = {
+    ...DEFAULT_MARKET_SET_TEMPLATE.inputMaterials,
+    ...(oldMarket.inputMaterials || {}),
+  };
+  const outputProducts = {
+    ...DEFAULT_MARKET_SET_TEMPLATE.outputProducts,
+    ...(oldMarket.outputProducts || {}),
+  };
+
+  // Ensure private structure fields are present
+  for (const section of [inputMaterials, outputProducts]) {
+    if (!('structureId' in section)) section.structureId = null;
+    if (!('structureName' in section)) section.structureName = null;
+    if (!('characterId' in section)) section.characterId = null;
+  }
+
+  settings.marketSets = [{
+    id,
+    name: 'Default',
+    isDefault: true,
+    createdAt: now,
+    updatedAt: now,
+    inputMaterials,
+    outputProducts,
+    warningThreshold: oldMarket.warningThreshold ?? 0.3,
+  }];
+
+  delete settings.market;
+
+  // Persist so this migration does not re-run on the next loadSettings() call
+  saveSettings(settings);
+
+  console.log('[Settings Migration] Migration complete — created "Default" Market Set');
 }
 
 /**
- * Update market settings
- * @param {Object} updates - Market settings to update
- * @returns {boolean} Success status
+ * Validate a Market Set name.
+ * @param {string} name
+ * @param {string|null} excludeId - Set ID to exclude from duplicate check (for edits)
+ * @returns {string} Trimmed, validated name
+ * @throws {Error} If invalid
  */
-function updateMarketSettings(updates) {
-  return updateSettings('market', updates);
+function validateMarketSetName(name, excludeId = null) {
+  const trimmed = (name || '').trim();
+  if (!trimmed) throw new Error('Market Set name is required.');
+  if (!/^[a-zA-Z0-9 _\-()+]+$/.test(trimmed)) {
+    throw new Error('Name may only contain letters, numbers, spaces, and the characters _ - ( ) +');
+  }
+  if (trimmed.length > 50) throw new Error('Name must be 50 characters or less.');
+  const settings = loadSettings();
+  const duplicate = (settings.marketSets || []).find(
+    s => s.name.toLowerCase() === trimmed.toLowerCase() && s.id !== excludeId
+  );
+  if (duplicate) throw new Error(`A Market Set named "${trimmed}" already exists.`);
+  return trimmed;
+}
+
+/**
+ * Get all Market Sets.
+ * @returns {Array} Array of Market Set objects
+ */
+function getMarketSets() {
+  const settings = loadSettings();
+  return settings.marketSets || [];
+}
+
+/**
+ * Get the default Market Set (isDefault === true, or first set, or null).
+ * @returns {Object|null}
+ */
+function getDefaultMarketSet() {
+  const sets = getMarketSets();
+  return sets.find(s => s.isDefault) || sets[0] || null;
+}
+
+/**
+ * Get a Market Set by ID.
+ * @param {string} id
+ * @returns {Object|null}
+ */
+function getMarketSetById(id) {
+  return getMarketSets().find(s => s.id === id) || null;
+}
+
+/**
+ * Add a new Market Set.
+ * @param {Object} setData - Market Set data (name, isDefault, inputMaterials, outputProducts, warningThreshold)
+ * @returns {Object} The created Market Set
+ */
+function addMarketSet(setData) {
+  const settings = loadSettings();
+  if (!settings.marketSets) settings.marketSets = [];
+
+  const trimmedName = validateMarketSetName(setData.name);
+
+  // If this set is default, clear isDefault on all others
+  if (setData.isDefault) {
+    settings.marketSets.forEach(s => { s.isDefault = false; });
+  }
+
+  const id = Date.now().toString() + Math.random().toString(36).substr(2, 9);
+  const now = Date.now();
+
+  const newSet = {
+    id,
+    name: trimmedName,
+    isDefault: setData.isDefault || false,
+    createdAt: now,
+    updatedAt: now,
+    inputMaterials: { ...DEFAULT_MARKET_SET_TEMPLATE.inputMaterials, ...(setData.inputMaterials || {}) },
+    outputProducts: { ...DEFAULT_MARKET_SET_TEMPLATE.outputProducts, ...(setData.outputProducts || {}) },
+    warningThreshold: setData.warningThreshold ?? 0.3,
+  };
+
+  // Ensure private structure fields are present
+  for (const section of [newSet.inputMaterials, newSet.outputProducts]) {
+    if (!('structureId' in section)) section.structureId = null;
+    if (!('structureName' in section)) section.structureName = null;
+    if (!('characterId' in section)) section.characterId = null;
+  }
+
+  settings.marketSets.push(newSet);
+  saveSettings(settings);
+  return newSet;
+}
+
+/**
+ * Update an existing Market Set.
+ * @param {string} id - Market Set ID
+ * @param {Object} updates - Fields to update
+ * @returns {Object} The updated Market Set
+ */
+function updateMarketSet(id, updates) {
+  const settings = loadSettings();
+  if (!settings.marketSets) throw new Error('No Market Sets configured.');
+
+  const index = settings.marketSets.findIndex(s => s.id === id);
+  if (index === -1) throw new Error(`Market Set "${id}" not found.`);
+
+  if (updates.name !== undefined) {
+    updates.name = validateMarketSetName(updates.name, id);
+  }
+
+  // If setting this as default, clear isDefault on all others
+  if (updates.isDefault === true) {
+    settings.marketSets.forEach(s => { s.isDefault = false; });
+  }
+
+  settings.marketSets[index] = {
+    ...settings.marketSets[index],
+    ...updates,
+    updatedAt: Date.now(),
+  };
+
+  // Ensure private structure fields are present in inputMaterials/outputProducts
+  for (const sectionKey of ['inputMaterials', 'outputProducts']) {
+    if (settings.marketSets[index][sectionKey]) {
+      const section = settings.marketSets[index][sectionKey];
+      if (!('structureId' in section)) section.structureId = null;
+      if (!('structureName' in section)) section.structureName = null;
+      if (!('characterId' in section)) section.characterId = null;
+    }
+  }
+
+  saveSettings(settings);
+  return settings.marketSets[index];
+}
+
+/**
+ * Delete a Market Set by ID.
+ * @param {string} id
+ * @returns {boolean}
+ */
+function deleteMarketSet(id) {
+  const settings = loadSettings();
+  if (!settings.marketSets) throw new Error('No Market Sets configured.');
+
+  const index = settings.marketSets.findIndex(s => s.id === id);
+  if (index === -1) throw new Error(`Market Set "${id}" not found.`);
+
+  if (settings.marketSets.length === 1) {
+    throw new Error('Cannot delete the only Market Set.');
+  }
+
+  const wasDefault = settings.marketSets[index].isDefault;
+  settings.marketSets.splice(index, 1);
+
+  // Promote the first remaining set to default if we deleted the default
+  if (wasDefault && settings.marketSets.length > 0) {
+    settings.marketSets[0].isDefault = true;
+  }
+
+  saveSettings(settings);
+  return true;
+}
+
+/**
+ * Set a Market Set as the default.
+ * @param {string} id
+ * @returns {Object} Updated Market Set
+ */
+function setDefaultMarketSet(id) {
+  return updateMarketSet(id, { isDefault: true });
+}
+
+/**
+ * Get the tool-specific Market Set ID preference.
+ * @param {string} toolKey - One of the toolPreferences keys
+ * @returns {string|null}
+ */
+function getToolMarketSetId(toolKey) {
+  const settings = loadSettings();
+  return settings.toolPreferences?.[toolKey] || null;
+}
+
+/**
+ * Save the tool-specific Market Set ID preference.
+ * @param {string} toolKey
+ * @param {string|null} id
+ * @returns {boolean}
+ */
+function setToolMarketSetId(toolKey, id) {
+  const settings = loadSettings();
+  if (!settings.toolPreferences) settings.toolPreferences = {};
+  settings.toolPreferences[toolKey] = id;
+  return saveSettings(settings);
+}
+
+/**
+ * Resolve the Market Set for a given tool. Returns the saved preference if it
+ * still exists, otherwise falls back to the default Market Set.
+ * Always returns the full Market Set object — callers must use set.inputMaterials,
+ * set.outputProducts etc. directly.
+ * @param {string} toolKey
+ * @returns {Object|null} Full Market Set object
+ */
+function resolveMarketSetForTool(toolKey) {
+  const savedId = getToolMarketSetId(toolKey);
+  if (savedId) {
+    const set = getMarketSetById(savedId);
+    if (set) return set;
+  }
+  return getDefaultMarketSet();
 }
 
 // Manufacturing Facilities Management
@@ -1633,8 +1894,17 @@ module.exports = {
   getBlueprints,
   getEffectiveBlueprintValues,
   getBlueprintsCacheStatus,
-  getMarketSettings,
-  updateMarketSettings,
+  getMarketSets,
+  getDefaultMarketSet,
+  getMarketSetById,
+  addMarketSet,
+  updateMarketSet,
+  deleteMarketSet,
+  setDefaultMarketSet,
+  getToolMarketSetId,
+  setToolMarketSetId,
+  resolveMarketSetForTool,
+  validateMarketSetName,
   getManufacturingFacilities,
   addManufacturingFacility,
   updateManufacturingFacility,

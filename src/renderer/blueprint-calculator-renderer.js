@@ -7,6 +7,37 @@ let currentDefaultCharacter = null;
 let currentDefaultCharacterId = null;
 let searchTimeout = null;
 
+// Market Set state
+const TOOL_KEY_CALC = 'blueprintCalculatorMarketSetId';
+let activeMarketSet = null;
+
+async function initMarketSetSelector() {
+  try {
+    const sets = await window.electronAPI.market.getMarketSets();
+    const { marketSet } = await window.electronAPI.market.getMarketSetForTool(TOOL_KEY_CALC);
+    activeMarketSet = marketSet;
+
+    const select = document.getElementById('market-set-selector');
+    if (!select) return;
+    select.innerHTML = sets.map(s =>
+      `<option value="${s.id}"${s.id === activeMarketSet?.id ? ' selected' : ''}>${s.name}${s.isDefault ? ' (Default)' : ''}</option>`
+    ).join('');
+
+    select.addEventListener('change', async () => {
+      await window.electronAPI.market.setMarketSetForTool(TOOL_KEY_CALC, select.value);
+      const result = await window.electronAPI.market.getMarketSetForTool(TOOL_KEY_CALC);
+      activeMarketSet = result.marketSet;
+      // Recalculate if a blueprint is loaded
+      if (currentBlueprint) {
+        const calcBtn = document.getElementById('calculate-btn');
+        if (calcBtn) calcBtn.click();
+      }
+    });
+  } catch (err) {
+    console.error('[MarketSetSelector] Error:', err);
+  }
+}
+
 // Tab and invention state
 let currentTab = 'manufacturing';
 let inventionDataLoaded = false;
@@ -62,6 +93,9 @@ async function initializeCalculator() {
 
     // Load facilities into dropdown
     await loadFacilities();
+
+    // Initialize market set selector
+    await initMarketSetSelector();
 
     // Setup event listeners
     setupEventListeners();
@@ -130,11 +164,6 @@ function setupEventListeners() {
     calculateBtn.addEventListener('click', handleCalculate);
   }
 
-  // Update Data button
-  const updateDataBtn = document.getElementById('update-data-btn');
-  if (updateDataBtn) {
-    updateDataBtn.addEventListener('click', handleUpdateData);
-  }
 
   // Add to Plan button
   const addToPlanBtn = document.getElementById('add-to-plan-btn');
@@ -385,7 +414,8 @@ async function handleCalculate() {
       runs,
       meLevel,
       characterId,
-      facilityId
+      facilityId,
+      activeMarketSet?.id
     );
 
     // Calculate and log elapsed time
@@ -610,72 +640,6 @@ function showPlanSelectionDialog(options) {
   });
 }
 
-// Handle update data button
-async function handleUpdateData() {
-  const updateBtn = document.getElementById('update-data-btn');
-
-  if (!updateBtn) {
-    return;
-  }
-
-  // Disable button and show loading state
-  updateBtn.disabled = true;
-  const originalText = updateBtn.innerHTML;
-  updateBtn.innerHTML = `
-    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="spinning">
-      <polyline points="23 4 23 10 17 10"></polyline>
-      <polyline points="1 20 1 14 7 14"></polyline>
-      <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
-    </svg>
-    Updating...
-  `;
-
-  try {
-    console.log('Starting data update...');
-
-    // Use unified market data update (handles all configured regions, adjusted prices, and cost indices)
-    const result = await window.electronAPI.market.updateAllMarketData();
-
-    if (result.success) {
-      // Show success message
-      updateBtn.innerHTML = `
-        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <polyline points="20 6 9 17 4 12"></polyline>
-        </svg>
-        Updated!
-      `;
-
-      // Reset button after 2 seconds
-      setTimeout(() => {
-        updateBtn.innerHTML = originalText;
-        updateBtn.disabled = false;
-      }, 2000);
-    } else {
-      throw new Error(result.message || 'Update failed');
-    }
-
-  } catch (error) {
-    console.error('Error updating data:', error);
-
-    // Show error state
-    updateBtn.innerHTML = `
-      <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-        <circle cx="12" cy="12" r="10"></circle>
-        <line x1="15" y1="9" x2="9" y2="15"></line>
-        <line x1="9" y1="9" x2="15" y2="15"></line>
-      </svg>
-      Update Failed
-    `;
-
-    // Reset button after 3 seconds
-    setTimeout(() => {
-      updateBtn.innerHTML = originalText;
-      updateBtn.disabled = false;
-    }, 3000);
-
-    alert('Failed to update data: ' + error.message);
-  }
-}
 
 // Display materials calculation results
 async function displayMaterialsCalculation(result, runs, facilityId = null) {
@@ -1465,9 +1429,8 @@ async function displayInventionAnalysis(blueprintTypeId, runs, cachedInventionDa
     };
 
     // Get market settings for pricing
-    const marketSettings = await window.electronAPI.market.getSettings();
-    const regionId = marketSettings.regionId || 10000002;
-    const locationId = marketSettings.locationId || null;
+    const regionId = activeMarketSet?.inputMaterials?.regionId || 10000002;
+    const locationId = activeMarketSet?.inputMaterials?.locationId || null;
 
     // Get material prices (just unit prices for backend calculation)
     const materialPrices = {};
@@ -1489,8 +1452,9 @@ async function displayInventionAnalysis(blueprintTypeId, runs, cachedInventionDa
           materialTypeId,
           regionId,
           locationId,
-          marketSettings.inputMaterials?.priceType || 'vwap',
-          1  // Get unit price
+          activeMarketSet?.inputMaterials?.priceType || 'vwap',
+          1,  // Get unit price
+          activeMarketSet?.id
         );
         console.log(`Price data received:`, priceData);
         // The price structure returns 'price' not 'unitPrice'
@@ -1512,8 +1476,9 @@ async function displayInventionAnalysis(blueprintTypeId, runs, cachedInventionDa
           decryptor.typeID,
           regionId,
           locationId,
-          marketSettings.inputMaterials?.priceType || 'vwap',
-          1  // Get unit price
+          activeMarketSet?.inputMaterials?.priceType || 'vwap',
+          1,  // Get unit price
+          activeMarketSet?.id
         );
         materialPrices[decryptor.typeID] = decryptorPriceData.price || decryptorPriceData.unitPrice || 0;
       } catch (error) {
@@ -1551,7 +1516,8 @@ async function displayInventionAnalysis(blueprintTypeId, runs, cachedInventionDa
           1,
           baselineME,
           currentDefaultCharacter?.characterId || null,
-          facilityId
+          facilityId,
+          activeMarketSet?.id
         );
 
         if (materialCalc && materialCalc.materials) {
@@ -1573,7 +1539,8 @@ async function displayInventionAnalysis(blueprintTypeId, runs, cachedInventionDa
                 regionId,
                 locationId,
                 'immediate',
-                1
+                1,
+                activeMarketSet?.id
               );
               materialPrices[materialTypeIdNum] = materialPriceData.price || materialPriceData.unitPrice || 0;
             } catch (error) {
@@ -1604,8 +1571,9 @@ async function displayInventionAnalysis(blueprintTypeId, runs, cachedInventionDa
           manufacturedProductTypeId,
           regionId,
           locationId,
-          marketSettings.outputProducts?.priceType || 'vwap',
-          1
+          activeMarketSet?.outputProducts?.priceType || 'vwap',
+          1,
+          activeMarketSet?.id
         );
         productPrice = productPriceData.price || productPriceData.unitPrice || 0;
         console.log(`Manufactured product price: ${productPrice} ISK`);
@@ -1699,7 +1667,8 @@ async function displayInventionAnalysis(blueprintTypeId, runs, cachedInventionDa
       skills,
       null,  // facility - use default
       optimizationStrategy,
-      customVolume
+      customVolume,
+      activeMarketSet?.id
     );
 
     console.log('[Frontend] Best decryptor result:', bestDecryptorResult);

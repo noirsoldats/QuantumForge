@@ -1,6 +1,32 @@
 // Manufacturing Plans Renderer
 // Handles UI for creating and managing manufacturing plans
 
+// Market Set state
+const TOOL_KEY_PLANS = 'manufacturingPlansMarketSetId';
+let activeMarketSet = null;
+
+async function initMarketSetSelector() {
+  try {
+    const sets = await window.electronAPI.market.getMarketSets();
+    const { marketSet } = await window.electronAPI.market.getMarketSetForTool(TOOL_KEY_PLANS);
+    activeMarketSet = marketSet;
+
+    const select = document.getElementById('market-set-selector');
+    if (!select) return;
+    select.innerHTML = sets.map(s =>
+      `<option value="${s.id}"${s.id === activeMarketSet?.id ? ' selected' : ''}>${s.name}${s.isDefault ? ' (Default)' : ''}</option>`
+    ).join('');
+
+    select.addEventListener('change', async () => {
+      await window.electronAPI.market.setMarketSetForTool(TOOL_KEY_PLANS, select.value);
+      const result = await window.electronAPI.market.getMarketSetForTool(TOOL_KEY_PLANS);
+      activeMarketSet = result.marketSet;
+    });
+  } catch (err) {
+    console.error('[MarketSetSelector] Error:', err);
+  }
+}
+
 /**
  * Render a polished empty state with icon, heading, and helpful sub-text.
  * @param {string} heading - Short title
@@ -37,6 +63,7 @@ let bulkEditMode = false;
 document.addEventListener('DOMContentLoaded', async () => {
   await loadCharacters();
   await loadFacilities();
+  await initMarketSetSelector();
   setupEventListeners();
   startAutoRefresh();
 });
@@ -1820,7 +1847,7 @@ function attachReactionEventListeners() {
   const refreshBtn = document.getElementById('refresh-reaction-prices-btn');
   if (refreshBtn) {
     refreshBtn.onclick = async () => {
-      await window.electronAPI.plans.recalculateMaterials(selectedPlanId, true);
+      await window.electronAPI.plans.recalculateMaterials(selectedPlanId, true, activeMarketSet?.id);
       await loadReactions();
       // Reload overview and plans list to reflect updated prices
       await loadOverview();
@@ -1887,7 +1914,7 @@ function attachReactionEventListeners() {
         await window.electronAPI.reactions.clearCaches();
 
         // Recalculate once after all updates
-        await window.electronAPI.plans.recalculateMaterials(selectedPlanId, false);
+        await window.electronAPI.plans.recalculateMaterials(selectedPlanId, false, activeMarketSet?.id);
 
         await loadReactions();
         // Reload overview and plans list to reflect updated reaction costs
@@ -2398,7 +2425,7 @@ window.saveBlueprintEdit = async function(planBlueprintId) {
     await window.electronAPI.plans.updateBlueprint(planBlueprintId, updates);
 
     // Recalculate materials after blueprint update
-    await window.electronAPI.plans.recalculateMaterials(selectedPlanId, false);
+    await window.electronAPI.plans.recalculateMaterials(selectedPlanId, false, activeMarketSet?.id);
 
     await loadBlueprints();
     await loadOverview(); // Update overview stats
@@ -2584,7 +2611,7 @@ window.saveBulkEdit = async function() {
     await window.electronAPI.plans.bulkUpdateBlueprints(selectedPlanId, bulkUpdates);
 
     // Recalculate materials once for entire plan
-    await window.electronAPI.plans.recalculateMaterials(selectedPlanId, false);
+    await window.electronAPI.plans.recalculateMaterials(selectedPlanId, false, activeMarketSet?.id);
 
     // Reload all tabs
     await loadBlueprints();
@@ -2619,7 +2646,7 @@ window.removeBlueprint = async function(planBlueprintId) {
     await window.electronAPI.plans.removeBlueprint(planBlueprintId);
 
     // Recalculate materials after blueprint removal
-    await window.electronAPI.plans.recalculateMaterials(selectedPlanId, false);
+    await window.electronAPI.plans.recalculateMaterials(selectedPlanId, false, activeMarketSet?.id);
 
     await loadTabContent(activeTab);
     if (activeTab !== 'overview') {
@@ -2976,7 +3003,7 @@ async function refreshPrices() {
 
   try {
     showLoading('Refreshing prices from market...');
-    await window.electronAPI.plans.recalculateMaterials(selectedPlanId, true);
+    await window.electronAPI.plans.recalculateMaterials(selectedPlanId, true, activeMarketSet?.id);
     await loadMaterials();
     await loadProducts();
     await loadOverview();
@@ -3858,7 +3885,7 @@ async function handlePlanDefaultCharacterToggle(event) {
     } else {
       console.log('Updated plan default characters:', defaultCharacters);
       // Recalculate materials if character defaults changed
-      await window.electronAPI.plans.recalculateMaterials(selectedPlanId, false);
+      await window.electronAPI.plans.recalculateMaterials(selectedPlanId, false, activeMarketSet?.id);
       // Reload current tab to reflect changes
       await loadTabContent(activeTab);
       // Reload plans list to update summary card
@@ -3891,7 +3918,7 @@ async function handlePlanReactionsToggle(event) {
     } else {
       console.log('Updated reactions as intermediates:', isChecked);
       // Recalculate materials when reactions setting changes
-      await window.electronAPI.plans.recalculateMaterials(selectedPlanId, false);
+      await window.electronAPI.plans.recalculateMaterials(selectedPlanId, false, activeMarketSet?.id);
       // Update reactions tab visibility
       await updateReactionsTabVisibility();
       // Reload current tab to reflect changes

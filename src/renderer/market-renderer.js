@@ -9,6 +9,14 @@ let allRegions = [];
 let hasUnsavedChanges = false;
 let currentDefaultCharacterId = null;
 
+// Market Sets state
+let marketSets = [];
+let activeEditSetId = null; // id of the set being edited in the settings form, null = new set
+
+// Region Dashboard queue state
+let regionUpdateQueue = [];
+let isRegionUpdateRunning = false;
+
 // Store event listeners so they can be removed
 let itemSearchClickOutsideListener = null;
 let overrideSearchClickOutsideListener = null;
@@ -60,9 +68,13 @@ async function initializeMarketManager() {
     // Load current settings
     await loadSettings();
 
-    // Update last fetch time displays
+    // Load Market Sets list
+    await loadMarketSets();
+
+    // Update last fetch time displays and region dashboard
     await updateLastFetchTime();
     await updateHistoryDataStatus();
+    await loadRegionDashboard();
 
     // Setup event listeners
     setupEventListeners();
@@ -572,15 +584,10 @@ async function handleStructureSearch(prefix) {
 
 // Load market settings
 async function loadSettings() {
-  try {
-    currentSettings = await window.electronAPI.market.getSettings();
-    console.log('Loaded market settings:', currentSettings);
-
-    // Populate form with current settings
-    populateSettingsForm(currentSettings);
-  } catch (error) {
-    console.error('Error loading market settings:', error);
-  }
+  // loadSettings is no longer used to populate the form on init.
+  // The settings form is only populated when the user opens a Market Set for editing via openEditMarketSet().
+  // This function is kept as a no-op for backward-compat with any remaining callers.
+  console.log('[Market] loadSettings: no-op (form is populated per-set via openEditMarketSet)');
 }
 
 // Populate settings form with current values
@@ -856,137 +863,64 @@ async function getLocationFromForm(prefix) {
   return location;
 }
 
-// Save settings
-async function saveSettings() {
-  const saveBtn = document.getElementById('save-settings-btn');
-  saveBtn.disabled = true;
-  saveBtn.innerHTML = `
-    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-      <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
-      <polyline points="17 21 17 13 7 13 7 21"></polyline>
-      <polyline points="7 3 7 8 15 8"></polyline>
-    </svg>
-    Saving...
-  `;
-
-  try {
-    const settings = await getSettingsFromForm();
-    console.log('Saving settings:', settings);
-
-    const success = await window.electronAPI.market.updateSettings(settings);
-
-    if (success) {
-      console.log('Settings saved successfully');
-      currentSettings = settings;
-
-      // Clear unsaved indicator
-      clearUnsavedIndicator();
-
-      // Show success feedback
-      saveBtn.innerHTML = `
-        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <polyline points="20 6 9 17 4 12"></polyline>
-        </svg>
-        Saved!
-      `;
-
-      setTimeout(() => {
-        saveBtn.disabled = false;
-        saveBtn.innerHTML = `
-          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
-            <polyline points="17 21 17 13 7 13 7 21"></polyline>
-            <polyline points="7 3 7 8 15 8"></polyline>
-          </svg>
-          Save Settings
-        `;
-      }, 2000);
-    } else {
-      throw new Error('Failed to save settings');
-    }
-  } catch (error) {
-    console.error('Error saving settings:', error);
-    alert('Failed to save settings: ' + error.message);
-
-    saveBtn.disabled = false;
-    saveBtn.innerHTML = `
-      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-        <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
-        <polyline points="17 21 17 13 7 13 7 21"></polyline>
-        <polyline points="7 3 7 8 15 8"></polyline>
-      </svg>
-      Save Settings
-    `;
-  }
-}
-
 // Reset settings to defaults
 async function resetSettings() {
-  if (!confirm('Are you sure you want to reset all market settings to their default values?')) {
+  if (!confirm('Reset this Market Set\'s location and pricing fields to Jita defaults?')) {
     return;
   }
 
-  try {
-    // Load default settings from main process
-    const defaultSettings = {
+  const defaults = {
+    inputMaterials: {
       locationType: 'hub',
       locationId: 60003760,  // Jita 4-4
       regionId: 10000002,    // The Forge
       systemId: 30000142,    // Jita
-      inputMaterials: {
-        priceType: 'sell',
-        priceMethod: 'hybrid',
-        priceModifier: 1.0,
-        percentile: 0.2,
-        minVolume: 1000,
-      },
-      outputProducts: {
-        priceType: 'sell',
-        priceMethod: 'hybrid',
-        priceModifier: 1.0,
-        percentile: 0.2,
-        minVolume: 1000,
-      },
-      warningThreshold: 0.3,
-    };
+      structureId: null,
+      structureName: null,
+      characterId: null,
+      priceType: 'sell',
+      priceMethod: 'hybrid',
+      priceModifier: 1.0,
+      percentile: 0.2,
+      minVolume: 1000,
+    },
+    outputProducts: {
+      useSameLocation: true,
+      locationType: 'hub',
+      locationId: 60003760,
+      regionId: 10000002,
+      systemId: 30000142,
+      structureId: null,
+      structureName: null,
+      characterId: null,
+      priceType: 'sell',
+      priceMethod: 'hybrid',
+      priceModifier: 1.0,
+      percentile: 0.2,
+      minVolume: 1000,
+    },
+    warningThreshold: 0.3,
+  };
 
-    const success = await window.electronAPI.market.updateSettings(defaultSettings);
-
-    if (success) {
-      console.log('Settings reset to defaults');
-      currentSettings = defaultSettings;
-      populateSettingsForm(defaultSettings);
-    } else {
-      throw new Error('Failed to reset settings');
-    }
-  } catch (error) {
-    console.error('Error resetting settings:', error);
-    alert('Failed to reset settings: ' + error.message);
-  }
+  populateSettingsForm(defaults);
+  markAsUnsaved();
 }
 
 // Update last fetch time display
+// NOTE: #last-fetch-time was removed when the Quick Update section was replaced
+// by the Region Status Dashboard. This function is kept as a no-op for any
+// remaining call sites; the dashboard's loadRegionDashboard() now owns status display.
 async function updateLastFetchTime() {
-  try {
-    const lastFetch = await window.electronAPI.market.getLastFetchTime();
-    const timeElement = document.getElementById('last-fetch-time');
-
-    if (lastFetch) {
-      const date = new Date(lastFetch);
-      timeElement.textContent = date.toLocaleString();
-    } else {
-      timeElement.textContent = 'Never';
-    }
-  } catch (error) {
-    console.error('Error updating last fetch time:', error);
-  }
+  // no-op — element no longer exists in the DOM
 }
 
 // Update history data status display
 async function updateHistoryDataStatus() {
   try {
-    const settings = await window.electronAPI.market.getSettings();
-    const regionId = settings.regionId || 10000002;
+    // Use the default market set's region for history status display
+    const sets = await window.electronAPI.market.getMarketSets();
+    const defaultSet = sets.find(s => s.isDefault) || sets[0];
+    const regionId = defaultSet?.inputMaterials?.regionId || 10000002;
 
     const status = await window.electronAPI.market.getHistoryDataStatus(regionId);
     const statusElement = document.getElementById('history-data-status');
@@ -1161,6 +1095,7 @@ async function showErrorWithRetry(message, retryCallback) {
 // Handle manual market data refresh
 async function handleMarketDataRefresh(isRetry = false) {
   const refreshBtn = document.getElementById('refresh-market-data-btn');
+  if (!refreshBtn) return; // button was removed in favour of Region Dashboard
   refreshBtn.disabled = true;
   refreshBtn.innerHTML = `
     <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -1274,8 +1209,9 @@ async function handleHistoryDataRefresh(isRetry = false) {
   });
 
   try {
-    const settings = await window.electronAPI.market.getSettings();
-    const regionId = settings.regionId || 10000002;
+    const sets = await window.electronAPI.market.getMarketSets();
+    const defaultSet = sets.find(s => s.isDefault) || sets[0];
+    const regionId = defaultSet?.inputMaterials?.regionId || 10000002;
 
     const result = await window.electronAPI.market.manualRefreshHistory(regionId);
 
@@ -1344,6 +1280,397 @@ async function handleHistoryDataRefresh(isRetry = false) {
   }
 }
 
+// ============================================================
+// Market Sets Management
+// ============================================================
+
+async function loadMarketSets() {
+  try {
+    marketSets = await window.electronAPI.market.getMarketSets();
+    renderMarketSetsList();
+  } catch (err) {
+    console.error('[Market Sets] Error loading:', err);
+  }
+}
+
+function renderMarketSetsList() {
+  const container = document.getElementById('market-sets-list');
+  if (!container) return;
+
+  if (!marketSets || marketSets.length === 0) {
+    container.innerHTML = '<div class="loading-spinner-inline">No Market Sets configured. Click "Add Market Set" to create one.</div>';
+    return;
+  }
+
+  container.innerHTML = marketSets.map(set => {
+    const isActive = set.id === activeEditSetId;
+    return `
+    <div class="market-set-card${set.isDefault ? ' is-default' : ''}${isActive ? ' active-edit' : ''}" data-id="${set.id}">
+      <div class="market-set-info">
+        <span class="market-set-name">${escapeHtml(set.name)}</span>
+        ${set.isDefault ? '<span class="market-set-default-badge">Default</span>' : ''}
+        <span class="market-set-meta">${escapeHtml(describeMarketSet(set))}</span>
+      </div>
+      <div class="market-set-actions">
+        ${!set.isDefault ? `<button class="secondary-button small-btn set-default-btn" data-id="${set.id}">Default</button>` : ''}
+        <button class="danger-button small-btn delete-set-btn" data-id="${set.id}"${marketSets.length === 1 ? ' disabled title="Cannot delete the only Market Set"' : ''}>Delete</button>
+      </div>
+    </div>
+  `;
+  }).join('');
+
+  // Clicking the card body opens the set for editing
+  container.querySelectorAll('.market-set-card').forEach(card => {
+    card.addEventListener('click', (e) => {
+      // Don't trigger if a button inside was clicked
+      if (e.target.closest('button')) return;
+      openEditMarketSet(card.dataset.id);
+    });
+  });
+  container.querySelectorAll('.set-default-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => { e.stopPropagation(); handleSetDefault(btn.dataset.id); });
+  });
+  container.querySelectorAll('.delete-set-btn').forEach(btn => {
+    if (!btn.disabled) {
+      btn.addEventListener('click', (e) => { e.stopPropagation(); handleDeleteMarketSet(btn.dataset.id); });
+    }
+  });
+}
+
+function describeMarketSet(set) {
+  const input = set.inputMaterials;
+  if (!input) return '';
+  const hub = input.locationId === 60003760 ? 'Jita'
+    : input.locationId === 60008494 ? 'Amarr'
+    : input.locationId === 60011866 ? 'Dodixie'
+    : input.locationId === 60004588 ? 'Rens'
+    : input.locationId === 60005686 ? 'Hek'
+    : input.locationType === 'private_structure' ? (input.structureName || 'Private Structure')
+    : `Region ${input.regionId || ''}`;
+  return hub;
+}
+
+function escapeHtml(str) {
+  return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function openEditMarketSet(id) {
+  activeEditSetId = id;
+  const set = marketSets.find(s => s.id === id);
+  if (!set) return;
+
+  // Update form header
+  const title = document.getElementById('market-set-form-title');
+  const cancelBtn = document.getElementById('cancel-edit-market-set-btn');
+  if (title) title.textContent = `Editing: ${set.name}`;
+  if (cancelBtn) cancelBtn.style.display = '';
+
+  // Highlight the active card
+  document.querySelectorAll('.market-set-card').forEach(c => c.classList.remove('active-edit'));
+  const activeCard = document.querySelector(`.market-set-card[data-id="${id}"]`);
+  if (activeCard) activeCard.classList.add('active-edit');
+
+  // Populate name input
+  const nameInput = document.getElementById('market-set-name-input');
+  if (nameInput) nameInput.value = set.name;
+
+  // Populate the settings form with this set's data
+  populateSettingsForm(set);
+  clearUnsavedIndicator();
+}
+
+function openNewMarketSet() {
+  activeEditSetId = null;
+
+  // Update form header
+  const title = document.getElementById('market-set-form-title');
+  const cancelBtn = document.getElementById('cancel-edit-market-set-btn');
+  if (title) title.textContent = 'Add Market Set';
+  if (cancelBtn) cancelBtn.style.display = 'none';
+
+  // Remove active-edit highlight from all cards
+  document.querySelectorAll('.market-set-card').forEach(c => c.classList.remove('active-edit'));
+
+  // Clear name input
+  const nameInput = document.getElementById('market-set-name-input');
+  if (nameInput) nameInput.value = '';
+
+  // Clear the form to defaults
+  const defaultSet = {
+    inputMaterials: {
+      locationType: 'hub', locationId: 60003760, regionId: 10000002, systemId: 30000142,
+      structureId: null, structureName: null, characterId: null,
+      priceType: 'sell', priceMethod: 'hybrid', priceModifier: 1.0, percentile: 0.2, minVolume: 1000
+    },
+    outputProducts: {
+      useSameLocation: true, locationType: 'hub', locationId: 60003760, regionId: 10000002, systemId: 30000142,
+      structureId: null, structureName: null, characterId: null,
+      priceType: 'sell', priceMethod: 'hybrid', priceModifier: 1.0, percentile: 0.2, minVolume: 1000
+    },
+    warningThreshold: 0.3,
+  };
+  populateSettingsForm(defaultSet);
+  clearUnsavedIndicator();
+}
+
+function cancelEditMarketSet() {
+  activeEditSetId = null;
+  const title = document.getElementById('market-set-form-title');
+  const cancelBtn = document.getElementById('cancel-edit-market-set-btn');
+  if (title) title.textContent = 'Add Market Set';
+  if (cancelBtn) cancelBtn.style.display = 'none';
+  document.querySelectorAll('.market-set-card').forEach(c => c.classList.remove('active-edit'));
+
+  // Reset name input and form to defaults
+  const nameInput = document.getElementById('market-set-name-input');
+  if (nameInput) nameInput.value = '';
+  const defaultSet = {
+    inputMaterials: {
+      locationType: 'hub', locationId: 60003760, regionId: 10000002, systemId: 30000142,
+      structureId: null, structureName: null, characterId: null,
+      priceType: 'sell', priceMethod: 'hybrid', priceModifier: 1.0, percentile: 0.2, minVolume: 1000
+    },
+    outputProducts: {
+      useSameLocation: true, locationType: 'hub', locationId: 60003760, regionId: 10000002, systemId: 30000142,
+      structureId: null, structureName: null, characterId: null,
+      priceType: 'sell', priceMethod: 'hybrid', priceModifier: 1.0, percentile: 0.2, minVolume: 1000
+    },
+    warningThreshold: 0.3,
+  };
+  populateSettingsForm(defaultSet);
+  clearUnsavedIndicator();
+}
+
+async function handleSaveMarketSet() {
+  const saveBtn = document.getElementById('save-settings-btn');
+  const label = document.getElementById('save-settings-btn-label');
+  saveBtn.disabled = true;
+  if (label) label.textContent = 'Saving...';
+
+  try {
+    // Validate name field (use a name input if present, otherwise use set name)
+    const nameInput = document.getElementById('market-set-name-input');
+    const name = nameInput ? nameInput.value.trim() : (activeEditSetId ? marketSets.find(s => s.id === activeEditSetId)?.name : 'New Market Set');
+
+    const formData = await getSettingsFromForm();
+
+    // Only pass the fields that belong on a Market Set — strip legacy top-level location fields
+    const setData = {
+      name,
+      inputMaterials: formData.inputMaterials,
+      outputProducts: formData.outputProducts,
+      warningThreshold: formData.warningThreshold,
+    };
+
+    if (activeEditSetId) {
+      await window.electronAPI.market.updateMarketSet(activeEditSetId, setData);
+    } else {
+      await window.electronAPI.market.addMarketSet(setData);
+    }
+
+    clearUnsavedIndicator();
+    if (label) label.textContent = 'Saved!';
+    setTimeout(() => {
+      saveBtn.disabled = false;
+      if (label) label.textContent = 'Save Market Set';
+    }, 1500);
+
+    // Reload sets list; if this was an add, find the new set by name and open it
+    await loadMarketSets();
+    if (!activeEditSetId) {
+      const newSet = marketSets.find(s => s.name === name);
+      if (newSet) openEditMarketSet(newSet.id);
+    } else {
+      // Re-apply active-edit highlight after list re-render
+      const activeCard = document.querySelector(`.market-set-card[data-id="${activeEditSetId}"]`);
+      if (activeCard) activeCard.classList.add('active-edit');
+      const title = document.getElementById('market-set-form-title');
+      if (title) title.textContent = `Editing: ${name}`;
+    }
+  } catch (err) {
+    console.error('[Market Sets] Save error:', err);
+    alert('Failed to save Market Set: ' + err.message);
+    saveBtn.disabled = false;
+    if (label) label.textContent = 'Save Market Set';
+  }
+}
+
+async function handleDeleteMarketSet(id) {
+  const set = marketSets.find(s => s.id === id);
+  if (!set) return;
+  if (!confirm(`Delete Market Set "${set.name}"? This cannot be undone.`)) return;
+  try {
+    await window.electronAPI.market.deleteMarketSet(id);
+    await loadMarketSets();
+  } catch (err) {
+    alert('Failed to delete Market Set: ' + err.message);
+  }
+}
+
+async function handleSetDefault(id) {
+  try {
+    await window.electronAPI.market.setDefaultMarketSet(id);
+    await loadMarketSets();
+  } catch (err) {
+    alert('Failed to set default: ' + err.message);
+  }
+}
+
+// ============================================================
+// Region Status Dashboard
+// ============================================================
+
+// Known region names for the major trade hubs and common regions
+const REGION_NAMES = {
+  10000002: 'The Forge',
+  10000043: 'Domain',
+  10000032: 'Sinq Laison',
+  10000030: 'Heimatar',
+  10000042: 'Metropolis',
+  10000001: 'Derelik',
+  10000016: 'Lonetrek',
+  10000033: 'The Citadel',
+  10000044: 'Solitude',
+};
+
+function getRegionName(regionId) {
+  return REGION_NAMES[regionId] || `Region ${regionId}`;
+}
+
+function getRegionAgeClass(lastFetch) {
+  if (!lastFetch) return 'old';
+  const ageMs = Date.now() - lastFetch;
+  if (ageMs < 60 * 60 * 1000) return 'fresh';       // < 1 hour
+  if (ageMs < 3 * 60 * 60 * 1000) return 'stale';   // 1–3 hours
+  return 'old';                                        // > 3 hours
+}
+
+function formatAge(lastFetch) {
+  if (!lastFetch) return 'Never updated';
+  const ageMs = Date.now() - lastFetch;
+  const mins = Math.floor(ageMs / 60000);
+  const hours = Math.floor(mins / 60);
+  const days = Math.floor(hours / 24);
+  if (days > 0) return `${days}d ago`;
+  if (hours > 0) return `${hours}h ${mins % 60}m ago`;
+  if (mins > 0) return `${mins}m ago`;
+  return 'Just updated';
+}
+
+async function loadRegionDashboard() {
+  const container = document.getElementById('region-dashboard-list');
+  if (!container) return;
+
+  try {
+    const dashboard = await window.electronAPI.market.getRegionDashboard();
+
+    if (!dashboard || dashboard.length === 0) {
+      container.innerHTML = '<div class="loading-spinner-inline">No regions configured. Add a Market Set to see regions here.</div>';
+      return;
+    }
+
+    container.innerHTML = dashboard.map(row => renderRegionRow(row)).join('');
+
+    container.querySelectorAll('.region-update-btn').forEach(btn => {
+      btn.addEventListener('click', () => handleUpdateRegion(parseInt(btn.dataset.regionId)));
+    });
+  } catch (err) {
+    console.error('[Region Dashboard] Error loading:', err);
+    container.innerHTML = '<div class="loading-spinner-inline">Error loading regions.</div>';
+  }
+}
+
+function renderRegionRow(row) {
+  const ageClass = getRegionAgeClass(row.lastFetch);
+  const ageText = formatAge(row.lastFetch);
+  const pills = (row.setNames || []).map(name => `<span class="region-set-pill">${escapeHtml(name)}</span>`).join('');
+
+  return `
+    <div class="region-row" id="region-row-${row.regionId}">
+      <span class="region-status-dot ${ageClass}"></span>
+      <span class="region-name">${escapeHtml(row.regionName || getRegionName(row.regionId))}</span>
+      <span class="region-age" id="region-age-${row.regionId}">${ageText}</span>
+      <div class="region-set-pills">${pills}</div>
+      <span class="region-update-status" id="region-status-${row.regionId}"></span>
+      <button class="secondary-button small-btn region-update-btn" data-region-id="${row.regionId}" id="region-btn-${row.regionId}">Update</button>
+    </div>
+  `;
+}
+
+function handleUpdateRegion(regionId) {
+  if (!regionUpdateQueue.includes(regionId)) {
+    regionUpdateQueue.push(regionId);
+  }
+  updateQueueBadge();
+  processRegionUpdateQueue();
+}
+
+async function handleUpdateAllRegions() {
+  const dashboard = document.querySelectorAll('.region-row');
+  dashboard.forEach(row => {
+    const regionId = parseInt(row.id.replace('region-row-', ''));
+    if (!isNaN(regionId) && !regionUpdateQueue.includes(regionId)) {
+      regionUpdateQueue.push(regionId);
+    }
+  });
+  updateQueueBadge();
+  processRegionUpdateQueue();
+}
+
+async function processRegionUpdateQueue() {
+  if (isRegionUpdateRunning || regionUpdateQueue.length === 0) return;
+  isRegionUpdateRunning = true;
+
+  const regionId = regionUpdateQueue.shift();
+  updateQueueBadge();
+
+  // Mark row as updating
+  const btn = document.getElementById(`region-btn-${regionId}`);
+  const statusEl = document.getElementById(`region-status-${regionId}`);
+  if (btn) { btn.disabled = true; btn.textContent = '...'; }
+  if (statusEl) statusEl.textContent = 'Updating...';
+
+  // Mark queued rows as pending
+  regionUpdateQueue.forEach(id => {
+    const s = document.getElementById(`region-status-${id}`);
+    if (s) s.textContent = 'Pending';
+  });
+
+  try {
+    const result = await window.electronAPI.market.updateRegion(regionId);
+    const ageClass = 'fresh';
+    const ageText = 'Just updated';
+
+    const dot = document.querySelector(`#region-row-${regionId} .region-status-dot`);
+    const ageEl = document.getElementById(`region-age-${regionId}`);
+    if (dot) { dot.className = `region-status-dot ${ageClass}`; }
+    if (ageEl) ageEl.textContent = ageText;
+    if (statusEl) statusEl.textContent = result?.rateLimited ? 'Rate limited' : '';
+  } catch (err) {
+    console.error(`[Region Dashboard] Error updating region ${regionId}:`, err);
+    if (statusEl) statusEl.textContent = 'Error';
+  }
+
+  if (btn) {
+    btn.disabled = false;
+    btn.textContent = 'Update';
+  }
+
+  isRegionUpdateRunning = false;
+  processRegionUpdateQueue(); // Process next in queue
+}
+
+function updateQueueBadge() {
+  const badge = document.getElementById('update-all-queue-badge');
+  if (!badge) return;
+  if (regionUpdateQueue.length > 0) {
+    badge.textContent = regionUpdateQueue.length;
+    badge.classList.remove('hidden');
+  } else {
+    badge.classList.add('hidden');
+  }
+}
+
 // Setup event listeners
 function setupEventListeners() {
   // Settings button
@@ -1354,10 +1681,22 @@ function setupEventListeners() {
     });
   }
 
-  // Refresh market data button
-  const refreshMarketDataBtn = document.getElementById('refresh-market-data-btn');
-  if (refreshMarketDataBtn) {
-    refreshMarketDataBtn.addEventListener('click', handleMarketDataRefresh);
+  // Add Market Set button
+  const addMarketSetBtn = document.getElementById('add-market-set-btn');
+  if (addMarketSetBtn) {
+    addMarketSetBtn.addEventListener('click', openNewMarketSet);
+  }
+
+  // Cancel edit Market Set button
+  const cancelEditMarketSetBtn = document.getElementById('cancel-edit-market-set-btn');
+  if (cancelEditMarketSetBtn) {
+    cancelEditMarketSetBtn.addEventListener('click', cancelEditMarketSet);
+  }
+
+  // Update All Regions button
+  const updateAllRegionsBtn = document.getElementById('update-all-regions-btn');
+  if (updateAllRegionsBtn) {
+    updateAllRegionsBtn.addEventListener('click', handleUpdateAllRegions);
   }
 
   // Refresh history data button
@@ -1405,7 +1744,7 @@ function setupEventListeners() {
   // Save button
   const saveBtn = document.getElementById('save-settings-btn');
   if (saveBtn) {
-    saveBtn.addEventListener('click', saveSettings);
+    saveBtn.addEventListener('click', handleSaveMarketSet);
   }
 
   // Reset button
@@ -1467,10 +1806,22 @@ function switchTab(tabName) {
     }
   });
 
+  // Reset scroll position to top when switching tabs
+  const tabContainer = document.querySelector('.tab-content-container');
+  if (tabContainer) {
+    tabContainer.scrollTop = 0;
+  }
+
   // Reload data when switching to Update Market Data tab
   if (tabName === 'update') {
     updateLastFetchTime();
     updateHistoryDataStatus();
+    loadRegionDashboard();
+  }
+
+  // Reload Market Sets list when switching to settings tab
+  if (tabName === 'settings') {
+    loadMarketSets();
   }
 }
 
@@ -1619,18 +1970,20 @@ async function loadMarketData(typeID) {
     // Update last fetch time display
     await updateViewerLastFetchTime();
 
-    // Get market settings for region and location
-    const settings = await window.electronAPI.market.getSettings();
-    const regionId = settings.regionId || 10000002; // Default to The Forge
+    // Get market settings for region and location (use default set for viewer)
+    const viewerSets = await window.electronAPI.market.getMarketSets();
+    const viewerSet = viewerSets.find(s => s.isDefault) || viewerSets[0];
+    const viewerInput = viewerSet?.inputMaterials || {};
+    const regionId = viewerInput.regionId || 10000002; // Default to The Forge
 
     // Build location filter based on location type
     let locationFilter = null;
-    if (settings.locationType === 'hub' || settings.locationType === 'station') {
+    if (viewerInput.locationType === 'hub' || viewerInput.locationType === 'station') {
       // For hub or station, filter by specific station ID
-      locationFilter = { stationId: settings.locationId };
-    } else if (settings.locationType === 'system') {
+      locationFilter = { stationId: viewerInput.locationId };
+    } else if (viewerInput.locationType === 'system') {
       // For system, filter by system ID
-      locationFilter = { systemId: settings.systemId };
+      locationFilter = { systemId: viewerInput.systemId };
     }
     // For region, no additional filter needed (already filtering by regionId)
 
@@ -1651,7 +2004,7 @@ async function loadMarketData(typeID) {
     displayOrderBook(orders);
     displayPriceChart(history);
     displayStatistics(orders, history);
-    await displayPriceCalculations(orders, history, settings);
+    await displayPriceCalculations(orders, history, viewerSet);
 
     hideLoading();
   } catch (error) {
@@ -2204,15 +2557,17 @@ async function selectOverrideItem(typeID) {
 
     // Fetch current market price
     try {
-      const settings = await window.electronAPI.market.getSettings();
-      const regionId = settings.regionId || 10000002;
+      const overrideSets = await window.electronAPI.market.getMarketSets();
+      const overrideSet = overrideSets.find(s => s.isDefault) || overrideSets[0];
+      const overrideInput = overrideSet?.inputMaterials || {};
+      const regionId = overrideInput.regionId || 10000002;
 
       // Build location filter
       let locationFilter = null;
-      if (settings.locationType === 'hub' || settings.locationType === 'station') {
-        locationFilter = { stationId: settings.locationId };
-      } else if (settings.locationType === 'system') {
-        locationFilter = { systemId: settings.systemId };
+      if (overrideInput.locationType === 'hub' || overrideInput.locationType === 'station') {
+        locationFilter = { stationId: overrideInput.locationId };
+      } else if (overrideInput.locationType === 'system') {
+        locationFilter = { systemId: overrideInput.systemId };
       }
 
       const orders = await window.electronAPI.market.fetchOrders(regionId, typeID, locationFilter);
@@ -2356,8 +2711,10 @@ async function displayPriceOverrides(overrides) {
 
   // Get item names for all overrides
   const typeIds = overrides.map(o => o.typeId);
-  const settings = await window.electronAPI.market.getSettings();
-  const regionId = settings.regionId || 10000002;
+  const listSets = await window.electronAPI.market.getMarketSets();
+  const listSet = listSets.find(s => s.isDefault) || listSets[0];
+  const listInput = listSet?.inputMaterials || {};
+  const regionId = listInput.regionId || 10000002;
 
   // Fetch market prices for comparison
   const overridesWithData = await Promise.all(overrides.map(async override => {
@@ -2367,10 +2724,10 @@ async function displayPriceOverrides(overrides) {
 
       // Build location filter
       let locationFilter = null;
-      if (settings.locationType === 'hub' || settings.locationType === 'station') {
-        locationFilter = { stationId: settings.locationId };
-      } else if (settings.locationType === 'system') {
-        locationFilter = { systemId: settings.systemId };
+      if (listInput.locationType === 'hub' || listInput.locationType === 'station') {
+        locationFilter = { stationId: listInput.locationId };
+      } else if (listInput.locationType === 'system') {
+        locationFilter = { systemId: listInput.systemId };
       }
 
       // Fetch current market price (from cache only)

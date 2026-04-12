@@ -1,22 +1,17 @@
-* {
-  margin: 0;
-  padding: 0;
-  box-sizing: border-box;
-}
-
-body {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-  background: linear-gradient(135deg, #1e1e2e 0%, #2d2d44 100%);
-  color: #e0e0e0;
-  height: 100vh;
-  overflow: hidden;
-}
+/* Market Manager — page-specific styles only.
+   Layout (height, flex-column, overflow) is handled by shared/layout.css via .page-layout.
+   Visual theme overrides (background, font) below. */
 
 #market-app {
+  /* Layout — explicit on ID to guarantee no cascade conflict */
   height: 100vh;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
   position: relative;
+  /* Visual theme */
+  background: linear-gradient(135deg, #1e1e2e 0%, #2d2d44 100%);
+  color: #e0e0e0;
 }
 
 #market-app::before {
@@ -104,6 +99,7 @@ body {
   background: rgba(0, 0, 0, 0.3);
   padding: 20px 30px;
   border-bottom: 2px solid rgba(100, 180, 255, 0.3);
+  flex-shrink: 0;
 }
 
 .header-content {
@@ -151,6 +147,7 @@ body {
   background: rgba(0, 0, 0, 0.2);
   border-bottom: 1px solid rgba(100, 180, 255, 0.2);
   padding: 0 30px;
+  flex-shrink: 0;
 }
 
 .tabs {
@@ -190,7 +187,8 @@ body {
 
 /* Tab Content */
 .tab-content-container {
-  flex: 1;
+  flex: 1 1 0;
+  min-height: 0;
   overflow-y: auto;
   padding: 30px;
 }
@@ -1547,5 +1545,272 @@ select.form-control:not([value=""]):valid {
   height: 1px;
   background: linear-gradient(to right, transparent, rgba(100, 180, 255, 0.3), transparent);
   margin: 25px 0;
+}
+
+/* ============================================================
+   Market Sets + Settings Combined Tab (stacked layout)
+   ============================================================ */
+
+.market-sets-layout {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+/* Top section: list of sets */
+.market-sets-list-section {
+  background: rgba(100, 180, 255, 0.03);
+  border: 1px solid rgba(100, 180, 255, 0.15);
+  border-radius: 8px;
+  padding: 20px;
+}
+
+.market-sets-list-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.market-sets-list-header h2 {
+  font-size: 1.25em;
+  color: #e0e0e0;
+  margin: 0;
+}
+
+.market-sets-list-section .section-description {
+  font-size: 0.8em;
+  color: rgba(200, 200, 220, 0.5);
+  margin-bottom: 16px;
+}
+
+.market-sets-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* Bottom section: add/edit form */
+.market-set-form-section {
+  background: rgba(100, 180, 255, 0.03);
+  border: 1px solid rgba(100, 180, 255, 0.15);
+  border-radius: 8px;
+  padding: 24px;
+}
+
+.market-set-form-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 20px;
+}
+
+.market-set-form-header h2 {
+  font-size: 1.5em;
+  color: #e0e0e0;
+  margin: 0;
+}
+
+.market-set-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  background: rgba(100, 180, 255, 0.05);
+  border: 1px solid rgba(100, 180, 255, 0.2);
+  border-radius: 6px;
+  gap: 8px;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.market-set-card:hover {
+  background: rgba(100, 180, 255, 0.09);
+  border-color: rgba(100, 180, 255, 0.35);
+}
+
+.market-set-card.active-edit {
+  background: rgba(100, 180, 255, 0.12);
+  border-color: rgba(100, 180, 255, 0.6);
+}
+
+.market-set-card.is-default {
+  border-color: rgba(100, 180, 255, 0.5);
+}
+
+.market-set-info {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 1;
+  min-width: 0;
+}
+
+.market-set-name {
+  font-weight: 600;
+  color: #e0e0e0;
+  font-size: 1em;
+}
+
+.market-set-default-badge {
+  font-size: 0.7em;
+  padding: 2px 8px;
+  border-radius: 3px;
+  background: rgba(100, 180, 255, 0.2);
+  color: #64b4ff;
+  border: 1px solid rgba(100, 180, 255, 0.4);
+  white-space: nowrap;
+}
+
+.market-set-meta {
+  font-size: 0.8em;
+  color: rgba(200, 200, 220, 0.5);
+  white-space: nowrap;
+}
+
+.market-set-actions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.market-set-actions .small-btn {
+  padding: 5px 10px;
+  font-size: 0.8em;
+}
+
+
+/* ============================================================
+   Region Status Dashboard
+   ============================================================ */
+
+.region-dashboard-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.region-dashboard-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.region-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(100, 180, 255, 0.15);
+  border-radius: 6px;
+}
+
+.region-status-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.region-status-dot.fresh  { background: #4caf50; box-shadow: 0 0 6px rgba(76, 175, 80, 0.5); }
+.region-status-dot.stale  { background: #ff9800; box-shadow: 0 0 6px rgba(255, 152, 0, 0.5); }
+.region-status-dot.old    { background: #f44336; box-shadow: 0 0 6px rgba(244, 67, 54, 0.5); }
+
+.region-name {
+  font-weight: 600;
+  color: #e0e0e0;
+  min-width: 180px;
+}
+
+.region-age {
+  font-size: 0.82em;
+  color: rgba(200, 200, 220, 0.6);
+  min-width: 100px;
+}
+
+.region-set-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  flex: 1;
+}
+
+.region-set-pill {
+  font-size: 0.72em;
+  padding: 2px 7px;
+  border-radius: 3px;
+  background: rgba(100, 180, 255, 0.1);
+  border: 1px solid rgba(100, 180, 255, 0.25);
+  color: rgba(200, 200, 220, 0.7);
+}
+
+.region-update-status {
+  font-size: 0.8em;
+  color: rgba(200, 200, 220, 0.5);
+  min-width: 140px;
+  text-align: right;
+}
+
+.region-update-btn {
+  flex-shrink: 0;
+}
+
+.queue-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: rgba(255, 152, 0, 0.9);
+  color: #000;
+  font-size: 0.7em;
+  font-weight: 700;
+  margin-left: 4px;
+}
+
+.queue-badge.hidden {
+  display: none;
+}
+
+.loading-spinner-inline {
+  padding: 20px;
+  text-align: center;
+  color: rgba(200, 200, 220, 0.5);
+  font-size: 0.9em;
+}
+
+/* Market Set selector in tool headers */
+.market-set-selector-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.market-set-selector-group label {
+  font-size: 0.82em;
+  color: rgba(200, 200, 220, 0.7);
+  white-space: nowrap;
+}
+
+.compact-select {
+  padding: 5px 8px;
+  font-size: 0.85em;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(100, 180, 255, 0.3);
+  border-radius: 4px;
+  color: #e0e0e0;
+  cursor: pointer;
+  min-width: 140px;
+}
+
+.compact-select:focus {
+  outline: none;
+  border-color: rgba(100, 180, 255, 0.6);
 }
 

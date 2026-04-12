@@ -1,13 +1,9 @@
-/* Blueprint Calculator Styles */
+/* Blueprint Calculator — page-specific styles only.
+   Layout (height, flex-column, overflow) is handled by shared/layout.css via .page-layout. */
 
 #calculator-app {
-  height: 100vh;
   background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
   color: #e0e0e0;
-  display: flex;
-  flex-direction: column;
-  position: relative;
-  overflow: hidden;
 }
 
 /* Header */

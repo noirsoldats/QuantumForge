@@ -534,7 +534,7 @@ function calculateReactionTime(baseTime, runs, facility = null) {
  * @param {object} db - Optional database connection
  * @returns {Promise<Object>} {materials: {typeId: qty}, tree: [...], product: {...}, pricing: {...}}
  */
-async function calculateReactionMaterials(reactionTypeId, runs = 1, characterId = null, facility = null, depth = 0, db = null) {
+async function calculateReactionMaterials(reactionTypeId, runs = 1, characterId = null, facility = null, depth = 0, db = null, marketSet = null) {
   // Prevent infinite recursion
   if (depth > MAX_RECURSION_DEPTH) {
     console.warn(`Max recursion depth ${MAX_RECURSION_DEPTH} reached for reaction ${reactionTypeId}`);
@@ -548,7 +548,7 @@ async function calculateReactionMaterials(reactionTypeId, runs = 1, characterId 
 
   // Check cache at depth 0 only
   if (depth === 0) {
-    const cacheKey = getReactionCacheKey(reactionTypeId, runs, facility, characterId);
+    const cacheKey = getReactionCacheKey(reactionTypeId, runs, facility, characterId, marketSet);
     if (reactionTreeCache.has(cacheKey)) {
       return structuredClone(reactionTreeCache.get(cacheKey));
     }
@@ -613,7 +613,8 @@ async function calculateReactionMaterials(reactionTypeId, runs = 1, characterId 
           characterId,
           facility,
           depth + 1,
-          db
+          db,
+          marketSet  // Pass marketSet through recursion
         );
 
         // Aggregate raw materials from sub-reaction
@@ -660,8 +661,11 @@ async function calculateReactionMaterials(reactionTypeId, runs = 1, characterId 
       try {
         const { calculateRealisticPrice } = require('./market-pricing');
         const { getInputLocation, getOutputLocation } = require('./blueprint-pricing');
-        const { getMarketSettings } = require('./settings-manager');
-        const marketSettings = getMarketSettings();
+        const marketSettings = marketSet;
+        if (!marketSettings) {
+          console.warn('[calculateReactionMaterials] marketSet not provided, skipping pricing');
+          throw new Error('marketSet not provided');
+        }
 
         // Get location settings for input and output
         const inputLocation = getInputLocation(marketSettings);
@@ -810,7 +814,7 @@ async function calculateReactionMaterials(reactionTypeId, runs = 1, characterId 
 
     // Cache at depth 0
     if (depth === 0) {
-      const cacheKey = getReactionCacheKey(reactionTypeId, runs, facility, characterId);
+      const cacheKey = getReactionCacheKey(reactionTypeId, runs, facility, characterId, marketSet);
       reactionTreeCache.set(cacheKey, structuredClone(result));
 
       // Limit cache size
@@ -841,7 +845,7 @@ async function calculateReactionMaterials(reactionTypeId, runs = 1, characterId 
  * @param {number} characterId - Character ID
  * @returns {string} Cache key
  */
-function getReactionCacheKey(reactionTypeId, runs, facility, characterId) {
+function getReactionCacheKey(reactionTypeId, runs, facility, characterId, marketSet = null) {
   // Include rigs in cache key to differentiate facility configurations
   let facilityKey = 'none';
   if (facility) {
@@ -850,8 +854,9 @@ function getReactionCacheKey(reactionTypeId, runs, facility, characterId) {
       : 'norigs';
     facilityKey = `${facility.id}_${facility.structureTypeId}_${rigsKey}`;
   }
-  const charKey = characterId || 'none';
-  return `${reactionTypeId}_${runs}_${facilityKey}_${charKey}`;
+  const charKey      = characterId || 'none';
+  const marketSetKey = marketSet?.id || 'none';
+  return `${reactionTypeId}_${runs}_${facilityKey}_${charKey}_${marketSetKey}`;
 }
 
 /**

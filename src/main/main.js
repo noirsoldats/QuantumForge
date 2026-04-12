@@ -97,8 +97,16 @@ const {
   getBlueprints,
   getEffectiveBlueprintValues,
   getBlueprintsCacheStatus,
-  getMarketSettings,
-  updateMarketSettings,
+  getMarketSets,
+  getDefaultMarketSet,
+  getMarketSetById,
+  addMarketSet,
+  updateMarketSet,
+  deleteMarketSet,
+  setDefaultMarketSet,
+  getToolMarketSetId,
+  setToolMarketSetId,
+  resolveMarketSetForTool,
   getManufacturingFacilities,
   addManufacturingFacility,
   updateManufacturingFacility,
@@ -1186,8 +1194,10 @@ function setupIPCHandlers() {
     return await getPlanSummary(planId);
   });
 
-  ipcMain.handle('plans:recalculateMaterials', async (event, planId, refreshPrices) => {
-    return await recalculatePlanMaterials(planId, refreshPrices);
+  ipcMain.handle('plans:recalculateMaterials', async (event, planId, refreshPrices, marketSetId) => {
+    const marketSet = marketSetId ? getMarketSetById(marketSetId) : getDefaultMarketSet();
+    if (!marketSet) throw new Error(`Market Set not found: ${marketSetId}`);
+    return await recalculatePlanMaterials(planId, refreshPrices, marketSet);
   });
 
   // Legacy: character-based ESI refresh
@@ -1351,7 +1361,7 @@ function setupIPCHandlers() {
     return searchBlueprints(searchTerm, limit);
   });
 
-  ipcMain.handle('calculator:calculateMaterials', async (event, blueprintTypeId, runs, meLevel, characterId, facilityId) => {
+  ipcMain.handle('calculator:calculateMaterials', async (event, blueprintTypeId, runs, meLevel, characterId, facilityId, marketSetId) => {
     // Get facility if facilityId is provided
     let facility = null;
     if (facilityId) {
@@ -1372,7 +1382,8 @@ function setupIPCHandlers() {
       }
     }
 
-    return await calculateBlueprintMaterials(blueprintTypeId, runs, meLevel, characterId, facility);
+    const marketSet = marketSetId ? getMarketSetById(marketSetId) : getDefaultMarketSet();
+    return await calculateBlueprintMaterials(blueprintTypeId, runs, meLevel, characterId, facility, true, 0, null, marketSet);
   });
 
   ipcMain.handle('calculator:getBlueprintProduct', (event, blueprintTypeId) => {
@@ -1429,10 +1440,11 @@ function setupIPCHandlers() {
     return { success: true };
   });
 
-  ipcMain.handle('calculator:findBestDecryptor', async (event, inventionData, materialPrices, productPrice, skills, facility, optimizationStrategy, customVolume) => {
+  ipcMain.handle('calculator:findBestDecryptor', async (event, inventionData, materialPrices, productPrice, skills, facility, optimizationStrategy, customVolume, marketSetId) => {
     console.log('[IPC Handler] Received optimizationStrategy:', optimizationStrategy, 'customVolume:', customVolume);
 
     const { findBestDecryptor, getDefaultFacility } = require('./blueprint-calculator');
+    const { getMarketSetById, getDefaultMarketSet } = require('./settings-manager');
 
     // Use provided facility or fall back to default facility
     const facilityToUse = facility || getDefaultFacility();
@@ -1441,9 +1453,12 @@ function setupIPCHandlers() {
     const strategy = optimizationStrategy || 'total-per-item';
     const volume = customVolume || 1;
 
+    // Resolve market set
+    const marketSet = marketSetId ? getMarketSetById(marketSetId) : getDefaultMarketSet();
+
     console.log('[IPC Handler] Using strategy:', strategy, 'volume:', volume);
 
-    return await findBestDecryptor(inventionData, materialPrices, productPrice, skills, facilityToUse, strategy, volume);
+    return await findBestDecryptor(inventionData, materialPrices, productPrice, skills, facilityToUse, strategy, volume, marketSet);
   });
 
   // ============================================================================
@@ -1463,7 +1478,7 @@ function setupIPCHandlers() {
     return searchReactions(searchTerm, limit);
   });
 
-  ipcMain.handle('reactions:calculateMaterials', async (event, reactionTypeId, runs, characterId, facilityOrId) => {
+  ipcMain.handle('reactions:calculateMaterials', async (event, reactionTypeId, runs, characterId, facilityOrId, marketSetId) => {
     // Accept either a facility snapshot object or a facilityId string/number
     let facility = null;
     if (facilityOrId) {
@@ -1490,7 +1505,8 @@ function setupIPCHandlers() {
       }
     }
 
-    return await calculateReactionMaterials(reactionTypeId, runs, characterId, facility);
+    const marketSet = marketSetId ? getMarketSetById(marketSetId) : getDefaultMarketSet();
+    return await calculateReactionMaterials(reactionTypeId, runs, characterId, facility, 0, null, marketSet);
   });
 
   ipcMain.handle('reactions:getReactionProduct', (event, reactionTypeId) => {
@@ -1511,12 +1527,58 @@ function setupIPCHandlers() {
   });
 
   // Handle IPC for market data operations
-  ipcMain.handle('market:getSettings', () => {
-    return getMarketSettings();
+
+  // --- Market Sets CRUD ---
+  ipcMain.handle('market:getMarketSets', () => getMarketSets());
+
+  ipcMain.handle('market:addMarketSet', (event, setData) => addMarketSet(setData));
+
+  ipcMain.handle('market:updateMarketSet', (event, id, updates) => updateMarketSet(id, updates));
+
+  ipcMain.handle('market:deleteMarketSet', (event, id) => deleteMarketSet(id));
+
+  ipcMain.handle('market:setDefaultMarketSet', (event, id) => setDefaultMarketSet(id));
+
+  ipcMain.handle('market:getMarketSetForTool', (event, toolKey) => ({
+    setId: getToolMarketSetId(toolKey),
+    marketSet: resolveMarketSetForTool(toolKey),
+  }));
+
+  ipcMain.handle('market:setMarketSetForTool', (event, toolKey, id) => setToolMarketSetId(toolKey, id));
+
+  ipcMain.handle('market:getRegionDashboard', async () => {
+    const { getUniqueRegions } = require('./blueprint-pricing');
+    const { getLastMarketFetchTimeForRegion } = require('./esi-market');
+    const { getAllRegions } = require('./sde-database');
+    const sets = getMarketSets();
+    const regionMap = new Map(); // regionId → { regionId, setNames: [] }
+    for (const set of sets) {
+      const regions = getUniqueRegions(set);
+      for (const regionId of regions) {
+        if (!regionMap.has(regionId)) regionMap.set(regionId, { regionId, setNames: [] });
+        regionMap.get(regionId).setNames.push(set.name);
+      }
+    }
+    // Build regionId → regionName lookup from SDE
+    const regionNameMap = new Map();
+    try {
+      const allRegions = await getAllRegions();
+      for (const r of allRegions) regionNameMap.set(r.regionID, r.regionName);
+    } catch (e) {
+      console.warn('[Market Dashboard] Could not load region names from SDE:', e.message);
+    }
+    const dashboard = [];
+    for (const [regionId, info] of regionMap) {
+      const lastFetch = getLastMarketFetchTimeForRegion(regionId);
+      const regionName = regionNameMap.get(regionId) || `Region ${regionId}`;
+      dashboard.push({ regionId, regionName, setNames: info.setNames, lastFetch });
+    }
+    return dashboard;
   });
 
-  ipcMain.handle('market:updateSettings', (event, updates) => {
-    return updateMarketSettings(updates);
+  ipcMain.handle('market:updateRegion', async (event, regionId) => {
+    const { manualRefreshMarketData } = require('./esi-market');
+    return await manualRefreshMarketData(regionId);
   });
 
   ipcMain.handle('market:fetchOrders', async (event, regionId, typeId, locationFilter) => {
@@ -1575,10 +1637,11 @@ function setupIPCHandlers() {
     }
   });
 
-  ipcMain.handle('market:calculatePrice', async (event, typeId, regionId, locationId, priceType, quantity) => {
+  ipcMain.handle('market:calculatePrice', async (event, typeId, regionId, locationId, priceType, quantity, marketSetId) => {
     try {
-      const settings = getMarketSettings();
-      return await calculateRealisticPrice(typeId, regionId, locationId, priceType, quantity, settings);
+      const set = marketSetId ? getMarketSetById(marketSetId) : getDefaultMarketSet();
+      if (!set) throw new Error(`Market Set not found: ${marketSetId}`);
+      return await calculateRealisticPrice(typeId, regionId, locationId, priceType, quantity, set);
     } catch (error) {
       console.error('Error calculating realistic price:', error);
       return { price: 0, confidence: 'none', warning: 'Error calculating price' };
@@ -1634,7 +1697,6 @@ function setupIPCHandlers() {
   // Unified market data update - refreshes all configured regions, adjusted prices, and cost indices
   ipcMain.handle('market:updateAllMarketData', async (event) => {
     const { getUniqueRegions, getInputLocation, getOutputLocation } = require('./blueprint-pricing');
-    const { getMarketSettings } = require('./settings-manager');
     const { refreshMultipleRegions, manualRefreshAdjustedPrices, fetchStructureMarketOrders } = require('./esi-market');
 
     const results = {
@@ -1646,10 +1708,20 @@ function setupIPCHandlers() {
     };
 
     try {
-      // Step 1: Get all unique regions from market settings
-      const marketSettings = getMarketSettings();
-      const regionIds = getUniqueRegions(marketSettings);
-      console.log(`[UpdateAllMarketData] Refreshing ${regionIds.length} region(s):`, regionIds);
+      // Step 1: Collect all unique regions and private structures from ALL market sets
+      const allSets = getMarketSets();
+      const allRegionIds = new Set();
+      const allStructureLocs = [];
+      for (const set of allSets) {
+        getUniqueRegions(set).forEach(id => allRegionIds.add(id));
+        [getInputLocation(set), getOutputLocation(set)].forEach(loc => {
+          if (loc.locationType === 'private_structure' && loc.structureId && loc.characterId) {
+            allStructureLocs.push(loc);
+          }
+        });
+      }
+      const regionIds = [...allRegionIds];
+      console.log(`[UpdateAllMarketData] Refreshing ${regionIds.length} region(s) across all Market Sets:`, regionIds);
 
       // Step 2: Refresh market data for all regions (public orders only)
       results.marketData = await refreshMultipleRegions(regionIds);
@@ -1658,13 +1730,7 @@ function setupIPCHandlers() {
       }
 
       // Step 3: Refresh private structure orders AFTER public region refresh
-      // so structure orders co-exist with public orders in the same region bucket
-      const inputLoc = getInputLocation(marketSettings);
-      const outputLoc = getOutputLocation(marketSettings);
-      const structureLocations = [inputLoc, outputLoc].filter(
-        loc => loc.locationType === 'private_structure' && loc.structureId && loc.characterId
-      );
-      const uniqueStructures = [...new Map(structureLocations.map(l => [l.structureId, l])).values()];
+      const uniqueStructures = [...new Map(allStructureLocs.map(l => [l.structureId, l])).values()];
       for (const loc of uniqueStructures) {
         let character = getCharacter(loc.characterId);
         if (character) {
@@ -2060,6 +2126,44 @@ function setupIPCHandlers() {
   // Wizard IPC handlers
   ipcMain.handle('wizard:skipSetup', async () => {
     try {
+      // Ensure a default Market Set exists (Jita 4-4 defaults)
+      const existingSets = getMarketSets();
+      if (!existingSets || existingSets.length === 0) {
+        addMarketSet({
+          name: 'Jita 4-4',
+          isDefault: true,
+          inputMaterials: {
+            locationType: 'hub',
+            locationId: 60003760,
+            regionId: 10000002,
+            systemId: 30000142,
+            structureId: null,
+            structureName: null,
+            characterId: null,
+            priceType: 'sell',
+            priceMethod: 'hybrid',
+            priceModifier: 1.0,
+            percentile: 0.2,
+            minVolume: 1000,
+          },
+          outputProducts: {
+            useSameLocation: true,
+            locationType: 'hub',
+            locationId: 60003760,
+            regionId: 10000002,
+            systemId: 30000142,
+            structureId: null,
+            structureName: null,
+            characterId: null,
+            priceType: 'sell',
+            priceMethod: 'hybrid',
+            priceModifier: 1.0,
+            percentile: 0.2,
+            minVolume: 1000,
+          },
+          warningThreshold: 0.3,
+        });
+      }
       // Apply default settings and mark wizard as complete
       await updateSettings('general', {
         firstLaunchCompleted: true,
@@ -2097,6 +2201,44 @@ function setupIPCHandlers() {
 
   ipcMain.handle('wizard:complete', async () => {
     try {
+      // Ensure at least one Market Set exists (safety net if step 5 was skipped)
+      const existingSets = getMarketSets();
+      if (!existingSets || existingSets.length === 0) {
+        addMarketSet({
+          name: 'Jita 4-4',
+          isDefault: true,
+          inputMaterials: {
+            locationType: 'hub',
+            locationId: 60003760,
+            regionId: 10000002,
+            systemId: 30000142,
+            structureId: null,
+            structureName: null,
+            characterId: null,
+            priceType: 'sell',
+            priceMethod: 'hybrid',
+            priceModifier: 1.0,
+            percentile: 0.2,
+            minVolume: 1000,
+          },
+          outputProducts: {
+            useSameLocation: true,
+            locationType: 'hub',
+            locationId: 60003760,
+            regionId: 10000002,
+            systemId: 30000142,
+            structureId: null,
+            structureName: null,
+            characterId: null,
+            priceType: 'sell',
+            priceMethod: 'hybrid',
+            priceModifier: 1.0,
+            percentile: 0.2,
+            minVolume: 1000,
+          },
+          warningThreshold: 0.3,
+        });
+      }
       await updateSettings('general', {
         firstLaunchCompleted: true,
         wizardVersion: '1.0',

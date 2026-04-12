@@ -4,7 +4,6 @@ const { calculateReactionMaterials, getReactionProduct, getReactionForProduct, g
 const { calculateRealisticPrice } = require('./market-pricing');
 const { getInputLocation, getOutputLocation } = require('./blueprint-pricing');
 const { getAssets } = require('./esi-assets');
-const { getMarketSettings } = require('./settings-manager');
 const { getSdePath } = require('./sde-manager');
 const { randomUUID } = require('crypto');
 const Database = require('better-sqlite3');
@@ -1999,7 +1998,7 @@ async function cleanupOrphanedIntermediates(planId) {
  * @param {boolean} refreshPrices - Whether to refresh prices from market (default false)
  * @returns {Promise<boolean>} Success status
  */
-async function recalculatePlanMaterials(planId, refreshPrices = false) {
+async function recalculatePlanMaterials(planId, refreshPrices = false, marketSet = null) {
   try {
     const db = getCharacterDatabase();
 
@@ -2033,8 +2032,13 @@ async function recalculatePlanMaterials(planId, refreshPrices = false) {
     // Instead, materials for built intermediates are marked as acquired
     // via the acquisition tracking system (see markIntermediateMaterialsAsAcquired)
 
-    // Get market settings for pricing
-    const marketSettings = getMarketSettings();
+    // Get market settings for pricing — use passed-in set or resolve from tool preferences
+    if (!marketSet) {
+      const { resolveMarketSetForTool } = require('./settings-manager');
+      marketSet = resolveMarketSetForTool('manufacturingPlansMarketSetId');
+    }
+    if (!marketSet) throw new Error('recalculatePlanMaterials: no Market Set configured');
+    const marketSettings = marketSet;
 
     // Filter out intermediate blueprints - only process top-level blueprints
     // Intermediate blueprints are auto-created entries that should not be processed separately

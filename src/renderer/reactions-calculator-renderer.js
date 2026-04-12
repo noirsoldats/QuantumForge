@@ -11,6 +11,37 @@ let currentDefaultCharacterId = null;
 let characterMenuClickOutsideListener = null;
 let searchTimeout = null;
 
+// Market Set state
+const TOOL_KEY_REACTIONS = 'reactionsCalculatorMarketSetId';
+let activeMarketSet = null;
+
+async function initMarketSetSelector() {
+  try {
+    const sets = await window.electronAPI.market.getMarketSets();
+    const { marketSet } = await window.electronAPI.market.getMarketSetForTool(TOOL_KEY_REACTIONS);
+    activeMarketSet = marketSet;
+
+    const select = document.getElementById('market-set-selector');
+    if (!select) return;
+    select.innerHTML = sets.map(s =>
+      `<option value="${s.id}"${s.id === activeMarketSet?.id ? ' selected' : ''}>${s.name}${s.isDefault ? ' (Default)' : ''}</option>`
+    ).join('');
+
+    select.addEventListener('change', async () => {
+      await window.electronAPI.market.setMarketSetForTool(TOOL_KEY_REACTIONS, select.value);
+      const result = await window.electronAPI.market.getMarketSetForTool(TOOL_KEY_REACTIONS);
+      activeMarketSet = result.marketSet;
+      // Recalculate if a reaction is loaded
+      if (currentReaction) {
+        const calcBtn = document.getElementById('calculate-btn');
+        if (calcBtn) calcBtn.click();
+      }
+    });
+  } catch (err) {
+    console.error('[MarketSetSelector] Error:', err);
+  }
+}
+
 // Type name cache for performance
 const typeNameCache = new Map();
 
@@ -71,6 +102,9 @@ async function initializeCalculator() {
     // Setup event listeners
     setupEventListeners();
 
+    // Initialize market set selector
+    await initMarketSetSelector();
+
     // Load facilities (filtered to Refineries)
     await loadFacilities();
 
@@ -119,11 +153,6 @@ function setupEventListeners() {
     calculateBtn.addEventListener('click', handleCalculate);
   }
 
-  // Update data button
-  const updateDataBtn = document.getElementById('update-data-btn');
-  if (updateDataBtn) {
-    updateDataBtn.addEventListener('click', handleUpdateData);
-  }
 
   // Runs input - recalculate on change if reaction selected
   const runsInput = document.getElementById('runs');
@@ -334,7 +363,8 @@ async function handleCalculate() {
       currentReaction.typeID,
       runs,
       characterId,
-      facilityId
+      facilityId,
+      activeMarketSet?.id
     );
 
     const elapsedTime = performance.now() - startTime;
@@ -771,74 +801,6 @@ function hideLoading() {
   document.getElementById('loading-indicator').classList.add('hidden');
 }
 
-/**
- * Handle update data button
- */
-async function handleUpdateData() {
-  const updateBtn = document.getElementById('update-data-btn');
-
-  if (!updateBtn) {
-    return;
-  }
-
-  // Disable button and show loading state
-  const originalText = updateBtn.innerHTML;
-  updateBtn.innerHTML = `
-    <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="animation: spin 1s linear infinite;">
-      <polyline points="23 4 23 10 17 10"></polyline>
-      <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
-    </svg>
-    Updating...
-  `;
-  updateBtn.disabled = true;
-
-  try {
-    // Use unified market data update (handles all configured regions, adjusted prices, and cost indices)
-    const result = await window.electronAPI.market.updateAllMarketData();
-
-    if (result.success) {
-      // Show success message
-      updateBtn.innerHTML = `
-        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <polyline points="20 6 9 17 4 12"></polyline>
-        </svg>
-        Updated!
-      `;
-
-      // Clear any active calculation to force recalculation with new data
-      await window.electronAPI.reactions.clearCaches();
-
-      // Reset button after delay
-      setTimeout(() => {
-        updateBtn.innerHTML = originalText;
-        updateBtn.disabled = false;
-      }, 3000);
-    } else {
-      throw new Error(result.message || 'Update failed');
-    }
-
-  } catch (error) {
-    console.error('Error updating data:', error);
-
-    // Show error state
-    updateBtn.innerHTML = `
-      <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-        <circle cx="12" cy="12" r="10"></circle>
-        <line x1="12" y1="8" x2="12" y2="12"></line>
-        <line x1="12" y1="16" x2="12.01" y2="16"></line>
-      </svg>
-      Failed
-    `;
-
-    // Reset button after delay
-    setTimeout(() => {
-      updateBtn.innerHTML = originalText;
-      updateBtn.disabled = false;
-    }, 3000);
-
-    alert('Failed to update data: ' + error.message);
-  }
-}
 
 /**
  * Load and display default character avatar

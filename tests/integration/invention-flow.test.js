@@ -73,6 +73,30 @@ jest.mock('../../src/main/market-database', () => ({
   })
 }));
 
+const mockMarketSet = {
+  id: 'test-market-set',
+  inputMaterials: {
+    regionId: marketData.THE_FORGE_REGION_ID,
+    locationId: marketData.JITA_STATION_ID,
+    priceType: 'sell',
+    priceModifier: 1.0,
+    priceMethod: 'vwap',
+    percentile: 0.2,
+    minVolume: 1000,
+  },
+  outputProducts: {
+    useSameLocation: true,
+    regionId: marketData.THE_FORGE_REGION_ID,
+    locationId: marketData.JITA_STATION_ID,
+    priceType: 'sell',
+    priceModifier: 1.0,
+    priceMethod: 'vwap',
+    percentile: 0.2,
+    minVolume: 1000,
+  },
+  warningThreshold: 0.3,
+};
+
 describe('Invention Flow - Integration Tests', () => {
   let db;
 
@@ -149,7 +173,8 @@ describe('Invention Flow - Integration Tests', () => {
         skills,
         facilitiesFixtures.raitaruNoRigs,
         'profit-per-run',
-        db
+        1,
+        mockMarketSet
       );
 
       expect(bestDecryptor).toBeDefined();
@@ -187,12 +212,14 @@ describe('Invention Flow - Integration Tests', () => {
       // Step 2: Manufacturing phase (successful invention assumed)
       const t2Materials = await calculateBlueprintMaterials(
         inventionData.t2BlueprintTypeID,
-        10,  // 10 runs from invention
-        5,   // ME 5 from invention
-        null,
+        10,   // 10 runs from invention
+        5,    // ME 5 from invention
+        null, // characterId
         facilitiesFixtures.raitaruT1MERig,
-        0,
-        db
+        true, // useIntermediates
+        0,    // depth
+        null, // db
+        mockMarketSet
       );
 
       expect(t2Materials).toBeDefined();
@@ -208,7 +235,8 @@ describe('Invention Flow - Integration Tests', () => {
         5,  // Accounting skill
         inventionData.t2BlueprintTypeID,
         10,
-        5   // Broker Relations skill
+        5,  // Broker Relations skill
+        mockMarketSet
       );
 
       // Total profit = (Manufacturing profit - Invention cost) / probability
@@ -395,7 +423,8 @@ describe('Invention Flow - Integration Tests', () => {
         skillsFixtures.advancedSkills,
         facilitiesFixtures.raitaruNoRigs,
         'invention-only',
-        db
+        1,
+        mockMarketSet
       );
 
       expect(result.best).toBeDefined();
@@ -413,7 +442,8 @@ describe('Invention Flow - Integration Tests', () => {
         skillsFixtures.advancedSkills,
         facilitiesFixtures.raitaruNoRigs,
         'profit-per-run',
-        db
+        1,
+        mockMarketSet
       );
 
       expect(result.best).toBeDefined();
@@ -431,7 +461,8 @@ describe('Invention Flow - Integration Tests', () => {
         skillsFixtures.advancedSkills,
         facilitiesFixtures.raitaruNoRigs,
         'profit-per-attempt',
-        db
+        1,
+        mockMarketSet
       );
 
       expect(result.best).toBeDefined();
@@ -448,7 +479,8 @@ describe('Invention Flow - Integration Tests', () => {
         skillsFixtures.advancedSkills,
         facilitiesFixtures.raitaruNoRigs,
         'time-efficiency',
-        db
+        1,
+        mockMarketSet
       );
 
       expect(result.best).toBeDefined();
@@ -465,7 +497,8 @@ describe('Invention Flow - Integration Tests', () => {
         skillsFixtures.advancedSkills,
         facilitiesFixtures.raitaruNoRigs,
         'max-runs',
-        db
+        1,
+        mockMarketSet
       );
 
       expect(result.best).toBeDefined();
@@ -494,7 +527,8 @@ describe('Invention Flow - Integration Tests', () => {
             skillsFixtures.advancedSkills,
             facilitiesFixtures.raitaruNoRigs,
             strategy,
-            db
+            1,
+            mockMarketSet
           )
         )
       );
@@ -524,7 +558,8 @@ describe('Invention Flow - Integration Tests', () => {
           skillsFixtures.advancedSkills,
           facilitiesFixtures.raitaruNoRigs,
           'invention-only',
-          db
+          1,
+          mockMarketSet
         );
 
         const resultNegative = await findBestDecryptor(
@@ -534,7 +569,8 @@ describe('Invention Flow - Integration Tests', () => {
           skillsFixtures.advancedSkills,
           facilitiesFixtures.raitaruNoRigs,
           'invention-only',
-          db
+          1,
+          mockMarketSet
         );
 
         // ME levels should differ
@@ -556,7 +592,8 @@ describe('Invention Flow - Integration Tests', () => {
           skillsFixtures.advancedSkills,
           facilitiesFixtures.raitaruNoRigs,
           'invention-only',
-          db
+          1,
+          mockMarketSet
         );
 
         expect(result.best.te).toBeGreaterThan(0);
@@ -582,7 +619,8 @@ describe('Invention Flow - Integration Tests', () => {
         skillsFixtures.advancedSkills,
         facilitiesFixtures.raitaruNoRigs,
         'invention-only',
-        db
+        1,
+        mockMarketSet
       );
 
       // Should still return a result (no decryptor option)
@@ -599,7 +637,8 @@ describe('Invention Flow - Integration Tests', () => {
         skillsFixtures.advancedSkills,
         facilitiesFixtures.raitaruNoRigs,
         'profit-per-run',
-        db
+        1,
+        mockMarketSet
       );
 
       expect(result).toBeDefined();
@@ -625,7 +664,8 @@ describe('Invention Flow - Integration Tests', () => {
         { ...skillsFixtures.advancedSkills, encryption: 5, datacore1: 5, datacore2: 5 },
         facilitiesFixtures.sotiyo,
         'profit-per-attempt',
-        db
+        1,
+        mockMarketSet
       );
 
       expect(result.best).toBeDefined();
@@ -652,7 +692,8 @@ describe('Invention Flow - Integration Tests', () => {
         newSkills,
         facilitiesFixtures.npcStation,
         'invention-only',
-        db
+        1,
+        mockMarketSet
       );
 
       expect(result.best).toBeDefined();

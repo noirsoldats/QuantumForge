@@ -1,0 +1,48 @@
+/**
+ * Shared Page Layout
+ *
+ * Provides a consistent full-viewport flex-column layout used by all tool
+ * pages (Market Manager, Blueprint Calculator, Facilities, etc.).
+ *
+ * Structure:
+ *   .page-layout          — root container, fills viewport, clips overflow
+ *     .page-header        — fixed-height header, never shrinks
+ *     .page-tabs          — optional tab bar, never shrinks
+ *     .page-content       — scrollable content area, grows to fill remaining space
+ *     #status-footer      — pinned footer (injected by shared/footer.js)
+ *
+ * Usage: add to every tool page that uses this layout, after variables.css:
+ *   <link rel="stylesheet" href="shared/layout.css">
+ */
+
+/* ---- Root container ---- */
+.page-layout {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  position: relative;
+}
+
+/* ---- Header ---- */
+.page-header {
+  flex-shrink: 0;
+}
+
+/* ---- Optional tab bar ---- */
+.page-tabs {
+  flex-shrink: 0;
+}
+
+/* ---- Scrollable content area ---- */
+.page-content {
+  flex: 1 1 0;     /* flex-basis: 0 forces the browser to compute height from the flex container,
+                      not from content size — required for overflow-y: auto to work */
+  min-height: 0;
+  overflow-y: auto;
+}
+
+/* ---- Footer (injected by footer.js, styled by styles.css .status-footer) ---- */
+#status-footer {
+  flex-shrink: 0;
+}

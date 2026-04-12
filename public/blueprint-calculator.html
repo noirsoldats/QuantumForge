@@ -7,11 +7,12 @@
   <title>Blueprint Calculator - Quantum Forge</title>
   <link rel="stylesheet" href="shared/variables.css">
   <link rel="stylesheet" href="shared/components.css">
+  <link rel="stylesheet" href="shared/layout.css">
   <link rel="stylesheet" href="styles.css">
   <link rel="stylesheet" href="blueprint-calculator.css">
 </head>
 <body>
-  <div id="calculator-app">
+  <div id="calculator-app" class="page-layout">
     <!-- Settings Button -->
     <button id="settings-btn" class="settings-icon" title="Settings" aria-label="Open Settings">
       <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -55,7 +56,7 @@
       </div>
     </div>
 
-    <header class="app-header">
+    <header class="app-header page-header">
       <button id="back-btn" class="back-button">
         <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <line x1="19" y1="12" x2="5" y2="12"></line>
@@ -66,17 +67,15 @@
       <h1>Blueprint Calculator</h1>
     </header>
 
-    <main class="calculator-main">
+    <main class="calculator-main page-content">
       <!-- Search Section -->
       <div class="search-section">
-        <button id="update-data-btn" class="update-data-button" title="Update Market Prices and Cost Indices">
-          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <polyline points="23 4 23 10 17 10"></polyline>
-            <polyline points="1 20 1 14 7 14"></polyline>
-            <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
-          </svg>
-          Update Data
-        </button>
+        <div class="market-set-selector-group">
+          <label for="market-set-selector">Market Set:</label>
+          <select id="market-set-selector" class="compact-select">
+            <option value="">Loading...</option>
+          </select>
+        </div>
         <div class="search-container">
           <input
             type="text"
@@ -201,54 +200,6 @@
       </div>
     </main>
 
-    <!-- Status Footer -->
-    <footer id="status-footer" class="status-footer">
-      <div class="footer-content">
-        <div class="footer-item" id="character-count-item">
-          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
-            <circle cx="12" cy="7" r="4"></circle>
-          </svg>
-          <span id="character-count">0</span> <span class="label">Characters</span>
-        </div>
-
-        <div class="footer-item" id="eve-time-item">
-          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <circle cx="12" cy="12" r="10"></circle>
-            <polyline points="12 6 12 12 16 14"></polyline>
-          </svg>
-          <span id="eve-time">--:--:--</span> <span class="label">EVE Time</span>
-        </div>
-
-        <div class="footer-item" id="players-online-item">
-          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
-            <circle cx="9" cy="7" r="4"></circle>
-            <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
-            <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
-          </svg>
-          <span id="players-online">--</span> <span class="label">Players</span>
-        </div>
-
-        <div class="footer-item" id="server-status-item" title="Server Status: Loading...">
-          <svg id="server-status-icon" class="status-icon status-loading" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <!-- Default loading icon -->
-            <circle cx="12" cy="12" r="10"></circle>
-            <line x1="12" y1="8" x2="12" y2="12"></line>
-            <line x1="12" y1="16" x2="12.01" y2="16"></line>
-          </svg>
-          <span id="server-status-text" class="label">Loading</span>
-        </div>
-
-        <div class="footer-item footer-clickable" id="esi-status-item" title="ESI Status: Loading...">
-          <svg id="esi-status-icon" class="status-icon status-loading" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <circle cx="12" cy="12" r="10"></circle>
-            <path d="M12 6v6l4 2"></path>
-          </svg>
-          <span id="esi-status-text" class="label">ESI Status</span>
-        </div>
-      </div>
-    </footer>
   </div>
 
   <!-- Plan Selection Modal -->
@@ -277,6 +228,7 @@
 
   <script src="shared/scope-error.js"></script>
   <script src="../src/renderer/footer-utils.js"></script>
+  <script src="shared/footer.js"></script>
   <script src="../src/renderer/blueprint-calculator-renderer.js"></script>
 </body>
 </html>
