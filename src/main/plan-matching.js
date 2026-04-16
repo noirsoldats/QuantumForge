@@ -1,5 +1,5 @@
 // Plan Matching System - Smart heuristic-based matching for jobs and transactions
-const { v4: uuidv4 } = require('uuid');
+const { randomUUID: uuidv4 } = require('crypto');
 const { getCharacterDatabase } = require('./character-database');
 
 /**
