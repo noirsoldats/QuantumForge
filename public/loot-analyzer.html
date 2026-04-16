@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:;">
+  <title>Loot Analyzer - Quantum Forge</title>
+  <link rel="stylesheet" href="shared/variables.css">
+  <link rel="stylesheet" href="shared/components.css">
+  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="loot-analyzer.css">
+</head>
+<body>
+  <div class="app-container">
+
+    <!-- Header -->
+    <header class="header">
+      <div class="header-content">
+        <button class="back-button" id="close-btn">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="18" y1="6" x2="6" y2="18"></line>
+            <line x1="6" y1="6" x2="18" y2="18"></line>
+          </svg>
+          Close
+        </button>
+        <h1>Loot Analyzer</h1>
+      </div>
+    </header>
+
+    <!-- Main Content -->
+    <main class="main-content">
+
+      <!-- Input Panel -->
+      <div class="input-panel card">
+
+        <!-- Loot text area -->
+        <div class="control-group">
+          <label for="loot-input">Paste Loot / Assets</label>
+          <textarea id="loot-input" rows="6" placeholder="Paste from Eve inventory (Ctrl+C) or Personal Assets window..."></textarea>
+        </div>
+
+        <!-- Market location selectors -->
+        <div class="market-selectors-row">
+          <div class="market-location-group">
+            <label>Market 1</label>
+            <select id="market1-region">
+              <option value="">— Select Region —</option>
+            </select>
+            <select id="market1-hub" class="hub-select hidden">
+              <option value="">Entire Region</option>
+            </select>
+          </div>
+          <div class="market-location-group">
+            <label>Market 2 <span class="optional-label">(optional)</span></label>
+            <select id="market2-region">
+              <option value="">— None —</option>
+            </select>
+            <select id="market2-hub" class="hub-select hidden">
+              <option value="">Entire Region</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- Market data age warning -->
+        <div id="market-data-warning" class="market-data-warning hidden">
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
+            <line x1="12" y1="9" x2="12" y2="13"></line>
+            <line x1="12" y1="17" x2="12.01" y2="17"></line>
+          </svg>
+          <span id="market-data-warning-text">Market data is older than 2 hours</span>
+        </div>
+
+        <!-- Reprocessing configuration (collapsible) -->
+        <details id="reprocessing-config" class="config-panel">
+          <summary>Reprocessing Configuration</summary>
+          <div class="config-grid">
+            <div class="control-group">
+              <label for="station-type">Station Type</label>
+              <select id="station-type">
+                <option value="npc">NPC Station (50% base, 5% tax)</option>
+                <option value="athanor">Athanor (54% base, 0% tax)</option>
+                <option value="tatara">Tatara (54% base, 0% tax)</option>
+              </select>
+            </div>
+            <div class="control-group">
+              <label for="rig-1">Rig (Slot 1)</label>
+              <select id="rig-1">
+                <option value="none">None</option>
+                <option value="t1">T1 (+2%)</option>
+                <option value="t2">T2 (+4%)</option>
+              </select>
+            </div>
+            <div class="control-group" id="rig-2-group" style="display:none">
+              <label for="rig-2">Rig (Slot 2 — Tatara)</label>
+              <select id="rig-2">
+                <option value="none">None</option>
+                <option value="t1">T1 (+2%)</option>
+                <option value="t2">T2 (+4%)</option>
+              </select>
+            </div>
+            <div class="control-group">
+              <label for="skill-reprocessing">Reprocessing (0–5)</label>
+              <input type="number" id="skill-reprocessing" value="5" min="0" max="5" step="1">
+            </div>
+            <div class="control-group">
+              <label for="skill-reprocessing-eff">Reprocessing Efficiency (0–5)</label>
+              <input type="number" id="skill-reprocessing-eff" value="5" min="0" max="5" step="1">
+            </div>
+            <div class="control-group">
+              <label for="implant-bonus">Reprocessing Implant</label>
+              <select id="implant-bonus">
+                <option value="0">None</option>
+                <option value="0.01">+1% (Beancounter RX-801)</option>
+                <option value="0.02">+2% (Beancounter RX-802)</option>
+                <option value="0.04">+4% (Beancounter RX-804)</option>
+              </select>
+            </div>
+            <div class="control-group ore-skills-btn-group">
+              <button id="ore-skills-btn" class="btn btn-secondary">
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                  <path d="M12 20h9"></path><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path>
+                </svg>
+                Configure Ore Processing Skills
+              </button>
+            </div>
+          </div>
+        </details>
+
+        <button id="analyze-btn" class="btn btn-primary">
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+            <circle cx="11" cy="11" r="8"></circle>
+            <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+          </svg>
+          Analyze Loot
+        </button>
+      </div>
+
+      <!-- Unresolved items banner -->
+      <div id="unresolved-banner" class="unresolved-banner hidden">
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="10"></circle>
+          <line x1="12" y1="8" x2="12" y2="12"></line>
+          <line x1="12" y1="16" x2="12.01" y2="16"></line>
+        </svg>
+        <span>Items not found in SDE: </span><span id="unresolved-list"></span>
+      </div>
+
+      <!-- Results section (hidden until analysis) -->
+      <div id="results-section" class="hidden">
+
+        <!-- Yield summary bar -->
+        <div class="yield-summary">
+          <span class="yield-label">Effective Reprocessing Yield:</span>
+          <span id="yield-value" class="yield-value">—</span>
+        </div>
+
+        <!-- Results table -->
+        <div class="results-table-container">
+          <table class="results-table" id="results-table">
+            <thead>
+              <tr>
+                <th class="col-name sortable" data-sort="name">Item Name <span class="sort-icon">↕</span></th>
+                <th class="col-qty sortable" data-sort="quantity">Qty <span class="sort-icon">↕</span></th>
+                <th class="col-repr sortable" data-sort="reprocessSell">Repr. Sell <span class="sort-icon">↕</span></th>
+                <th class="col-repr sortable" data-sort="reprocessBuy">Repr. Buy <span class="sort-icon">↕</span></th>
+                <th class="col-price sortable" data-sort="m1Sell">M1 Sell <span class="sort-icon">↕</span></th>
+                <th class="col-price sortable" data-sort="m1Buy">M1 Buy <span class="sort-icon">↕</span></th>
+                <th class="col-price sortable" data-sort="m2Sell">M2 Sell <span class="sort-icon">↕</span></th>
+                <th class="col-price sortable" data-sort="m2Buy">M2 Buy <span class="sort-icon">↕</span></th>
+                <th class="col-pct sortable" data-sort="m1SellVsM2SellPct">M1v M2 Sell% <span class="sort-icon">↕</span></th>
+                <th class="col-pct sortable" data-sort="m1BuyVsM2BuyPct">M1v M2 Buy% <span class="sort-icon">↕</span></th>
+                <th class="col-pct sortable" data-sort="m1Spread">M1 Spread <span class="sort-icon">↕</span></th>
+                <th class="col-pct sortable" data-sort="m2Spread">M2 Spread <span class="sort-icon">↕</span></th>
+                <th class="col-svr sortable" data-sort="svr">SVR <span class="sort-icon">↕</span></th>
+                <th class="col-action sortable" data-sort="bestAction">Best Action <span class="sort-icon">↕</span></th>
+                <th class="col-total sortable active" data-sort="totalBest">Total ISK (Best) <span class="sort-icon">↓</span></th>
+              </tr>
+            </thead>
+            <tbody id="results-tbody">
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Empty state (shown when no regions are configured) -->
+      <div id="no-regions-state" class="empty-state hidden">
+        <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" aria-hidden="true">
+          <circle cx="12" cy="12" r="10"></circle>
+          <line x1="12" y1="8" x2="12" y2="12"></line>
+          <line x1="12" y1="16" x2="12.01" y2="16"></line>
+        </svg>
+        <h3>No Market Regions Configured</h3>
+        <p>Open the Market Manager and configure at least one Market Set to use the Loot Analyzer.</p>
+      </div>
+
+    </main>
+
+    <!-- Ore Processing Skills Modal -->
+    <div id="ore-skills-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="ore-skills-modal-title">
+      <div class="modal-content ore-skills-modal-content">
+        <div class="modal-header">
+          <h2 id="ore-skills-modal-title">Ore Processing Skills</h2>
+          <button id="ore-skills-modal-close" class="modal-close-btn" aria-label="Close dialog">
+            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+          </button>
+        </div>
+        <div class="modal-body ore-skills-body">
+
+          <div class="ore-skills-two-col">
+
+            <div class="ore-skills-col">
+              <div class="ore-skills-section">
+                <h3 class="ore-skills-section-title">Mineral Ore Processing</h3>
+                <div class="ore-skills-grid ore-skills-grid-narrow">
+                  <div class="ore-skill-row"><label>Simple Ore Processing</label><input type="number" id="skill-simple-ore" class="ore-skill-input" value="0" min="0" max="5" step="1"><span class="ore-skill-hint">Veldspar, Scordite, Pyroxeres, Plagioclase…</span></div>
+                  <div class="ore-skill-row"><label>Coherent Ore Processing</label><input type="number" id="skill-coherent-ore" class="ore-skill-input" value="0" min="0" max="5" step="1"><span class="ore-skill-hint">Omber, Kernite, Jaspet, Hemorphite, Hedbergite…</span></div>
+                  <div class="ore-skill-row"><label>Variegated Ore Processing</label><input type="number" id="skill-variegated-ore" class="ore-skill-input" value="0" min="0" max="5" step="1"><span class="ore-skill-hint">Gneiss, Dark Ochre, Crokite…</span></div>
+                  <div class="ore-skill-row"><label>Complex Ore Processing</label><input type="number" id="skill-complex-ore" class="ore-skill-input" value="0" min="0" max="5" step="1"><span class="ore-skill-hint">Spodumain, Bistot, Arkonor…</span></div>
+                  <div class="ore-skill-row"><label>Abyssal Ore Processing</label><input type="number" id="skill-abyssal-ore" class="ore-skill-input" value="0" min="0" max="5" step="1"><span class="ore-skill-hint">Bezdnacine, Rakovene, Talassonite</span></div>
+                  <div class="ore-skill-row"><label>Erratic Ore Processing</label><input type="number" id="skill-erratic-ore" class="ore-skill-input" value="0" min="0" max="5" step="1"><span class="ore-skill-hint">Prismaticite</span></div>
+                  <div class="ore-skill-row"><label>Mercoxit Ore Processing</label><input type="number" id="skill-mercoxit-ore" class="ore-skill-input" value="0" min="0" max="5" step="1"><span class="ore-skill-hint">Mercoxit</span></div>
+                </div>
+              </div>
+
+              <div class="ore-skills-section">
+                <h3 class="ore-skills-section-title">Ice</h3>
+                <div class="ore-skills-grid ore-skills-grid-narrow">
+                  <div class="ore-skill-row"><label>Ice Processing</label><input type="number" id="skill-ice" class="ore-skill-input" value="0" min="0" max="5" step="1"></div>
+                </div>
+              </div>
+
+              <div class="ore-skills-section">
+                <h3 class="ore-skills-section-title">Modules &amp; Items</h3>
+                <div class="ore-skills-grid ore-skills-grid-narrow">
+                  <div class="ore-skill-row"><label>Scrapmetal Processing</label><input type="number" id="skill-scrapmetal" class="ore-skill-input" value="0" min="0" max="5" step="1"><span class="ore-skill-hint">Modules, drones, charges, structure modules</span></div>
+                </div>
+              </div>
+            </div>
+
+            <div class="ore-skills-col">
+              <div class="ore-skills-section">
+                <h3 class="ore-skills-section-title">Moon Ores</h3>
+                <div class="ore-skills-grid ore-skills-grid-narrow">
+                  <div class="ore-skill-row"><label>Ubiquitous Moon Ore Processing</label><input type="number" id="skill-moon-ubiquitous" class="ore-skill-input" value="0" min="0" max="5" step="1"></div>
+                  <div class="ore-skill-row"><label>Common Moon Ore Processing</label><input type="number" id="skill-moon-common" class="ore-skill-input" value="0" min="0" max="5" step="1"></div>
+                  <div class="ore-skill-row"><label>Uncommon Moon Ore Processing</label><input type="number" id="skill-moon-uncommon" class="ore-skill-input" value="0" min="0" max="5" step="1"></div>
+                  <div class="ore-skill-row"><label>Rare Moon Ore Processing</label><input type="number" id="skill-moon-rare" class="ore-skill-input" value="0" min="0" max="5" step="1"></div>
+                  <div class="ore-skill-row"><label>Exceptional Moon Ore Processing</label><input type="number" id="skill-moon-exceptional" class="ore-skill-input" value="0" min="0" max="5" step="1"></div>
+                </div>
+              </div>
+            </div>
+
+          </div>
+
+        </div>
+        <div class="modal-footer">
+          <div class="modal-footer-left">
+            <select id="ore-skills-character-select" class="ore-skills-character-select">
+              <option value="">— Load from Character —</option>
+            </select>
+            <button id="ore-skills-load-char-btn" class="btn btn-secondary" disabled>
+              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
+                <circle cx="12" cy="7" r="4"></circle>
+              </svg>
+              Load Skills
+            </button>
+          </div>
+          <div class="modal-footer-right">
+            <button id="ore-skills-set-all-btn" class="btn btn-secondary">Set All to 5</button>
+            <button id="ore-skills-clear-btn" class="btn btn-secondary">Clear All</button>
+            <button id="ore-skills-save-btn" class="btn btn-primary">Save</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Loading overlay -->
+    <div id="loading-overlay" class="loading-overlay hidden">
+      <div class="loading-content">
+        <div class="spinner"></div>
+        <p id="loading-message">Analyzing...</p>
+      </div>
+    </div>
+
+  </div>
+
+  <script src="../src/renderer/loot-analyzer-renderer.js"></script>
+</body>
+</html>

@@ -207,10 +207,13 @@ const {
   getStructureRigs,
   getStructureBonuses,
   getRigEffects,
+  searchItemsByExactName,
+  getReprocessingMaterials,
 } = require('./sde-database');
 const { initializeMarketDatabase, getMarketDatabase } = require('./market-database');
 const { initializeESIStatusDatabase } = require('./esi-status-tracker');
-const { fetchMarketOrders, fetchMarketHistory, fetchMarketData, getLastMarketFetchTime, getLastHistoryFetchTime, getHistoryDataStatus, manualRefreshMarketData, manualRefreshHistoryData } = require('./esi-market');
+const { fetchMarketOrders, fetchMarketHistory, fetchMarketData, getLastMarketFetchTime, getLastHistoryFetchTime, getHistoryDataStatus, manualRefreshMarketData, manualRefreshHistoryData, getCachedMarketHistory } = require('./esi-market');
+const { parseLootText, getTypeSpecificSkillId, calculateReprocessingYield, calculateReprocessingValue } = require('./reprocessing-calculator');
 const { fetchCostIndices, getCostIndices, getAllCostIndices, getLastCostIndicesFetchTime, getCostIndicesSystemCount } = require('./esi-cost-indices');
 const { fetchFuzzworkHistory, fetchJitaPrice, fetchBulkPrices } = require('./fuzzwork-market');
 const {
@@ -1318,6 +1321,12 @@ function setupIPCHandlers() {
     createCleanupToolWindow();
   });
 
+  // Loot Analyzer Window
+  ipcMain.handle('lootAnalyzer:openWindow', () => {
+    const { createLootAnalyzerWindow } = require('./loot-analyzer-window');
+    createLootAnalyzerWindow();
+  });
+
   ipcMain.handle('cleanupTool:getAssetSources', async () => {
     const { getAssetSources } = require('./cleanup-tool');
     return getAssetSources();
@@ -1797,6 +1806,271 @@ function setupIPCHandlers() {
       character = getCharacter(characterId);
     }
     return await fetchStructureMarketOrders(structureId, regionId, character.accessToken, true);
+  });
+
+  // ============================================================
+  // Loot Analyzer IPC handlers
+  // ============================================================
+
+  ipcMain.handle('loot:getCharacterSkills', (event, characterId) => {
+    try {
+      const character = getCharacter(characterId);
+      if (!character || !character.skills) {
+        return { found: false };
+      }
+      const skillsMap = character.skills.skills || {};
+
+      // All reprocessing-relevant skill IDs (SDE-verified)
+      const REPROCESSING_SKILL_IDS = [
+        3385,  // Reprocessing
+        3389,  // Reprocessing Efficiency
+        60377, // Simple Ore Processing
+        60378, // Coherent Ore Processing
+        60379, // Variegated Ore Processing
+        60380, // Complex Ore Processing
+        60381, // Abyssal Ore Processing
+        90040, // Erratic Ore Processing
+        12189, // Mercoxit Ore Processing
+        18025, // Ice Processing
+        12196, // Scrapmetal Processing
+        46152, // Ubiquitous Moon Ore Processing
+        46153, // Common Moon Ore Processing
+        46154, // Uncommon Moon Ore Processing
+        46155, // Rare Moon Ore Processing
+        46156, // Exceptional Moon Ore Processing
+      ];
+
+      const overrides = character.skillOverrides || {};
+      const result = {};
+      for (const skillId of REPROCESSING_SKILL_IDS) {
+        const skill = skillsMap[skillId];
+        const activeLevel = skill ? (skill.activeSkillLevel || 0) : 0;
+        // Skill overrides take precedence — keys may be numeric or string after serialization
+        const override = overrides[skillId] ?? overrides[String(skillId)];
+        result[skillId] = (override != null) ? override : activeLevel;
+      }
+
+      return { found: true, skills: result };
+    } catch (error) {
+      console.error('[loot:getCharacterSkills] Error:', error);
+      return { found: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('loot:parseAndEnrich', async (event, rawText) => {
+    try {
+      const { items, parseErrors } = parseLootText(rawText);
+
+      if (items.length === 0) {
+        return { items: [], unresolvedNames: [], parseErrors };
+      }
+
+      // Exact name lookup in SDE
+      const uniqueNames = [...new Set(items.map(i => i.rawName))];
+      const nameMap = await searchItemsByExactName(uniqueNames);
+
+      const resolvedItems = [];
+      const unresolvedNames = [];
+
+      for (const item of items) {
+        const match = nameMap[item.rawName];
+        if (!match) {
+          unresolvedNames.push(item.rawName);
+          continue;
+        }
+        resolvedItems.push({ ...item, typeId: match.typeId, typeName: match.typeName });
+      }
+
+      if (resolvedItems.length === 0) {
+        return { items: [], unresolvedNames, parseErrors };
+      }
+
+      const typeIds = resolvedItems.map(i => i.typeId);
+
+      // Fetch category info and reprocessing materials in parallel
+      const { getTypeCategoryInfo } = require('./sde-database');
+      const [categoryInfo, reprocessingData] = await Promise.all([
+        getTypeCategoryInfo(typeIds),
+        getReprocessingMaterials(typeIds),
+      ]);
+
+      const enrichedItems = resolvedItems.map(item => {
+        const catInfo = categoryInfo[item.typeId] || {};
+        const reprData = reprocessingData[item.typeId] || null;
+        const typeSkill = getTypeSpecificSkillId(catInfo.categoryID, catInfo.groupID);
+
+        return {
+          rawName: item.rawName,
+          typeId: item.typeId,
+          typeName: item.typeName,
+          quantity: item.quantity,
+          categoryId: catInfo.categoryID || null,
+          groupId: catInfo.groupID || null,
+          categoryName: catInfo.categoryName || null,
+          groupName: catInfo.groupName || null,
+          canReprocess: reprData !== null,
+          portionSize: reprData ? reprData.portionSize : null,
+          materials: reprData ? reprData.materials : [],
+          typeSpecificSkillId: typeSkill ? typeSkill.skillId : null,
+          typeSpecificSkillName: typeSkill ? typeSkill.skillName : null,
+        };
+      });
+
+      return { items: enrichedItems, unresolvedNames, parseErrors };
+    } catch (error) {
+      console.error('[loot:parseAndEnrich] Error:', error);
+      return { items: [], unresolvedNames: [], parseErrors: [], error: error.message };
+    }
+  });
+
+  ipcMain.handle('loot:fetchPrices', async (event, params) => {
+    try {
+      const {
+        typeIds = [],
+        materialTypeIds = [],
+        market1,
+        market2,
+        reprocessingConfig,
+        itemReprocessingData,
+      } = params;
+
+      const priceSettings = { priceMethod: 'immediate' };
+
+      // Deduplicate all typeIds needed (items + their reprocessing materials)
+      const allTypeIds = [...new Set([...typeIds, ...materialTypeIds])];
+
+      // Fetch prices for all typeIds in parallel across both markets
+      const priceMap = {};
+      await Promise.all(allTypeIds.map(async typeId => {
+        const [m1Sell, m1Buy, m2Sell, m2Buy] = await Promise.all([
+          calculateRealisticPrice(typeId, market1.regionId, market1.locationId || null, 'sell', 1, priceSettings),
+          calculateRealisticPrice(typeId, market1.regionId, market1.locationId || null, 'buy', 1, priceSettings),
+          market2 ? calculateRealisticPrice(typeId, market2.regionId, market2.locationId || null, 'sell', 1, priceSettings) : Promise.resolve(null),
+          market2 ? calculateRealisticPrice(typeId, market2.regionId, market2.locationId || null, 'buy', 1, priceSettings) : Promise.resolve(null),
+        ]);
+        priceMap[typeId] = {
+          m1Sell: m1Sell ? m1Sell.price : 0,
+          m1Buy: m1Buy ? m1Buy.price : 0,
+          m2Sell: m2Sell ? m2Sell.price : null,
+          m2Buy: m2Buy ? m2Buy.price : null,
+        };
+      }));
+
+      // Calculate base yield (no type-specific skill) for display reference
+      const { stationConfig, baseSkills, implantBonus, oreSkillLevels } = reprocessingConfig;
+      const baseYieldRate = calculateReprocessingYield(
+        stationConfig,
+        { reprocessing: baseSkills.reprocessing, reprocessingEfficiency: baseSkills.reprocessingEfficiency, typeSpecific: 0 },
+        implantBonus
+      );
+
+      // itemTypeSkills: { [typeId]: skillId | null } — passed from renderer
+      const { itemTypeSkills = {} } = params;
+
+      // Build material price map for reprocessing value calculations
+      const materialPrices = {};
+      for (const matTypeId of materialTypeIds) {
+        const prices = priceMap[matTypeId];
+        if (prices) {
+          materialPrices[matTypeId] = { sell: prices.m1Sell, buy: prices.m1Buy };
+        }
+      }
+
+
+      // Compute per-item results
+      const itemResults = {};
+      for (const typeId of typeIds) {
+        const prices = priceMap[typeId] || { m1Sell: 0, m1Buy: 0, m2Sell: null, m2Buy: null };
+        // itemReprocessingData and itemTypeSkills come from the renderer as serialized objects
+        // whose keys are strings (IPC JSON serialization converts numeric keys to strings)
+        const reprData = itemReprocessingData[typeId] || itemReprocessingData[String(typeId)] || null;
+
+        // Look up the type-specific skill level for this item
+        const typeSkillId = itemTypeSkills[typeId] || itemTypeSkills[String(typeId)] || null;
+        const typeSkillLevel = (typeSkillId && oreSkillLevels) ? (oreSkillLevels[typeSkillId] || oreSkillLevels[String(typeSkillId)] || 0) : 0;
+        const itemYieldRate = calculateReprocessingYield(
+          stationConfig,
+          { reprocessing: baseSkills.reprocessing, reprocessingEfficiency: baseSkills.reprocessingEfficiency, typeSpecific: typeSkillLevel },
+          implantBonus
+        );
+
+        const reprValue = calculateReprocessingValue(1, itemYieldRate, reprData, materialPrices);
+
+        // SVR: 7-day average daily volume from cached market history
+        let svr = null;
+        try {
+          const history = getCachedMarketHistory(market1.regionId, typeId, 7);
+          if (history && history.length > 0) {
+            const totalVolume = history.reduce((sum, day) => sum + (day.volume || 0), 0);
+            svr = Math.round(totalVolume / history.length);
+          }
+        } catch (e) {
+          // SVR is optional — no-op on error
+        }
+
+        // Derived metrics (per-unit prices; renderer multiplies by qty for totals)
+        const m1Sell = prices.m1Sell || 0;
+        const m1Buy = prices.m1Buy || 0;
+        const m2Sell = prices.m2Sell;
+        const m2Buy = prices.m2Buy;
+
+        const m1SellVsM2SellPct = (m2Sell && m2Sell > 0)
+          ? ((m1Sell - m2Sell) / m2Sell) * 100
+          : null;
+        const m1BuyVsM2BuyPct = (m2Buy && m2Buy > 0)
+          ? ((m1Buy - m2Buy) / m2Buy) * 100
+          : null;
+        const m1Spread = (m1Sell > 0)
+          ? ((m1Sell - m1Buy) / m1Sell) * 100
+          : null;
+        const m2Spread = (m2Sell && m2Sell > 0)
+          ? ((m2Sell - m2Buy) / m2Sell) * 100
+          : null;
+
+        // Best action: compare per-unit values
+        const candidates = [
+          { action: 'sell-m1', value: m1Sell },
+          ...(m2Sell !== null ? [{ action: 'sell-m2', value: m2Sell }] : []),
+          ...(reprValue.canReprocess ? [{ action: 'reprocess', value: reprValue.sellValue }] : []),
+        ].filter(c => c.value > 0);
+
+        const best = candidates.length > 0
+          ? candidates.reduce((a, b) => b.value > a.value ? b : a)
+          : { action: 'unknown' };
+
+        itemResults[typeId] = {
+          m1Sell,
+          m1Buy,
+          m2Sell,
+          m2Buy,
+          reprocessSell: reprValue.sellValue,
+          reprocessBuy: reprValue.buyValue,
+          canReprocess: reprValue.canReprocess,
+          svr,
+          m1SellVsM2SellPct,
+          m1BuyVsM2BuyPct,
+          m1Spread,
+          m2Spread,
+          bestAction: best.action,
+        };
+      }
+
+      // Build material price map to return to renderer for reprocessing value calculations
+      const materialPriceMap = {};
+      for (const matTypeId of materialTypeIds) {
+        if (priceMap[matTypeId]) {
+          materialPriceMap[matTypeId] = {
+            m1Sell: priceMap[matTypeId].m1Sell,
+            m1Buy: priceMap[matTypeId].m1Buy,
+          };
+        }
+      }
+
+      return { baseYieldRate, items: itemResults, materialPrices: materialPriceMap };
+    } catch (error) {
+      console.error('[loot:fetchPrices] Error:', error);
+      return { baseYieldRate: 0, items: {}, materialPrices: {}, error: error.message };
+    }
   });
 
   // Handle IPC for cost indices

@@ -1243,6 +1243,106 @@ async function getSystemName(systemId) {
   }
 }
 
+/**
+ * Look up item typeIDs by exact name (published items only).
+ * Used by the Loot Analyzer to resolve pasted item names to typeIDs.
+ * @param {string[]} names - Array of item names to look up
+ * @returns {Promise<Object>} Map of typeName → { typeId, typeName }
+ */
+async function searchItemsByExactName(names) {
+  if (!names || names.length === 0) return {};
+  try {
+    const database = await getDatabase();
+    const placeholders = names.map(() => '?').join(',');
+    return new Promise((resolve, reject) => {
+      database.all(
+        `SELECT typeID, typeName FROM invTypes WHERE typeName IN (${placeholders}) AND published = 1`,
+        names,
+        (err, rows) => {
+          if (err) {
+            console.error('Error querying items by exact name:', err);
+            reject(err);
+          } else {
+            const result = {};
+            for (const row of rows) {
+              result[row.typeName] = { typeId: row.typeID, typeName: row.typeName };
+            }
+            resolve(result);
+          }
+        }
+      );
+    });
+  } catch (error) {
+    console.error('Error in searchItemsByExactName:', error);
+    return {};
+  }
+}
+
+/**
+ * Get reprocessing materials for a batch of typeIDs.
+ * Queries invTypeMaterials (yields) and invTypes.portionSize (batch size).
+ * Items with no invTypeMaterials rows are absent from the result — treat as non-reprocessable.
+ * @param {number[]} typeIds - Array of type IDs
+ * @returns {Promise<Object>} Map of typeId → { portionSize, materials: [{materialTypeId, quantity}] }
+ */
+async function getReprocessingMaterials(typeIds) {
+  if (!typeIds || typeIds.length === 0) return {};
+  try {
+    const database = await getDatabase();
+    const placeholders = typeIds.map(() => '?').join(',');
+
+    // Fetch portionSize for all requested typeIds
+    const portionSizes = await new Promise((resolve, reject) => {
+      database.all(
+        `SELECT typeID, portionSize FROM invTypes WHERE typeID IN (${placeholders})`,
+        typeIds,
+        (err, rows) => {
+          if (err) reject(err);
+          else resolve(rows);
+        }
+      );
+    });
+
+    // Fetch reprocessing materials for all requested typeIds
+    const materialRows = await new Promise((resolve, reject) => {
+      database.all(
+        `SELECT typeID, materialTypeID, quantity FROM invTypeMaterials WHERE typeID IN (${placeholders})`,
+        typeIds,
+        (err, rows) => {
+          if (err) reject(err);
+          else resolve(rows);
+        }
+      );
+    });
+
+    // Build portionSize map
+    const portionMap = {};
+    for (const row of portionSizes) {
+      portionMap[row.typeID] = row.portionSize || 1;
+    }
+
+    // Group materials by typeID — only include typeIds that have at least one material row
+    const result = {};
+    for (const row of materialRows) {
+      if (!result[row.typeID]) {
+        result[row.typeID] = {
+          portionSize: portionMap[row.typeID] || 1,
+          materials: [],
+        };
+      }
+      result[row.typeID].materials.push({
+        materialTypeId: row.materialTypeID,
+        quantity: row.quantity,
+      });
+    }
+
+    return result;
+  } catch (error) {
+    console.error('Error in getReprocessingMaterials:', error);
+    return {};
+  }
+}
+
 module.exports = {
   getDatabase,
   closeDatabase,
@@ -1276,4 +1376,6 @@ module.exports = {
   detectLocationType,
   getSystemNameFromStation,
   getSystemName,
+  searchItemsByExactName,
+  getReprocessingMaterials,
 };

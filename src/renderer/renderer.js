@@ -155,6 +155,15 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
   }
 
+  // Loot Analyzer card handler
+  const lootAnalyzerCard = document.getElementById('loot-analyzer-card');
+  if (lootAnalyzerCard) {
+    lootAnalyzerCard.addEventListener('click', () => {
+      console.log('Opening Loot Analyzer');
+      window.electronAPI.lootAnalyzer.openWindow();
+    });
+  }
+
   // Cleanup Tool card handler
   const cleanupToolCard = document.getElementById('cleanup-tool-card');
   if (cleanupToolCard) {

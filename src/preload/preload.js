@@ -314,6 +314,18 @@ contextBridge.exposeInMainWorld('electronAPI', {
     openWindow: () => ipcRenderer.invoke('manufacturingSummary:openWindow'),
   },
 
+  // Loot Analyzer API
+  lootAnalyzer: {
+    openWindow: () => ipcRenderer.invoke('lootAnalyzer:openWindow'),
+  },
+
+  // Loot Analyzer data API (used by the window's renderer)
+  loot: {
+    parseAndEnrich: (rawText) => ipcRenderer.invoke('loot:parseAndEnrich', rawText),
+    fetchPrices: (params) => ipcRenderer.invoke('loot:fetchPrices', params),
+    getCharacterSkills: (characterId) => ipcRenderer.invoke('loot:getCharacterSkills', characterId),
+  },
+
   // Cleanup Tool API
   cleanupTool: {
     openWindow: () => ipcRenderer.invoke('cleanupTool:openWindow'),
