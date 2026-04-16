@@ -63,12 +63,11 @@ jobs:
 
     steps:
       - name: Download all release artifacts
-        uses: robinraju/release-downloader@v1.12
-        with:
-          tag: ${{ github.ref_name }}
-          fileName: '*'
-          out-file-path: artifacts
-          token: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p artifacts
+          gh release download ${{ github.ref_name }} --dir artifacts
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Generate SHA256 checksums
         run: |
