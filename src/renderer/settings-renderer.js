@@ -724,11 +724,12 @@ async function fetchCharacterDivisionNames(characterId) {
     if (!result.success) {
       if (!result.hasScope) {
         const charInfo = await window.electronAPI.esi.checkMissingScopes(characterId);
-        window.showMissingScopeModal(
-          charInfo.characterName || `Character ${characterId}`,
-          ['esi-corporations.read_divisions.v1'],
-          async () => { await loadIndustryDivisions(); }
-        );
+        window.electronAPI.esi.openAuthErrorWindow({
+          type: 'missing_scopes',
+          characterId,
+          characterName: charInfo.characterName || `Character ${characterId}`,
+          missingScopes: ['esi-corporations.read_divisions.v1'],
+        });
       } else {
         alert(`Failed to fetch division names: ${result.error || 'Unknown error'}`);
       }

@@ -570,11 +570,12 @@ async function handleStructureSearch(prefix) {
       const charInfo = await window.electronAPI.esi.checkMissingScopes(characterId);
       if (charInfo.missing.length > 0) {
         resultsSelect.innerHTML = '<option value="">Search failed — re-authenticate to grant missing scopes</option>';
-        window.showMissingScopeModal(
-          charInfo.characterName || `Character ${characterId}`,
-          charInfo.missing,
-          () => handleStructureSearch(prefix)
-        );
+        window.electronAPI.esi.openAuthErrorWindow({
+          type: 'missing_scopes',
+          characterId,
+          characterName: charInfo.characterName || `Character ${characterId}`,
+          missingScopes: charInfo.missing,
+        });
         return;
       }
     }

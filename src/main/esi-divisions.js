@@ -33,9 +33,16 @@ async function fetchCorporationDivisions(characterId, corporationId) {
     // Check if token is expired and refresh if needed
     if (isTokenExpired(character.expiresAt)) {
       console.log('[ESI Divisions] Token expired, refreshing...');
-      const newTokens = await refreshAccessToken(character.refreshToken);
-      updateCharacterTokens(characterId, newTokens);
-      character = getCharacter(characterId);
+      try {
+        const newTokens = await refreshAccessToken(character.refreshToken);
+        updateCharacterTokens(characterId, newTokens);
+        character = getCharacter(characterId);
+      } catch (refreshErr) {
+        const tagged = new Error(refreshErr.message);
+        tagged.code = 'ESI_TOKEN_REFRESH_FAILED';
+        tagged.characterId = characterId;
+        throw tagged;
+      }
     }
 
     // Check if character has the required scope
@@ -67,8 +74,16 @@ async function fetchCorporationDivisions(characterId, corporationId) {
     );
 
     if (!response.ok) {
-      // If we get a 403, the character doesn't have permission
+      // If we get a 403, check if it's a scope error vs role/permission error
       if (response.status === 403) {
+        const errorText = await response.text();
+        const lower = errorText.toLowerCase();
+        if (lower.includes('token not valid for scope') || lower.includes('invalid scope')) {
+          const tagged = new Error(`ESI scope error: ${errorText}`);
+          tagged.code = 'ESI_SCOPE_ERROR';
+          tagged.characterId = characterId;
+          throw tagged;
+        }
         console.log('[ESI Divisions] Character does not have permission to view corporation divisions');
         recordESICallSuccess(callKey, null, null, 0, startTime);
         return {
@@ -121,6 +136,10 @@ async function fetchCorporationDivisions(characterId, corporationId) {
       cacheExpiresAt: cacheExpiresAt,
     };
   } catch (error) {
+    // Re-throw auth errors so IPC handlers can broadcast them to renderers
+    if (error.code === 'ESI_TOKEN_REFRESH_FAILED' || error.code === 'ESI_SCOPE_ERROR') {
+      throw error;
+    }
     console.error('[ESI Divisions] Error fetching corporation divisions:', error);
     if (!error.message.includes('Character not found') && !error.message.includes('Failed to fetch')) {
       recordESICallError(callKey, error.message, 'NETWORK_ERROR', startTime);

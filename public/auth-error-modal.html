@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Authentication Required — Quantum Forge</title>
+  <link rel="stylesheet" href="shared/variables.css" />
+  <link rel="stylesheet" href="shared/components.css" />
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: var(--color-bg-elevated);
+      color: var(--color-text-primary);
+      font-family: var(--font-family-base, system-ui, sans-serif);
+      font-size: var(--font-size-base);
+      padding: var(--space-6);
+      user-select: none;
+      -webkit-app-region: no-drag;
+    }
+
+    .header {
+      display: flex;
+      align-items: flex-start;
+      gap: var(--space-4);
+      margin-bottom: var(--space-5);
+    }
+
+    .icon {
+      flex-shrink: 0;
+      width: 40px;
+      height: 40px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 20px;
+    }
+
+    .icon.expired  { background: rgba(var(--color-error-rgb, 220,53,69), 0.15); }
+    .icon.scopes   { background: rgba(var(--color-warning-rgb, 255,193,7), 0.15); }
+
+    .header-text h1 {
+      font-size: var(--font-size-lg);
+      font-weight: 600;
+      color: var(--color-text-heading);
+      line-height: 1.3;
+    }
+
+    .header-text .character-name {
+      font-size: var(--font-size-sm);
+      color: var(--color-text-muted);
+      margin-top: var(--space-1);
+    }
+
+    .body {
+      margin-bottom: var(--space-5);
+    }
+
+    .body p {
+      font-size: var(--font-size-sm);
+      color: var(--color-text-secondary);
+      line-height: 1.6;
+      margin-bottom: var(--space-3);
+    }
+
+    .body p:last-child { margin-bottom: 0; }
+
+    .scope-list {
+      list-style: none;
+      margin: var(--space-3) 0;
+      padding: 0;
+      display: flex;
+      flex-direction: column;
+      gap: var(--space-2);
+    }
+
+    .scope-list li {
+      background: var(--color-bg-base);
+      border: 1px solid var(--color-border);
+      border-radius: var(--radius-sm);
+      padding: var(--space-2) var(--space-3);
+      font-size: var(--font-size-sm);
+    }
+
+    .scope-list li code {
+      display: block;
+      font-family: monospace;
+      font-size: 0.8em;
+      color: var(--color-accent);
+      margin-bottom: 2px;
+    }
+
+    .scope-list li span {
+      color: var(--color-text-muted);
+    }
+
+    .note {
+      font-size: var(--font-size-xs, 0.8em) !important;
+      color: var(--color-text-muted) !important;
+      border-top: 1px solid var(--color-border);
+      padding-top: var(--space-3);
+      margin-top: var(--space-3) !important;
+    }
+
+    .footer {
+      display: flex;
+      gap: var(--space-3);
+      justify-content: flex-end;
+    }
+
+    #btn-reauth {
+      min-width: 160px;
+    }
+
+    #btn-reauth:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div class="icon" id="icon">⚠</div>
+    <div class="header-text">
+      <h1 id="title">Authentication Required</h1>
+      <div class="character-name" id="character-name"></div>
+    </div>
+  </div>
+
+  <div class="body" id="body"></div>
+
+  <div class="footer">
+    <button class="btn btn-secondary" id="btn-later">Later</button>
+    <button class="btn btn-primary" id="btn-reauth">Re-authenticate Now</button>
+  </div>
+
+  <script>
+    const SCOPE_DESCRIPTIONS = {
+      'esi-industry.read_character_jobs.v1':      "View your character's industry jobs",
+      'esi-industry.read_corporation_jobs.v1':    "View your corporation's industry jobs",
+      'esi-industry.read_character_mining.v1':    'View your mining ledger',
+      'esi-markets.read_character_orders.v1':     "View your character's market orders",
+      'esi-assets.read_assets.v1':                "View your character's assets",
+      'esi-assets.read_corporation_assets.v1':    "View your corporation's assets",
+      'esi-characters.read_blueprints.v1':        "View your character's blueprints",
+      'esi-corporations.read_blueprints.v1':      "View your corporation's blueprints",
+      'esi-wallet.read_character_wallet.v1':      'View your wallet transactions',
+      'esi-universe.read_structures.v1':          'Look up player-owned structure details',
+      'esi-skills.read_skills.v1':               "View your character's skills",
+      'esi-corporations.read_divisions.v1':       "View your corporation's hangar and factory division names",
+      'esi-search.search_structures.v1':          'Search for player-owned structures by name',
+      'esi-markets.structure_markets.v1':         'View market orders inside player-owned structures',
+    };
+
+    function renderTokenExpired(info) {
+      document.getElementById('icon').className = 'icon expired';
+      document.getElementById('icon').textContent = '🔒';
+      document.getElementById('title').textContent = 'Session Expired';
+      document.getElementById('character-name').textContent = info.characterName;
+      document.getElementById('body').innerHTML = `
+        <p>The ESI session for <strong>${info.characterName}</strong> has expired and
+        could not be automatically refreshed.</p>
+        <p>This typically happens when you log out of EVE account management or
+        manually revoke Quantum Forge's access. Re-authenticating will restore
+        automatic data refresh for this character.</p>
+        <p class="note">Re-authenticating will not remove any of your existing data.</p>
+      `;
+    }
+
+    function renderMissingScopes(info) {
+      document.getElementById('icon').className = 'icon scopes';
+      document.getElementById('icon').textContent = '🔑';
+      document.getElementById('title').textContent = 'Re-authentication Required';
+      document.getElementById('character-name').textContent = info.characterName;
+
+      const scopeItems = info.missingScopes.map(scope => {
+        const desc = SCOPE_DESCRIPTIONS[scope] || scope;
+        return `<li><code>${scope}</code><span>${desc}</span></li>`;
+      }).join('');
+
+      document.getElementById('body').innerHTML = `
+        <p><strong>${info.characterName}</strong> is missing the following permissions
+        that were added in a recent update:</p>
+        <ul class="scope-list">${scopeItems}</ul>
+        <p class="note">Re-authenticating will not remove any of your existing data.</p>
+      `;
+    }
+
+    // Receive error info from main process, render, then fit the window to content
+    window.electronAPI.authErrorModal.getErrorInfo().then(info => {
+      if (!info) return;
+      if (info.type === 'token_refresh_failed') {
+        renderTokenExpired(info);
+      } else if (info.type === 'missing_scopes') {
+        renderMissingScopes(info);
+      }
+      // Let the browser finish layout before measuring
+      requestAnimationFrame(() => {
+        const margin = 24;
+        window.electronAPI.authErrorModal.resize(document.body.scrollHeight + margin);
+      });
+    });
+
+    document.getElementById('btn-later').addEventListener('click', () => {
+      window.electronAPI.authErrorModal.dismiss();
+    });
+
+    document.getElementById('btn-reauth').addEventListener('click', async () => {
+      const btn = document.getElementById('btn-reauth');
+      btn.disabled = true;
+      btn.textContent = 'Authenticating…';
+      try {
+        await window.electronAPI.authErrorModal.reauthenticate();
+      } catch (err) {
+        btn.disabled = false;
+        btn.textContent = 'Re-authenticate Now';
+      }
+    });
+
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') window.electronAPI.authErrorModal.dismiss();
+    });
+  </script>
+</body>
+</html>

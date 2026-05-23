@@ -34,9 +34,16 @@ async function fetchCharacterWalletTransactions(characterId, fromId = null) {
     // Check if token is expired and refresh if needed
     if (isTokenExpired(character.expiresAt)) {
       console.log('Token expired, refreshing...');
-      const newTokens = await refreshAccessToken(character.refreshToken);
-      updateCharacterTokens(characterId, newTokens);
-      character = getCharacter(characterId);
+      try {
+        const newTokens = await refreshAccessToken(character.refreshToken);
+        updateCharacterTokens(characterId, newTokens);
+        character = getCharacter(characterId);
+      } catch (refreshErr) {
+        const tagged = new Error(refreshErr.message);
+        tagged.code = 'ESI_TOKEN_REFRESH_FAILED';
+        tagged.characterId = characterId;
+        throw tagged;
+      }
     }
 
     // Fetch wallet transactions from ESI

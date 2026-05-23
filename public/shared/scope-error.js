@@ -29,6 +29,7 @@ window.SCOPE_DESCRIPTIONS = {
  */
 window.showMissingScopeModal = function (characterName, missingScopes, onReauthenticate) {
   if (!missingScopes || missingScopes.length === 0) return;
+  if (document.querySelector('[data-auth-error-modal]')) return;
 
   // --- build scope list ---
   const scopeItems = missingScopes.map(scope => {
@@ -42,6 +43,7 @@ window.showMissingScopeModal = function (characterName, missingScopes, onReauthe
   overlay.setAttribute('role', 'dialog');
   overlay.setAttribute('aria-modal', 'true');
   overlay.setAttribute('aria-labelledby', 'scope-error-modal-title');
+  overlay.setAttribute('data-auth-error-modal', 'true');
   overlay.style.cssText = 'display:flex;';
 
   overlay.innerHTML = `
@@ -86,6 +88,85 @@ window.showMissingScopeModal = function (characterName, missingScopes, onReauthe
 
   overlay.querySelector('.scope-modal-reauth').addEventListener('click', async () => {
     const reauthBtn = overlay.querySelector('.scope-modal-reauth');
+    reauthBtn.disabled = true;
+    reauthBtn.textContent = 'Authenticating…';
+
+    try {
+      const result = await window.electronAPI.esi.authenticate();
+      close();
+      if (result && result.success) {
+        onReauthenticate && onReauthenticate();
+      }
+    } catch (err) {
+      console.error('Re-authentication failed:', err);
+      reauthBtn.disabled = false;
+      reauthBtn.textContent = 'Re-authenticate Now';
+    }
+  });
+};
+
+/**
+ * Show a modal informing the user that a character's ESI session has expired
+ * (refresh token revoked), with an option to re-authenticate immediately.
+ *
+ * @param {string}   characterName      - Display name of the affected character
+ * @param {Function} [onReauthenticate] - Optional callback invoked after successful re-auth
+ */
+window.showTokenExpiredModal = function (characterName, onReauthenticate) {
+  if (document.querySelector('[data-auth-error-modal]')) return;
+
+  const overlay = document.createElement('div');
+  overlay.className = 'modal';
+  overlay.setAttribute('role', 'dialog');
+  overlay.setAttribute('aria-modal', 'true');
+  overlay.setAttribute('aria-labelledby', 'token-expired-modal-title');
+  overlay.setAttribute('data-auth-error-modal', 'true');
+  overlay.style.cssText = 'display:flex;';
+
+  overlay.innerHTML = `
+    <div class="modal-content" style="max-width:520px;width:100%;">
+      <div class="modal-header">
+        <h2 id="token-expired-modal-title">Session Expired</h2>
+        <button class="modal-close" aria-label="Close dialog">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p>
+          The ESI session for <strong>${characterName}</strong> has expired and
+          could not be automatically refreshed.
+        </p>
+        <p style="margin-top:10px;">
+          This typically happens when you log out of EVE account management or
+          manually revoke Quantum Forge's access. Re-authenticating will restore
+          automatic data refresh for this character.
+        </p>
+        <p style="margin-top:8px;color:var(--color-text-muted, #888);font-size:0.9em;">
+          Re-authenticating will not remove any of your existing data.
+        </p>
+      </div>
+      <div class="modal-footer" style="display:flex;gap:8px;justify-content:flex-end;">
+        <button class="btn btn-secondary token-modal-later">Later</button>
+        <button class="btn btn-primary token-modal-reauth">Re-authenticate Now</button>
+      </div>
+    </div>
+  `;
+
+  document.body.appendChild(overlay);
+
+  function close() {
+    overlay.remove();
+    document.removeEventListener('keydown', onKey);
+  }
+
+  function onKey(e) {
+    if (e.key === 'Escape') close();
+  }
+
+  overlay.querySelector('.modal-close').addEventListener('click', close);
+  overlay.querySelector('.token-modal-later').addEventListener('click', close);
+  document.addEventListener('keydown', onKey);
+
+  overlay.querySelector('.token-modal-reauth').addEventListener('click', async () => {
+    const reauthBtn = overlay.querySelector('.token-modal-reauth');
     reauthBtn.disabled = true;
     reauthBtn.textContent = 'Authenticating…';
 

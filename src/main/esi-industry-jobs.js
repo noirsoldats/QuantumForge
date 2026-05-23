@@ -34,9 +34,16 @@ async function fetchCharacterIndustryJobs(characterId, includeCompleted = false)
     // Check if token is expired and refresh if needed
     if (isTokenExpired(character.expiresAt)) {
       console.log('Token expired, refreshing...');
-      const newTokens = await refreshAccessToken(character.refreshToken);
-      updateCharacterTokens(characterId, newTokens);
-      character = getCharacter(characterId);
+      try {
+        const newTokens = await refreshAccessToken(character.refreshToken);
+        updateCharacterTokens(characterId, newTokens);
+        character = getCharacter(characterId);
+      } catch (refreshErr) {
+        const tagged = new Error(refreshErr.message);
+        tagged.code = 'ESI_TOKEN_REFRESH_FAILED';
+        tagged.characterId = characterId;
+        throw tagged;
+      }
     }
 
     // Fetch industry jobs from ESI
@@ -125,9 +132,16 @@ async function fetchCorporationIndustryJobs(characterId, corporationId, includeC
     // Check if token is expired and refresh if needed
     if (isTokenExpired(character.expiresAt)) {
       console.log('Token expired, refreshing...');
-      const newTokens = await refreshAccessToken(character.refreshToken);
-      updateCharacterTokens(characterId, newTokens);
-      character = getCharacter(characterId);
+      try {
+        const newTokens = await refreshAccessToken(character.refreshToken);
+        updateCharacterTokens(characterId, newTokens);
+        character = getCharacter(characterId);
+      } catch (refreshErr) {
+        const tagged = new Error(refreshErr.message);
+        tagged.code = 'ESI_TOKEN_REFRESH_FAILED';
+        tagged.characterId = characterId;
+        throw tagged;
+      }
     }
 
     // Check if character has the required scope
@@ -157,8 +171,17 @@ async function fetchCorporationIndustryJobs(characterId, corporationId, includeC
       });
 
       if (!response.ok) {
-        // If we get a 403, the character doesn't have permission (not a director)
+        // If we get a 403, distinguish between missing scope vs missing director role
         if (response.status === 403) {
+          const errorText = await response.text();
+          const lower = errorText.toLowerCase();
+          if (lower.includes('token not valid for scope') || lower.includes('invalid scope')) {
+            const tagged = new Error(`ESI scope error: ${errorText}`);
+            tagged.code = 'ESI_SCOPE_ERROR';
+            tagged.characterId = characterId;
+            throw tagged;
+          }
+          // Role-based 403 (not a director) — expected, return empty silently
           console.log('Character does not have permission to view corporation industry jobs (requires director role)');
           recordESICallSuccess(callKey, null, null, 0, startTime);
           return { jobs: [], corporationId, characterId, lastUpdated: Date.now(), cacheExpiresAt: null };
@@ -205,6 +228,10 @@ async function fetchCorporationIndustryJobs(characterId, corporationId, includeC
       cacheExpiresAt: cacheExpiresAt,
     };
   } catch (error) {
+    // Re-throw auth errors so IPC handlers can broadcast them to renderers
+    if (error.code === 'ESI_TOKEN_REFRESH_FAILED' || error.code === 'ESI_SCOPE_ERROR') {
+      throw error;
+    }
     console.error('Error fetching corporation industry jobs:', error);
     if (!error.message.includes('Character not found') && !error.message.includes('Failed to fetch')) {
       recordESICallError(callKey, error.message, 'NETWORK_ERROR', startTime);

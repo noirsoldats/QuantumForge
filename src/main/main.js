@@ -211,6 +211,7 @@ const {
   getReprocessingMaterials,
 } = require('./sde-database');
 const { initializeMarketDatabase, getMarketDatabase } = require('./market-database');
+const { createAuthErrorWindow, setupAuthErrorWindowHandlers } = require('./auth-error-window');
 const { initializeESIStatusDatabase } = require('./esi-status-tracker');
 const { fetchMarketOrders, fetchMarketHistory, fetchMarketData, getLastMarketFetchTime, getLastHistoryFetchTime, getHistoryDataStatus, manualRefreshMarketData, manualRefreshHistoryData, getCachedMarketHistory } = require('./esi-market');
 const { parseLootText, getTypeSpecificSkillId, calculateReprocessingYield, calculateReprocessingValue } = require('./reprocessing-calculator');
@@ -439,6 +440,7 @@ app.whenReady().then(async () => {
     // Setup IPC handlers first (needed by both wizard and normal app)
     setStartupPhase('ipc-handlers');
     setupIPCHandlers();
+    setupAuthErrorWindowHandlers();
 
     // Check if this is the first launch
     setStartupPhase('first-launch-check');
@@ -540,6 +542,40 @@ async function startNormalApplication() {
       // Splash window will show error UI, user can retry or exit
     }
   });
+}
+
+/**
+ * Open the dedicated auth-error pop-out window for the given error.
+ * Only one such window can exist at a time; duplicate calls bring it to front.
+ */
+function broadcastAuthError(errorInfo) {
+  console.warn('[Auth] Opening auth error window:', errorInfo.type, 'for character', errorInfo.characterId);
+  createAuthErrorWindow(errorInfo);
+}
+
+/**
+ * Build an auth error info object from a tagged ESI error.
+ * Computes the missing scope list for ESI_SCOPE_ERROR by comparing
+ * the character's granted scopes against the required ESI_CONFIG.scopes.
+ */
+function buildAuthErrorInfo(error, characterId) {
+  const character = getCharacter(characterId);
+  const characterName = character ? character.characterName : `Character ${characterId}`;
+
+  if (error.code === 'ESI_TOKEN_REFRESH_FAILED') {
+    return { type: 'token_refresh_failed', characterId, characterName };
+  }
+
+  // ESI_SCOPE_ERROR — compute missing scopes from local comparison
+  const { ESI_CONFIG } = require('./esi-auth');
+  const granted = character ? (character.scopes || []) : [];
+  const missingScopes = ESI_CONFIG.scopes.filter(s => !granted.includes(s));
+  return {
+    type: 'missing_scopes',
+    characterId,
+    characterName,
+    missingScopes: missingScopes.length > 0 ? missingScopes : ['Unknown scope — re-authentication required'],
+  };
 }
 
 // Setup all IPC handlers
@@ -654,6 +690,10 @@ function setupIPCHandlers() {
     return { missing, characterName: character.characterName };
   });
 
+  ipcMain.handle('esi:openAuthErrorWindow', (event, errorInfo) => {
+    broadcastAuthError(errorInfo);
+  });
+
   // Server Status IPC Handlers
   ipcMain.handle('status:fetch', async () => {
     return await fetchServerStatus();
@@ -756,6 +796,9 @@ function setupIPCHandlers() {
       };
     } catch (error) {
       console.error('Error fetching division names:', error);
+      if (error.code === 'ESI_TOKEN_REFRESH_FAILED' || error.code === 'ESI_SCOPE_ERROR') {
+        broadcastAuthError(buildAuthErrorInfo(error, characterId));
+      }
       return { success: false, error: error.message, hasScope: false };
     }
   });
@@ -941,6 +984,9 @@ function setupIPCHandlers() {
       }
     } catch (error) {
       console.error('Skills fetch error:', error);
+      if (error.code === 'ESI_TOKEN_REFRESH_FAILED' || error.code === 'ESI_SCOPE_ERROR') {
+        broadcastAuthError(buildAuthErrorInfo(error, characterId));
+      }
       return { success: false, error: error.message };
     }
   });
@@ -978,6 +1024,9 @@ function setupIPCHandlers() {
       }
     } catch (error) {
       console.error('Blueprints fetch error:', error);
+      if (error.code === 'ESI_TOKEN_REFRESH_FAILED' || error.code === 'ESI_SCOPE_ERROR') {
+        broadcastAuthError(buildAuthErrorInfo(error, characterId));
+      }
       return { success: false, error: error.message };
     }
   });
@@ -1028,6 +1077,9 @@ function setupIPCHandlers() {
       return { success: true };
     } catch (error) {
       console.error('Error fetching assets:', error);
+      if (error.code === 'ESI_TOKEN_REFRESH_FAILED' || error.code === 'ESI_SCOPE_ERROR') {
+        broadcastAuthError(buildAuthErrorInfo(error, characterId));
+      }
       throw error;
     }
   });
@@ -1053,6 +1105,9 @@ function setupIPCHandlers() {
       return { success: true, count: jobsData.jobs.length };
     } catch (error) {
       console.error('Error fetching industry jobs:', error);
+      if (error.code === 'ESI_TOKEN_REFRESH_FAILED' || error.code === 'ESI_SCOPE_ERROR') {
+        broadcastAuthError(buildAuthErrorInfo(error, characterId));
+      }
       throw error;
     }
   });
@@ -1074,6 +1129,9 @@ function setupIPCHandlers() {
       return { success: true, count: jobsData.jobs.length };
     } catch (error) {
       console.error('Error fetching corporation industry jobs:', error);
+      if (error.code === 'ESI_TOKEN_REFRESH_FAILED' || error.code === 'ESI_SCOPE_ERROR') {
+        broadcastAuthError(buildAuthErrorInfo(error, characterId));
+      }
       throw error;
     }
   });
@@ -1086,6 +1144,9 @@ function setupIPCHandlers() {
       return { success: true, count: transactionsData.transactions.length };
     } catch (error) {
       console.error('Error fetching wallet transactions:', error);
+      if (error.code === 'ESI_TOKEN_REFRESH_FAILED' || error.code === 'ESI_SCOPE_ERROR') {
+        broadcastAuthError(buildAuthErrorInfo(error, characterId));
+      }
       throw error;
     }
   });
@@ -1211,7 +1272,24 @@ function setupIPCHandlers() {
   // New: plan-based ESI refresh
   ipcMain.handle('plans:refreshPlanESIData', async (event, planId) => {
     const { refreshPlanESIData } = require('./manufacturing-plans');
-    return await refreshPlanESIData(planId);
+    const result = await refreshPlanESIData(planId);
+    // Surface any token refresh failures that were caught internally
+    if (result && result.errors && result.errors.length > 0) {
+      for (const errEntry of result.errors) {
+        if (errEntry && errEntry.error && errEntry.error.includes('Token refresh failed:')) {
+          const charId = errEntry.characterId;
+          if (charId) {
+            const character = getCharacter(charId);
+            broadcastAuthError({
+              type: 'token_refresh_failed',
+              characterId: charId,
+              characterName: character ? character.characterName : `Character ${charId}`,
+            });
+          }
+        }
+      }
+    }
+    return result;
   });
 
   ipcMain.handle('plans:openWindow', () => {

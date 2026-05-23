@@ -27,6 +27,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     clearDefaultCharacter: () => ipcRenderer.invoke('esi:clearDefaultCharacter'),
     onDefaultCharacterChanged: (callback) => ipcRenderer.on('default-character-changed', callback),
     checkMissingScopes: (characterId) => ipcRenderer.invoke('esi:checkMissingScopes', characterId),
+    openAuthErrorWindow: (errorInfo) => ipcRenderer.invoke('esi:openAuthErrorWindow', errorInfo),
   },
 
   // SDE API
@@ -397,5 +398,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getDirectory: () => ipcRenderer.invoke('errorLog:getDirectory'),
     openFolder: () => ipcRenderer.invoke('errorLog:openFolder'),
     getDiagnostics: () => ipcRenderer.invoke('errorLog:getDiagnostics'),
+  },
+
+  // Auth Error Modal API (used only by auth-error-modal.html)
+  authErrorModal: {
+    getErrorInfo: () => ipcRenderer.invoke('authErrorModal:getErrorInfo'),
+    dismiss: () => ipcRenderer.invoke('authErrorModal:dismiss'),
+    reauthenticate: () => ipcRenderer.invoke('authErrorModal:reauthenticate'),
+    resize: (height) => ipcRenderer.invoke('authErrorModal:resize', height),
   },
 });

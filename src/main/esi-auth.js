@@ -48,12 +48,32 @@ function generatePKCE() {
   return { codeVerifier, codeChallenge };
 }
 
+// Singleton reference to any in-progress OAuth callback server.
+// Ensures that starting a new auth flow always tears down a leftover server
+// from a previous attempt that was abandoned mid-flow (e.g. modal dismissed).
+let activeAuthServer = null;
+let activeAuthTimeout = null;
+
+function cleanupActiveAuth() {
+  if (activeAuthTimeout) {
+    clearTimeout(activeAuthTimeout);
+    activeAuthTimeout = null;
+  }
+  if (activeAuthServer) {
+    activeAuthServer.close();
+    activeAuthServer = null;
+  }
+}
+
 /**
  * Start the ESI authentication flow
  * Opens the authorization URL in the system browser and starts a temporary local server
  * @returns {Promise<Object>} Authentication result with character info and tokens
  */
 async function authenticateWithESI() {
+  // Tear down any leftover server from a previously abandoned auth attempt
+  cleanupActiveAuth();
+
   return new Promise((resolve, reject) => {
     const state = generateState();
     const { codeVerifier, codeChallenge } = generatePKCE();
@@ -173,15 +193,20 @@ async function authenticateWithESI() {
       }
     });
 
+    // Wire to module-level singleton so a future call can tear this server down
+    activeAuthServer = server;
+
     // Cleanup function to close server and clear timeout
     const cleanup = () => {
       if (serverTimeout) {
         clearTimeout(serverTimeout);
         serverTimeout = null;
+        activeAuthTimeout = null;
       }
       if (server) {
         server.close();
         server = null;
+        activeAuthServer = null;
       }
     };
 
@@ -200,6 +225,7 @@ async function authenticateWithESI() {
         cleanup();
         reject(new Error('Authentication timeout - no response received within 5 minutes'));
       }, 5 * 60 * 1000);
+      activeAuthTimeout = serverTimeout;
     });
 
     // Handle server errors
