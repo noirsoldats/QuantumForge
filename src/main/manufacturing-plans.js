@@ -1862,7 +1862,8 @@ async function expandReaction(
   characterId,
   planId,
   parentBlueprintId,
-  depth = 1
+  depth = 1,
+  marketSet = null
 ) {
   // Check depth limit using helper
   if (isMaxDepthExceeded(depth, 10, `expandReaction for ${reactionTypeId}`)) {
@@ -1881,7 +1882,10 @@ async function expandReaction(
     reactionTypeId,
     runsNeeded,
     characterId,
-    facility
+    facility,
+    0,    // depth
+    null, // db
+    marketSet
   );
 
   const aggregatedMaterials = { ...calculation.materials };
@@ -2108,6 +2112,26 @@ async function recalculatePlanMaterials(planId, refreshPrices = false, marketSet
 
       // If buy or components mode: don't expand children
       if (useIntermediates === 'buy' || useIntermediates === 'components') {
+        if (useIntermediates === 'buy') {
+          // Push a material leaf so this item appears in the shopping list
+          collectedNodes.push({
+            nodeId: randomUUID(),
+            planBlueprintId: rootBlueprintId,
+            sourcePlanBlueprintId: sourcePlanBlueprintId,
+            parentNodeId: intermediateNodeId,
+            typeId: bpProduct?.typeID ?? intermediateBlueprintTypeId,
+            nodeType: 'material',
+            depth: depth + 1,
+            quantityNeeded: runsNeeded * productsPerRun,
+            quantityPerRun: null,
+            runsNeeded: null,
+            meLevel: null,
+            isReaction: 0,
+            buildPlan: 'buy',
+            price: null,
+            priceFrozenAt: null
+          });
+        }
         return intermediateNodeId;
       }
 
@@ -2619,6 +2643,26 @@ async function recalculatePlanMaterials(planId, refreshPrices = false, marketSet
             (aggregatedMaterials[product.typeID] || 0) + totalProductQty;
 
           console.log(`[Plans] Blueprint ${blueprint.blueprintTypeId} set to 'buy' - adding ${totalProductQty} of product ${product.typeID} to materials`);
+
+          // ---- Tree: product-as-material leaf node under the product root ----
+          collectedNodes.push({
+            nodeId: randomUUID(),
+            planBlueprintId: blueprint.planBlueprintId,
+            sourcePlanBlueprintId: null,
+            parentNodeId: productNodeId,
+            typeId: product.typeID,
+            nodeType: 'material',
+            depth: 1,
+            quantityNeeded: totalProductQty,
+            quantityPerRun: null,
+            runsNeeded: null,
+            meLevel: null,
+            isReaction: 0,
+            buildPlan: 'buy',
+            price: null,
+            priceFrozenAt: null
+          });
+          // ---- End product-as-material leaf ----
         }
 
         // Skip adding to aggregatedProducts (we're buying it, not producing it)
@@ -2765,7 +2809,8 @@ async function recalculatePlanMaterials(planId, refreshPrices = false, marketSet
               plan.character_id,
               planId,
               reactionBlueprintId,  // This reaction is now the parent for nested reactions
-              0  // Start at depth 0 for aggregated reactions
+              0,  // Start at depth 0 for aggregated reactions
+              marketSet
             );
 
             // Remove the reaction product from aggregatedMaterials

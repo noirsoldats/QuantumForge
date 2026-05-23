@@ -664,8 +664,8 @@ async function calculateReactionMaterials(reactionTypeId, runs = 1, characterId 
         const marketSettings = marketSet;
         if (!marketSettings) {
           console.warn('[calculateReactionMaterials] marketSet not provided, skipping pricing');
-          throw new Error('marketSet not provided');
-        }
+          // No marketSet available — leave pricing as null and continue
+        } else {
 
         // Get location settings for input and output
         const inputLocation = getInputLocation(marketSettings);
@@ -788,6 +788,7 @@ async function calculateReactionMaterials(reactionTypeId, runs = 1, characterId 
           profit,
           profitMargin
         };
+        } // end else (marketSettings provided)
       } catch (error) {
         console.error('Error calculating reaction pricing:', error);
         pricing = null;
