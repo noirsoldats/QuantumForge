@@ -2835,25 +2835,38 @@ async function recalculatePlanMaterials(planId, refreshPrices = false, marketSet
             );
 
             if (pendingReactionNodes.length > 0) {
-              // Wire ALL placeholder nodes with the aggregated reaction's plan_blueprint_id
-              // and update their quantities to the aggregated total.
-              for (const n of pendingReactionNodes) {
-                n.sourcePlanBlueprintId = reactionBlueprintId;
-                n.runsNeeded = runsNeeded;
-                n.quantityNeeded = runsNeeded * (n.quantityPerRun ?? 1);
+              const primaryNode = pendingReactionNodes[0];
+
+              // Update the primary node with aggregated data
+              primaryNode.sourcePlanBlueprintId = reactionBlueprintId;
+              primaryNode.runsNeeded = runsNeeded;
+              primaryNode.quantityNeeded = runsNeeded * (primaryNode.quantityPerRun ?? 1);
+
+              // Remove all duplicate per-parent placeholder nodes (keep only the primary).
+              // When the same reaction product is required by multiple parent intermediates
+              // (e.g. RCF needed by 14 Capital components), Phase 2 creates one placeholder
+              // node per parent. Keeping all of them causes getPlanProducts to sum their
+              // quantities (14 × total = 14× inflation). Only one aggregated node should exist.
+              if (pendingReactionNodes.length > 1) {
+                const duplicateIds = new Set(pendingReactionNodes.slice(1).map(n => n.nodeId));
+                for (let i = collectedNodes.length - 1; i >= 0; i--) {
+                  if (duplicateIds.has(collectedNodes[i].nodeId)) {
+                    collectedNodes.splice(i, 1);
+                  }
+                }
               }
+
               // Walk reaction inputs ONCE using the correct reaction facility.
-              // Use the first pending node as the parent for leaf nodes so the tree
-              // is rooted correctly. Multiple pending nodes represent the same reaction
-              // appearing under different parents — one set of leaf nodes covers all.
+              // Pass the primary node's actual depth so sub-components appear one level
+              // below the reaction node (not at the same level as the reaction itself).
               await walkReactionNodes(
                 reactionTypeId,
                 runsNeeded,
                 facility,
-                pendingReactionNodes[0].planBlueprintId,
+                primaryNode.planBlueprintId,
                 reactionBlueprintId,
-                pendingReactionNodes[0].nodeId,
-                1
+                primaryNode.nodeId,
+                primaryNode.depth
               );
             } else {
               // No pre-expanded node found: this reaction only appeared in aggregatedMaterials
