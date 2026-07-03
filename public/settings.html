@@ -113,6 +113,27 @@
           </div>
 
           <div class="settings-section">
+            <h3>Diagnostics</h3>
+            <div class="setting-item">
+              <div class="setting-info">
+                <label>Audit Mode</label>
+                <span class="setting-description">Record pricing, material, and invention calculations for inspection in the Audit Log window. Useful for verifying which pricing method and Market Set were actually used.</span>
+              </div>
+              <label class="toggle">
+                <input type="checkbox" id="audit-mode-enabled">
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+            <div class="setting-item">
+              <div class="setting-info">
+                <label>Audit Log</label>
+                <span class="setting-description">View recorded calculations while Audit Mode is on</span>
+              </div>
+              <button class="btn btn-secondary btn-sm" id="open-audit-log">Open Audit Log</button>
+            </div>
+          </div>
+
+          <div class="settings-section">
             <h3>Static Data Export (SDE)</h3>
             <div class="sde-info-container">
               <div class="sde-status-grid">

@@ -55,6 +55,11 @@ function populateSettings() {
     updatesNotification.checked = currentSettings.general?.updatesNotification !== false;
   }
 
+  const auditModeEnabled = document.getElementById('audit-mode-enabled');
+  if (auditModeEnabled) {
+    auditModeEnabled.checked = currentSettings.general?.auditModeEnabled === true;
+  }
+
   // Industry settings - reactions toggle only
   const reactionsToggle = document.getElementById('reactions-as-intermediates');
   if (reactionsToggle) {
@@ -184,6 +189,23 @@ document.addEventListener('DOMContentLoaded', async () => {
     updatesNotification.addEventListener('change', (e) => {
       console.log('Updates notification:', e.target.checked);
       saveSetting('general', 'updatesNotification', e.target.checked);
+    });
+  }
+
+  // Audit Mode
+  const auditModeEnabled = document.getElementById('audit-mode-enabled');
+  if (auditModeEnabled) {
+    auditModeEnabled.addEventListener('change', (e) => {
+      console.log('Audit Mode:', e.target.checked);
+      saveSetting('general', 'auditModeEnabled', e.target.checked);
+    });
+  }
+
+  // Open Audit Log window
+  const openAuditLog = document.getElementById('open-audit-log');
+  if (openAuditLog) {
+    openAuditLog.addEventListener('click', () => {
+      window.electronAPI.audit.openWindow();
     });
   }
 

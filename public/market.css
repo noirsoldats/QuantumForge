@@ -1721,6 +1721,29 @@ select.form-control:not([value=""]):valid {
 .region-status-dot.stale  { background: #ff9800; box-shadow: 0 0 6px rgba(255, 152, 0, 0.5); }
 .region-status-dot.old    { background: #f44336; box-shadow: 0 0 6px rgba(244, 67, 54, 0.5); }
 
+.region-structures {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 4px 0 4px 24px;
+}
+
+.structure-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 16px;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(100, 180, 255, 0.08);
+  border-radius: 6px;
+}
+
+.structure-name {
+  font-size: 0.85em;
+  color: rgba(200, 200, 220, 0.75);
+  min-width: 180px;
+}
+
 .region-name {
   font-weight: 600;
   color: #e0e0e0;

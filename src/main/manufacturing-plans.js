@@ -3,6 +3,7 @@ const { calculateBlueprintMaterials, getBlueprintProduct, getBlueprintForProduct
 const { calculateReactionMaterials, getReactionProduct, getReactionForProduct, getReactionMaterials, calculateReactionMaterialQuantity } = require('./reaction-calculator');
 const { calculateRealisticPrice } = require('./market-pricing');
 const { getInputLocation, getOutputLocation } = require('./blueprint-pricing');
+const { recordPricing } = require('./audit-recorder');
 const { getAssets } = require('./esi-assets');
 const { getSdePath } = require('./sde-manager');
 const { randomUUID } = require('crypto');
@@ -3003,10 +3004,12 @@ async function recalculatePlanMaterials(planId, refreshPrices = false, marketSet
                 inputLocation.regionId,
                 inputLocation.locationId,
                 marketSettings.inputMaterials.priceType,
-                node.quantityNeeded
+                node.quantityNeeded,
+                marketSettings.inputMaterials
               );
               price = priceResult.price;
               priceFrozenAt = now;
+              recordPricing({ typeId: node.typeId, quantity: node.quantityNeeded, priceType: marketSettings.inputMaterials.priceType, planId, marketSetId: marketSettings.id, marketSetName: marketSettings.name, source: 'manufacturing-plans:recalculatePlanMaterials' }, priceResult);
             } catch (error) {
               console.warn(`Could not fetch price for type ${node.typeId}:`, error.message);
             }
@@ -3026,10 +3029,12 @@ async function recalculatePlanMaterials(planId, refreshPrices = false, marketSet
                 outputLocation.regionId,
                 outputLocation.locationId,
                 marketSettings.outputProducts.priceType,
-                node.quantityNeeded
+                node.quantityNeeded,
+                marketSettings.outputProducts
               );
               price = priceResult.price;
               priceFrozenAt = now;
+              recordPricing({ typeId: node.typeId, quantity: node.quantityNeeded, priceType: marketSettings.outputProducts.priceType, planId, marketSetId: marketSettings.id, marketSetName: marketSettings.name, source: 'manufacturing-plans:recalculatePlanMaterials' }, priceResult);
             } catch (error) {
               console.warn(`Could not fetch price for type ${node.typeId}:`, error.message);
             }

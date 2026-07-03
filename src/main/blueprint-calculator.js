@@ -353,6 +353,9 @@ async function calculateBlueprintMaterials(blueprintTypeId, runs = 1, meLevel = 
         }
 
         console.log(`[Material Cache MISS] Blueprint ${blueprintTypeId}, ME ${meLevel}, runs ${runs}, char ${characterId || 'none'}`);
+
+        const { recordMaterials } = require('./audit-recorder');
+        recordMaterials({ blueprintTypeId, runs, meLevel, marketSetId: marketSet?.id, marketSetName: marketSet?.name, facility: facility?.name, source: 'blueprint-calculator:calculateBlueprintMaterials' });
     }
 
     // Get blueprint product info
@@ -996,6 +999,16 @@ function calculateInventionCost(inventionData, materialPrices, probability, decr
 
     // Cost per run = cost per successful invention / number of runs on that blueprint
     const costPerRun = totalRuns > 0 ? costPerSuccess / totalRuns : costPerSuccess;
+
+    const { recordInvention } = require('./audit-recorder');
+    recordInvention({
+        blueprintTypeId: inventionData.t1BlueprintTypeID || inventionData.blueprintTypeID,
+        decryptorTypeId: decryptor?.typeID || null,
+        probability,
+        materialCost,
+        costPerRun,
+        source: 'blueprint-calculator:calculateInventionCost',
+    });
 
     return {
         materialCost,

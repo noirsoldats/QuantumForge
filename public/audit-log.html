@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:">
+  <title>Audit Log - Quantum Forge</title>
+  <link rel="stylesheet" href="shared/variables.css">
+  <link rel="stylesheet" href="shared/components.css">
+  <link rel="stylesheet" href="audit-log.css">
+</head>
+<body>
+  <div id="audit-app">
+    <header class="audit-header">
+      <div class="audit-header-title">
+        <h1>Audit Log</h1>
+        <span class="audit-status" id="audit-status">
+          <span class="pulse-dot" id="audit-status-dot"></span>
+          <span id="audit-status-text">Checking...</span>
+        </span>
+      </div>
+      <div class="audit-header-summary" id="audit-summary">
+        <div class="audit-summary-stat">
+          <span class="audit-summary-value" id="summary-total">0</span>
+          <span class="audit-summary-label">Records</span>
+        </div>
+        <div class="audit-summary-stat">
+          <span class="audit-summary-value" id="summary-pricing">0</span>
+          <span class="audit-summary-label">Pricing</span>
+        </div>
+        <div class="audit-summary-stat">
+          <span class="audit-summary-value" id="summary-materials">0</span>
+          <span class="audit-summary-label">Materials</span>
+        </div>
+        <div class="audit-summary-stat">
+          <span class="audit-summary-value" id="summary-invention">0</span>
+          <span class="audit-summary-label">Invention</span>
+        </div>
+      </div>
+      <div class="audit-header-actions">
+        <button class="btn btn-secondary btn-sm" id="open-settings-btn">Settings</button>
+        <button class="btn btn-secondary btn-sm" id="clear-records-btn">Clear</button>
+      </div>
+    </header>
+
+    <div class="audit-filters">
+      <input type="text" id="filter-search" class="audit-search-input" placeholder="Search by item, blueprint, or source...">
+      <select id="filter-type" class="setting-select">
+        <option value="">All Types</option>
+        <option value="pricing">Pricing</option>
+        <option value="materials">Materials</option>
+        <option value="invention">Invention</option>
+      </select>
+      <select id="filter-confidence" class="setting-select">
+        <option value="">All Confidence</option>
+        <option value="high">High</option>
+        <option value="medium">Medium</option>
+        <option value="low">Low</option>
+        <option value="none">None</option>
+      </select>
+    </div>
+
+    <div class="audit-body">
+      <div class="audit-list-pane">
+        <table class="audit-table" id="audit-table">
+          <thead>
+            <tr>
+              <th data-sort="timestamp">Time</th>
+              <th data-sort="type">Type</th>
+              <th data-sort="name">Item / Blueprint</th>
+              <th data-sort="method">Method</th>
+              <th data-sort="price">Price</th>
+              <th data-sort="confidence">Confidence</th>
+              <th data-sort="marketSetName">Market Set</th>
+            </tr>
+          </thead>
+          <tbody id="audit-table-body"></tbody>
+        </table>
+        <div id="audit-empty-state"></div>
+      </div>
+
+      <div class="audit-detail-pane" id="audit-detail-pane">
+        <div id="audit-detail-empty"></div>
+        <div id="audit-detail-content" style="display: none;"></div>
+      </div>
+    </div>
+  </div>
+
+  <script src="../src/renderer/audit-log-renderer.js"></script>
+</body>
+</html>

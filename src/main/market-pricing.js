@@ -244,6 +244,11 @@ async function calculateRealisticPrice(typeId, regionId, locationId, priceType, 
 
   const isBuy = priceType === 'buy';
 
+  if (settings && (settings.inputMaterials || settings.outputProducts) && !settings.priceMethod) {
+    const { logWarning } = require('./error-logger');
+    logWarning('calculateRealisticPrice', `Received a raw Market Set object as settings for typeId ${typeId} — caller must pass the unwrapped inputMaterials/outputProducts sub-object, not the full Market Set. Falling back to defaults.`);
+  }
+
   console.log(`[Price Calc] TypeID: ${typeId}, Region: ${regionId}, Location: ${locationId}, Type: ${priceType}, Qty: ${quantity}`);
 
   // Check for user override first

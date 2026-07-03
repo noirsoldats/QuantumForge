@@ -661,6 +661,7 @@ async function calculateReactionMaterials(reactionTypeId, runs = 1, characterId 
       try {
         const { calculateRealisticPrice } = require('./market-pricing');
         const { getInputLocation, getOutputLocation } = require('./blueprint-pricing');
+        const { recordPricing } = require('./audit-recorder');
         const marketSettings = marketSet;
         if (!marketSettings) {
           console.warn('[calculateReactionMaterials] marketSet not provided, skipping pricing');
@@ -690,6 +691,7 @@ async function calculateReactionMaterials(reactionTypeId, runs = 1, characterId 
             );
             const unitPrice = priceResult.price || 0;
             const totalPrice = unitPrice * quantity;
+            recordPricing({ typeId: typeIdNum, quantity, priceType: marketSettings.inputMaterials?.priceType || 'sell', marketSetId: marketSettings.id, marketSetName: marketSettings.name, source: 'reaction-calculator:calculateReactionMaterials' }, priceResult);
 
             materialPrices[typeId] = {
               quantity,
@@ -729,6 +731,7 @@ async function calculateReactionMaterials(reactionTypeId, runs = 1, characterId 
             marketSettings.outputProducts || {}
           );
           outputValue = (priceResult.price || 0) * (product.quantity * runs);
+          recordPricing({ typeId: product.typeID, quantity: product.quantity * runs, priceType: marketSettings.outputProducts?.priceType || 'sell', marketSetId: marketSettings.id, marketSetName: marketSettings.name, source: 'reaction-calculator:calculateReactionMaterials' }, priceResult);
         } catch (error) {
           console.error(`Error calculating price for product ${product.typeID}:`, error);
         }

@@ -1452,9 +1452,10 @@ async function displayInventionAnalysis(blueprintTypeId, runs, cachedInventionDa
           materialTypeId,
           regionId,
           locationId,
-          activeMarketSet?.inputMaterials?.priceType || 'vwap',
+          activeMarketSet?.inputMaterials?.priceType || 'sell',
           1,  // Get unit price
-          activeMarketSet?.id
+          activeMarketSet?.id,
+          'input'
         );
         console.log(`Price data received:`, priceData);
         // The price structure returns 'price' not 'unitPrice'
@@ -1476,9 +1477,10 @@ async function displayInventionAnalysis(blueprintTypeId, runs, cachedInventionDa
           decryptor.typeID,
           regionId,
           locationId,
-          activeMarketSet?.inputMaterials?.priceType || 'vwap',
+          activeMarketSet?.inputMaterials?.priceType || 'sell',
           1,  // Get unit price
-          activeMarketSet?.id
+          activeMarketSet?.id,
+          'input'
         );
         materialPrices[decryptor.typeID] = decryptorPriceData.price || decryptorPriceData.unitPrice || 0;
       } catch (error) {
@@ -1538,9 +1540,10 @@ async function displayInventionAnalysis(blueprintTypeId, runs, cachedInventionDa
                 materialTypeIdNum,
                 regionId,
                 locationId,
-                'immediate',
+                activeMarketSet?.inputMaterials?.priceType || 'sell',
                 1,
-                activeMarketSet?.id
+                activeMarketSet?.id,
+                'input'
               );
               materialPrices[materialTypeIdNum] = materialPriceData.price || materialPriceData.unitPrice || 0;
             } catch (error) {
@@ -1571,9 +1574,10 @@ async function displayInventionAnalysis(blueprintTypeId, runs, cachedInventionDa
           manufacturedProductTypeId,
           regionId,
           locationId,
-          activeMarketSet?.outputProducts?.priceType || 'vwap',
+          activeMarketSet?.outputProducts?.priceType || 'sell',
           1,
-          activeMarketSet?.id
+          activeMarketSet?.id,
+          'output'
         );
         productPrice = productPriceData.price || productPriceData.unitPrice || 0;
         console.log(`Manufactured product price: ${productPrice} ISK`);

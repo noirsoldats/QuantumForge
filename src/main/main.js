@@ -16,6 +16,7 @@ if (isPortable()) {
 }
 
 const { createSettingsWindow } = require('./settings-window');
+const { createAuditWindow } = require('./audit-window');
 const { initAutoUpdater, checkForUpdates } = require('./auto-updater');
 const { getWindowBounds, trackWindowState } = require('./window-state-manager');
 const { runStartupChecks } = require('./startup-manager');
@@ -211,7 +212,7 @@ const {
   getReprocessingMaterials,
 } = require('./sde-database');
 const { initializeMarketDatabase, getMarketDatabase } = require('./market-database');
-const { createAuthErrorWindow, setupAuthErrorWindowHandlers } = require('./auth-error-window');
+const { createAuthErrorWindow, setupAuthErrorWindowHandlers, broadcastAuthError, buildAuthErrorInfo } = require('./auth-error-window');
 const { initializeESIStatusDatabase } = require('./esi-status-tracker');
 const { fetchMarketOrders, fetchMarketHistory, fetchMarketData, getLastMarketFetchTime, getLastHistoryFetchTime, getHistoryDataStatus, manualRefreshMarketData, manualRefreshHistoryData, getCachedMarketHistory } = require('./esi-market');
 const { parseLootText, getTypeSpecificSkillId, calculateReprocessingYield, calculateReprocessingValue } = require('./reprocessing-calculator');
@@ -451,6 +452,9 @@ app.whenReady().then(async () => {
     const settings = loadSettings();
     const isFirstLaunch = !settings.general.firstLaunchCompleted;
 
+    const { setAuditEnabled } = require('./audit-recorder');
+    setAuditEnabled(settings.general.auditModeEnabled);
+
     // If config file exists but doesn't have firstLaunchCompleted flag, this is an existing installation
     // Skip wizard and mark as completed
     if (configFileExists && isFirstLaunch) {
@@ -544,45 +548,31 @@ async function startNormalApplication() {
   });
 }
 
-/**
- * Open the dedicated auth-error pop-out window for the given error.
- * Only one such window can exist at a time; duplicate calls bring it to front.
- */
-function broadcastAuthError(errorInfo) {
-  console.warn('[Auth] Opening auth error window:', errorInfo.type, 'for character', errorInfo.characterId);
-  createAuthErrorWindow(errorInfo);
-}
-
-/**
- * Build an auth error info object from a tagged ESI error.
- * Computes the missing scope list for ESI_SCOPE_ERROR by comparing
- * the character's granted scopes against the required ESI_CONFIG.scopes.
- */
-function buildAuthErrorInfo(error, characterId) {
-  const character = getCharacter(characterId);
-  const characterName = character ? character.characterName : `Character ${characterId}`;
-
-  if (error.code === 'ESI_TOKEN_REFRESH_FAILED') {
-    return { type: 'token_refresh_failed', characterId, characterName };
-  }
-
-  // ESI_SCOPE_ERROR — compute missing scopes from local comparison
-  const { ESI_CONFIG } = require('./esi-auth');
-  const granted = character ? (character.scopes || []) : [];
-  const missingScopes = ESI_CONFIG.scopes.filter(s => !granted.includes(s));
-  return {
-    type: 'missing_scopes',
-    characterId,
-    characterName,
-    missingScopes: missingScopes.length > 0 ? missingScopes : ['Unknown scope — re-authentication required'],
-  };
-}
-
 // Setup all IPC handlers
 function setupIPCHandlers() {
   // Handle IPC for opening settings
   ipcMain.on('open-settings', () => {
     createSettingsWindow();
+  });
+
+  // Audit Mode
+  ipcMain.handle('audit:openWindow', () => {
+    createAuditWindow();
+  });
+
+  ipcMain.handle('audit:getRecords', (event, filters) => {
+    const { getRecords } = require('./audit-recorder');
+    return getRecords(filters);
+  });
+
+  ipcMain.handle('audit:clearRecords', () => {
+    const { clearRecords } = require('./audit-recorder');
+    clearRecords();
+  });
+
+  ipcMain.handle('audit:getSummary', () => {
+    const { getSummary } = require('./audit-recorder');
+    return getSummary();
   });
 
   // Handle IPC for settings operations
@@ -595,7 +585,12 @@ function setupIPCHandlers() {
   });
 
   ipcMain.handle('settings:update', (event, category, updates) => {
-    return updateSettings(category, updates);
+    const result = updateSettings(category, updates);
+    if (category === 'general' && Object.prototype.hasOwnProperty.call(updates, 'auditModeEnabled')) {
+      const { setAuditEnabled } = require('./audit-recorder');
+      setAuditEnabled(updates.auditModeEnabled);
+    }
+    return result;
   });
 
   ipcMain.handle('settings:get', (event, category, key) => {
@@ -1634,17 +1629,23 @@ function setupIPCHandlers() {
   ipcMain.handle('market:setMarketSetForTool', (event, toolKey, id) => setToolMarketSetId(toolKey, id));
 
   ipcMain.handle('market:getRegionDashboard', async () => {
-    const { getUniqueRegions } = require('./blueprint-pricing');
-    const { getLastMarketFetchTimeForRegion } = require('./esi-market');
+    const { getUniqueRegions, getInputLocation, getOutputLocation } = require('./blueprint-pricing');
+    const { getLastMarketFetchTimeForRegion, getLastStructureMarketFetchTime } = require('./esi-market');
     const { getAllRegions } = require('./sde-database');
     const sets = getMarketSets();
-    const regionMap = new Map(); // regionId → { regionId, setNames: [] }
+    const regionMap = new Map(); // regionId → { regionId, setNames: [], structures: Map<structureId, {structureId, structureName}> }
     for (const set of sets) {
       const regions = getUniqueRegions(set);
       for (const regionId of regions) {
-        if (!regionMap.has(regionId)) regionMap.set(regionId, { regionId, setNames: [] });
+        if (!regionMap.has(regionId)) regionMap.set(regionId, { regionId, setNames: [], structures: new Map() });
         regionMap.get(regionId).setNames.push(set.name);
       }
+      [getInputLocation(set), getOutputLocation(set)].forEach(loc => {
+        if (loc.locationType === 'private_structure' && loc.structureId && loc.regionId) {
+          if (!regionMap.has(loc.regionId)) regionMap.set(loc.regionId, { regionId: loc.regionId, setNames: [], structures: new Map() });
+          regionMap.get(loc.regionId).structures.set(loc.structureId, { structureId: loc.structureId, structureName: loc.structureName });
+        }
+      });
     }
     // Build regionId → regionName lookup from SDE
     const regionNameMap = new Map();
@@ -1658,14 +1659,24 @@ function setupIPCHandlers() {
     for (const [regionId, info] of regionMap) {
       const lastFetch = getLastMarketFetchTimeForRegion(regionId);
       const regionName = regionNameMap.get(regionId) || `Region ${regionId}`;
-      dashboard.push({ regionId, regionName, setNames: info.setNames, lastFetch });
+      const structures = [...info.structures.values()].map(s => ({
+        ...s,
+        lastFetch: getLastStructureMarketFetchTime(s.structureId),
+      }));
+      dashboard.push({ regionId, regionName, setNames: info.setNames, lastFetch, structures });
     }
     return dashboard;
   });
 
   ipcMain.handle('market:updateRegion', async (event, regionId) => {
-    const { manualRefreshMarketData } = require('./esi-market');
-    return await manualRefreshMarketData(regionId);
+    const { manualRefreshMarketData, refreshStructuresInRegion } = require('./esi-market');
+    const marketResult = await manualRefreshMarketData(regionId);
+    const structureResult = await refreshStructuresInRegion(regionId);
+    return {
+      ...marketResult,
+      structureErrors: structureResult.errors,
+      structuresRefreshed: structureResult.refreshed,
+    };
   });
 
   ipcMain.handle('market:fetchOrders', async (event, regionId, typeId, locationFilter) => {
@@ -1724,11 +1735,15 @@ function setupIPCHandlers() {
     }
   });
 
-  ipcMain.handle('market:calculatePrice', async (event, typeId, regionId, locationId, priceType, quantity, marketSetId) => {
+  ipcMain.handle('market:calculatePrice', async (event, typeId, regionId, locationId, priceType, quantity, marketSetId, settingsScope = 'input') => {
     try {
       const set = marketSetId ? getMarketSetById(marketSetId) : getDefaultMarketSet();
       if (!set) throw new Error(`Market Set not found: ${marketSetId}`);
-      return await calculateRealisticPrice(typeId, regionId, locationId, priceType, quantity, set);
+      const settings = settingsScope === 'output' ? set.outputProducts : set.inputMaterials;
+      const priceResult = await calculateRealisticPrice(typeId, regionId, locationId, priceType, quantity, settings);
+      const { recordPricing } = require('./audit-recorder');
+      recordPricing({ typeId, quantity, priceType, marketSetId: set.id, marketSetName: set.name, source: 'market:calculatePrice' }, priceResult);
+      return priceResult;
     } catch (error) {
       console.error('Error calculating realistic price:', error);
       return { price: 0, confidence: 'none', warning: 'Error calculating price' };
@@ -1783,8 +1798,8 @@ function setupIPCHandlers() {
 
   // Unified market data update - refreshes all configured regions, adjusted prices, and cost indices
   ipcMain.handle('market:updateAllMarketData', async (event) => {
-    const { getUniqueRegions, getInputLocation, getOutputLocation } = require('./blueprint-pricing');
-    const { refreshMultipleRegions, manualRefreshAdjustedPrices, fetchStructureMarketOrders } = require('./esi-market');
+    const { getUniqueRegions } = require('./blueprint-pricing');
+    const { refreshMultipleRegions, manualRefreshAdjustedPrices, refreshStructuresInRegion } = require('./esi-market');
 
     const results = {
       marketData: null,
@@ -1795,17 +1810,11 @@ function setupIPCHandlers() {
     };
 
     try {
-      // Step 1: Collect all unique regions and private structures from ALL market sets
+      // Step 1: Collect all unique regions from ALL market sets
       const allSets = getMarketSets();
       const allRegionIds = new Set();
-      const allStructureLocs = [];
       for (const set of allSets) {
         getUniqueRegions(set).forEach(id => allRegionIds.add(id));
-        [getInputLocation(set), getOutputLocation(set)].forEach(loc => {
-          if (loc.locationType === 'private_structure' && loc.structureId && loc.characterId) {
-            allStructureLocs.push(loc);
-          }
-        });
       }
       const regionIds = [...allRegionIds];
       console.log(`[UpdateAllMarketData] Refreshing ${regionIds.length} region(s) across all Market Sets:`, regionIds);
@@ -1817,22 +1826,9 @@ function setupIPCHandlers() {
       }
 
       // Step 3: Refresh private structure orders AFTER public region refresh
-      const uniqueStructures = [...new Map(allStructureLocs.map(l => [l.structureId, l])).values()];
-      for (const loc of uniqueStructures) {
-        let character = getCharacter(loc.characterId);
-        if (character) {
-          if (isTokenExpired(character.expiresAt)) {
-            const newTokens = await refreshAccessToken(character.refreshToken);
-            updateCharacterTokens(loc.characterId, newTokens);
-            character = getCharacter(loc.characterId);
-          }
-          try {
-            await fetchStructureMarketOrders(loc.structureId, loc.regionId, character.accessToken, true);
-          } catch (err) {
-            console.error(`[UpdateAllMarketData] Failed to refresh structure ${loc.structureId}:`, err);
-            results.errors.push(`Structure market refresh failed: ${err.message}`);
-          }
-        }
+      const structureResult = await refreshStructuresInRegion(null, allSets);
+      for (const err of structureResult.errors) {
+        results.errors.push(`Structure market refresh failed: ${err.message}`);
       }
 
       // Step 4: Refresh adjusted prices
@@ -2012,6 +2008,11 @@ function setupIPCHandlers() {
         itemReprocessingData,
       } = params;
 
+      // Intentionally bypasses the active Market Set's configured priceMethod: loot
+      // appraisal always wants live "what could I get right now" sell/buy prices,
+      // not the user's manufacturing pricing method. Do not "fix" this to read from
+      // a Market Set — it's a deliberate exception, not the settings-shape bug
+      // fixed elsewhere in this file (see market:calculatePrice).
       const priceSettings = { priceMethod: 'immediate' };
 
       // Deduplicate all typeIds needed (items + their reprocessing materials)

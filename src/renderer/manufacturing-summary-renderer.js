@@ -1124,7 +1124,8 @@ async function calculateSpeculativeInventionData(blueprint, facility, svrPeriod,
             locationId,
             activeMarketSet?.inputMaterials?.priceType || 'sell',
             1,
-            activeMarketSet?.id
+            activeMarketSet?.id,
+            'input'
           );
           inventionMaterialPrices[typeId] = priceData.price;
         } catch (error) {

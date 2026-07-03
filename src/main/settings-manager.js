@@ -23,6 +23,7 @@ const defaultSettings = {
     wizardVersion: null,
     wizardCompletedAt: null,
     skippedUpdateVersion: null,  // Version string that user chose to skip
+    auditModeEnabled: false,
   },
   accounts: {
     characters: [],

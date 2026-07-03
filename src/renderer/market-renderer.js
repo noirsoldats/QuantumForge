@@ -1093,103 +1093,6 @@ async function showErrorWithRetry(message, retryCallback) {
   });
 }
 
-// Handle manual market data refresh
-async function handleMarketDataRefresh(isRetry = false) {
-  const refreshBtn = document.getElementById('refresh-market-data-btn');
-  if (!refreshBtn) return; // button was removed in favour of Region Dashboard
-  refreshBtn.disabled = true;
-  refreshBtn.innerHTML = `
-    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-      <path d="M21 2v6h-6M3 12a9 9 0 0 1 15-6.7L21 8M3 22v-6h6M21 12a9 9 0 0 1-15 6.7L3 16"/>
-    </svg>
-    ${isRetry ? 'Retrying...' : 'Updating...'}
-  `;
-
-  // Show progress bar
-  showProgressBar();
-
-  // Setup progress listener
-  window.electronAPI.market.onFetchProgress((progress) => {
-    updateProgressBar(progress.currentPage, progress.totalPages, progress.progress);
-  });
-
-  try {
-    const progressLabel = document.getElementById('progress-label');
-    if (progressLabel) progressLabel.textContent = 'Updating all market data...';
-
-    // Use unified market data update (handles all configured regions, adjusted prices, and cost indices)
-    const result = await window.electronAPI.market.updateAllMarketData();
-
-    // Remove progress listener
-    window.electronAPI.market.removeFetchProgressListener();
-
-    if (result.success) {
-      // Show complete state
-      if (progressLabel) progressLabel.textContent = 'Update complete!';
-      updateProgressBar(3, 3, 100);
-
-      refreshBtn.innerHTML = `
-        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <polyline points="20 6 9 17 4 12"></polyline>
-        </svg>
-        Updated!
-      `;
-
-      await updateLastFetchTime();
-
-      setTimeout(() => {
-        hideProgressBar();
-        refreshBtn.disabled = false;
-        refreshBtn.innerHTML = `
-          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <polyline points="23 4 23 10 17 10"></polyline>
-            <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
-          </svg>
-          Update All Market Data
-        `;
-      }, 2000);
-    } else {
-      hideProgressBar();
-
-      // Check if it's a network/timeout error and offer retry
-      const errorMsg = result.message || 'Failed to update market data';
-      if (errorMsg.includes('fetch failed') || errorMsg.includes('timeout') || errorMsg.includes('Failed after')) {
-        await showErrorWithRetry(errorMsg, () => handleMarketDataRefresh(true));
-      } else {
-        alert(errorMsg);
-      }
-
-      refreshBtn.disabled = false;
-      refreshBtn.innerHTML = `
-        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <polyline points="23 4 23 10 17 10"></polyline>
-          <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
-        </svg>
-        Update All Market Data
-      `;
-    }
-  } catch (error) {
-    console.error('Error refreshing market data:', error);
-    hideProgressBar();
-    window.electronAPI.market.removeFetchProgressListener();
-
-    // Offer retry for network-related errors
-    await showErrorWithRetry(
-      error.message || 'An unexpected error occurred while updating market data.',
-      () => handleMarketDataRefresh(true)
-    );
-
-    refreshBtn.disabled = false;
-    refreshBtn.innerHTML = `
-      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-        <polyline points="23 4 23 10 17 10"></polyline>
-        <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
-      </svg>
-      Update All Market Data
-    `;
-  }
-}
-
 // Handle manual history data refresh
 async function handleHistoryDataRefresh(isRetry = false) {
   const refreshBtn = document.getElementById('refresh-history-data-btn');
@@ -1586,6 +1489,18 @@ function renderRegionRow(row) {
   const ageText = formatAge(row.lastFetch);
   const pills = (row.setNames || []).map(name => `<span class="region-set-pill">${escapeHtml(name)}</span>`).join('');
 
+  const structureRows = (row.structures || []).map(structure => {
+    const sAgeClass = getRegionAgeClass(structure.lastFetch);
+    const sAgeText = formatAge(structure.lastFetch);
+    return `
+      <div class="structure-row" id="structure-row-${structure.structureId}">
+        <span class="region-status-dot ${sAgeClass}"></span>
+        <span class="structure-name">↳ ${escapeHtml(structure.structureName || `Structure ${structure.structureId}`)}</span>
+        <span class="region-age" id="structure-age-${structure.structureId}">${sAgeText}</span>
+      </div>
+    `;
+  }).join('');
+
   return `
     <div class="region-row" id="region-row-${row.regionId}">
       <span class="region-status-dot ${ageClass}"></span>
@@ -1595,6 +1510,7 @@ function renderRegionRow(row) {
       <span class="region-update-status" id="region-status-${row.regionId}"></span>
       <button class="secondary-button small-btn region-update-btn" data-region-id="${row.regionId}" id="region-btn-${row.regionId}">Update</button>
     </div>
+    ${structureRows ? `<div class="region-structures">${structureRows}</div>` : ''}
   `;
 }
 
@@ -1646,7 +1562,24 @@ async function processRegionUpdateQueue() {
     const ageEl = document.getElementById(`region-age-${regionId}`);
     if (dot) { dot.className = `region-status-dot ${ageClass}`; }
     if (ageEl) ageEl.textContent = ageText;
-    if (statusEl) statusEl.textContent = result?.rateLimited ? 'Rate limited' : '';
+
+    // Optimistically mark any successfully-refreshed structure sub-rows as fresh too
+    (result?.structuresRefreshed || []).forEach(structureId => {
+      const sDot = document.querySelector(`#structure-row-${structureId} .region-status-dot`);
+      const sAgeEl = document.getElementById(`structure-age-${structureId}`);
+      if (sDot) sDot.className = 'region-status-dot fresh';
+      if (sAgeEl) sAgeEl.textContent = 'Just updated';
+    });
+
+    if (statusEl) {
+      if (result?.structureErrors?.length) {
+        statusEl.textContent = `Structure error (${result.structureErrors.length})`;
+        statusEl.title = result.structureErrors.map(e => `${e.structureName || e.structureId}: ${e.message}`).join('\n');
+      } else {
+        statusEl.textContent = result?.rateLimited ? 'Rate limited' : '';
+        statusEl.removeAttribute('title');
+      }
+    }
   } catch (err) {
     console.error(`[Region Dashboard] Error updating region ${regionId}:`, err);
     if (statusEl) statusEl.textContent = 'Error';

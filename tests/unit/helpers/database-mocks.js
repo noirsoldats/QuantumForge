@@ -5,6 +5,7 @@
  * database-dependent code without requiring actual SQLite connections
  */
 
+const path = require('path');
 const blueprintFixtures = require('../fixtures/blueprints');
 
 /**
@@ -593,11 +594,25 @@ function populateDatabase(db, fixtures) {
   }
 }
 
+/**
+ * Load a committed, read-only fixture SQLite database from tests/fixtures/db/.
+ * Used for cross-module tests that need multiple modules to query the same
+ * real, on-disk data (see tests/fixtures/db/README.md).
+ * @param {string} fixtureName - filename without extension, e.g. 'pricing-consistency.sde'
+ * @returns {Object} better-sqlite3 Database instance, opened readonly
+ */
+function loadFixtureDatabase(fixtureName) {
+  const Database = require('better-sqlite3');
+  const dbPath = path.join(__dirname, '../../fixtures/db', `${fixtureName}.db`);
+  return new Database(dbPath, { readonly: true });
+}
+
 module.exports = {
   createMockDatabase,
   createBlueprintDatabase,
   createMarketDatabase,
   createInMemoryDatabase,
   populateDatabase,
-  getDefaultResponse
+  getDefaultResponse,
+  loadFixtureDatabase
 };

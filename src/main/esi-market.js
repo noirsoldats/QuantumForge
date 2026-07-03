@@ -656,6 +656,18 @@ function getLastMarketFetchTimeForRegion(regionId) {
 }
 
 /**
+ * Get the last fetch time for a specific private structure's market data
+ * @param {number} structureId - Structure ID
+ * @returns {number|null} Timestamp of last fetch, or null if never fetched
+ */
+function getLastStructureMarketFetchTime(structureId) {
+  const db = getMarketDatabase();
+  const cacheKey = `market_orders_structure_${structureId}`;
+  const result = db.prepare('SELECT last_fetch FROM fetch_metadata WHERE key = ?').get(cacheKey);
+  return result?.last_fetch || null;
+}
+
+/**
  * Get the last history fetch time
  * @returns {number|null} Timestamp of last history fetch, or null if never fetched
  */
@@ -1173,6 +1185,64 @@ async function fetchStructureMarketOrders(structureId, regionId, accessToken, fo
   }
 }
 
+/**
+ * Refresh private-structure market orders for every Market Set location that
+ * points at a private structure, scoped to a single region (or all regions
+ * if regionId is null). Never throws — per-structure failures (revoked
+ * token, missing esi-markets.structure_markets.v1 scope, etc.) are caught
+ * and collected so the caller can report them without failing the whole
+ * refresh operation.
+ * @param {number|null} regionId - Region to scope the refresh to, or null for all regions
+ * @param {Array} marketSets - Optional pre-fetched Market Sets (avoids a redundant DB read)
+ * @returns {Promise<{refreshed: number[], errors: Array<{structureId: number, structureName: string, message: string}>}>}
+ */
+async function refreshStructuresInRegion(regionId, marketSets = null) {
+  const { getInputLocation, getOutputLocation } = require('./blueprint-pricing');
+  const { getMarketSets, getCharacter, updateCharacterTokens } = require('./settings-manager');
+  const { isTokenExpired, refreshAccessToken } = require('./esi-auth');
+
+  const sets = marketSets || getMarketSets();
+  const structureLocs = [];
+  for (const set of sets) {
+    [getInputLocation(set), getOutputLocation(set)].forEach(loc => {
+      if (
+        loc.locationType === 'private_structure' &&
+        loc.structureId &&
+        loc.characterId &&
+        (regionId === null || loc.regionId === regionId)
+      ) {
+        structureLocs.push(loc);
+      }
+    });
+  }
+  const uniqueStructures = [...new Map(structureLocs.map(l => [l.structureId, l])).values()];
+
+  const refreshed = [];
+  const errors = [];
+
+  for (const loc of uniqueStructures) {
+    try {
+      let character = getCharacter(loc.characterId);
+      if (!character) {
+        errors.push({ structureId: loc.structureId, structureName: loc.structureName, message: 'Character not found' });
+        continue;
+      }
+      if (isTokenExpired(character.expiresAt)) {
+        const newTokens = await refreshAccessToken(character.refreshToken);
+        updateCharacterTokens(loc.characterId, newTokens);
+        character = getCharacter(loc.characterId);
+      }
+      await fetchStructureMarketOrders(loc.structureId, loc.regionId, character.accessToken, true);
+      refreshed.push(loc.structureId);
+    } catch (err) {
+      console.error(`[Structure Market] Failed to refresh structure ${loc.structureId}:`, err);
+      errors.push({ structureId: loc.structureId, structureName: loc.structureName, message: err.message });
+    }
+  }
+
+  return { refreshed, errors };
+}
+
 module.exports = {
   fetchMarketOrders,
   fetchMarketHistory,
@@ -1181,6 +1251,7 @@ module.exports = {
   getCachedMarketHistory,
   getLastMarketFetchTime,
   getLastMarketFetchTimeForRegion,
+  getLastStructureMarketFetchTime,
   getLastHistoryFetchTime,
   getHistoryDataStatus,
   manualRefreshMarketData,
@@ -1190,4 +1261,5 @@ module.exports = {
   refreshMultipleRegions,
   searchStructures,
   fetchStructureMarketOrders,
+  refreshStructuresInRegion,
 };

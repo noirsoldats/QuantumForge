@@ -15,6 +15,19 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getPath: () => ipcRenderer.invoke('settings:getPath'),
   },
 
+  // Audit Mode API
+  audit: {
+    openWindow: () => ipcRenderer.invoke('audit:openWindow'),
+    getRecords: (filters) => ipcRenderer.invoke('audit:getRecords', filters),
+    clearRecords: () => ipcRenderer.invoke('audit:clearRecords'),
+    getSummary: () => ipcRenderer.invoke('audit:getSummary'),
+    onRecordAdded: (callback) => {
+      const listener = (event, record) => callback(record);
+      ipcRenderer.on('audit:recordAdded', listener);
+      return () => ipcRenderer.removeListener('audit:recordAdded', listener);
+    },
+  },
+
   // ESI API
   esi: {
     authenticate: () => ipcRenderer.invoke('esi:authenticate'),
@@ -226,8 +239,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     fetchFuzzwork: (typeId, regionId) => ipcRenderer.invoke('market:fetchFuzzwork', typeId, regionId),
     fetchJitaPrice: (typeId) => ipcRenderer.invoke('market:fetchJitaPrice', typeId),
     fetchBulkPrices: (typeIds, regionId) => ipcRenderer.invoke('market:fetchBulkPrices', typeIds, regionId),
-    calculatePrice: (typeId, regionId, locationId, priceType, quantity, marketSetId) =>
-      ipcRenderer.invoke('market:calculatePrice', typeId, regionId, locationId, priceType, quantity, marketSetId),
+    calculatePrice: (typeId, regionId, locationId, priceType, quantity, marketSetId, settingsScope) =>
+      ipcRenderer.invoke('market:calculatePrice', typeId, regionId, locationId, priceType, quantity, marketSetId, settingsScope),
     getPriceOverride: (typeId) => ipcRenderer.invoke('market:getPriceOverride', typeId),
     setPriceOverride: (typeId, price, notes) => ipcRenderer.invoke('market:setPriceOverride', typeId, price, notes),
     removePriceOverride: (typeId) => ipcRenderer.invoke('market:removePriceOverride', typeId),

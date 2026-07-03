@@ -1,5 +1,6 @@
 const { calculateRealisticPrice, getPriceOverride } = require('./market-pricing');
 const { getCostIndices } = require('./esi-cost-indices');
+const { recordPricing } = require('./audit-recorder');
 
 /**
  * Manufacturing activity type for cost indices
@@ -112,6 +113,7 @@ async function calculateInputMaterialsCost(materials, marketSettings) {
           inputSettings
         );
         price = priceResult.price || 0;
+        recordPricing({ typeId: typeIdNum, quantity, priceType: inputSettings.priceType || 'sell', marketSetId: marketSettings.id, marketSetName: marketSettings.name, source: 'blueprint-pricing:calculateInputMaterialsCost' }, priceResult);
       }
 
       // Apply price modifier
@@ -183,6 +185,7 @@ async function calculateOutputProductValue(product, marketSettings) {
         outputSettings
       );
       price = priceResult.price || 0;
+      recordPricing({ typeId: product.typeID, quantity: product.quantity, priceType: outputSettings.priceType || 'sell', marketSetId: marketSettings.id, marketSetName: marketSettings.name, source: 'blueprint-pricing:calculateOutputProductValue' }, priceResult);
     }
 
     // Apply price modifier

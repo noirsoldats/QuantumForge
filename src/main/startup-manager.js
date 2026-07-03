@@ -739,6 +739,7 @@ async function runCharacterDataRefresh(splashWindow) {
     const { fetchCharacterSkills } = require('./esi-skills');
     const { fetchCharacterBlueprints } = require('./esi-blueprints');
     const { fetchCharacterAssets, fetchCorporationAssets, saveAssets, getAssetsCacheStatus } = require('./esi-assets');
+    const { broadcastAuthError, buildAuthErrorInfo } = require('./auth-error-window');
 
     // Check if auto-update is enabled (handle both old boolean and new object format)
     const autoUpdateSetting = getSetting('general', 'autoUpdateCharacterData');
@@ -917,8 +918,18 @@ async function runCharacterDataRefresh(splashWindow) {
                                error.message?.includes('timeout') ||
                                error.message?.includes('ETIMEDOUT') ||
                                error.message?.includes('fetch failed');
+        const isAuthError = error.code === 'ESI_TOKEN_REFRESH_FAILED' || error.code === 'ESI_SCOPE_ERROR';
 
-        if (isTimeoutError) {
+        if (isAuthError) {
+          console.warn(`[Startup] Auth error for ${charName} (${error.code}), showing re-auth prompt`);
+          broadcastAuthError(buildAuthErrorInfo(error, character.characterId));
+          splashWindow.webContents.send('startup:warning', {
+            task: 'characterData',
+            character: charName,
+            message: 'Authentication expired - re-authenticate from the popup window to restore access.',
+          });
+          failed++;
+        } else if (isTimeoutError) {
           console.warn(`[Startup] Network timeout for ${charName}, skipping to continue startup`);
           splashWindow.webContents.send('startup:warning', {
             task: 'characterData',
@@ -931,7 +942,7 @@ async function runCharacterDataRefresh(splashWindow) {
           failed++;
         }
 
-        // Continue with other characters even if one fails
+        // Continue with other characters even if one fails — do NOT await user re-auth here
       }
     }
 
@@ -962,4 +973,5 @@ async function runCharacterDataRefresh(splashWindow) {
 
 module.exports = {
   runStartupChecks,
+  runCharacterDataRefresh,
 };
