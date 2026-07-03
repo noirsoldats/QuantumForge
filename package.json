@@ -95,6 +95,7 @@
     },
     "mac": {
       "category": "public.app-category.productivity",
+      "artifactName": "Quantum-Forge-${version}-${arch}-mac.${ext}",
       "target": [
         {
           "target": "dmg",
@@ -118,6 +119,7 @@
       "entitlementsInherit": "build/entitlements.mac.plist"
     },
     "dmg": {
+      "artifactName": "Quantum-Forge-${version}-${arch}.${ext}",
       "contents": [
         {
           "x": 130,
@@ -155,6 +157,7 @@
       "icon": "build/icon.ico"
     },
     "nsis": {
+      "artifactName": "Quantum-Forge-Setup-${version}.${ext}",
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
@@ -166,6 +169,12 @@
       "deleteAppDataOnUninstall": false,
       "allowElevation": true,
       "perMachine": false
+    },
+    "portable": {
+      "artifactName": "Quantum-Forge-${version}.${ext}"
+    },
+    "appImage": {
+      "artifactName": "Quantum-Forge-${version}.${ext}"
     },
     "linux": {
       "target": [
