@@ -9,13 +9,14 @@ permissions:
   contents: write
 
 jobs:
-  release:
-    name: Release (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-
-    strategy:
-      matrix:
-        os: [macos-latest, ubuntu-latest, windows-latest]
+  # Each platform builds and uploads its artifacts to this CI run only
+  # (--publish never). Nothing is published to the public GitHub Release
+  # until the publish-release job below, which only runs if every one of
+  # these three jobs succeeds — so a build failure on any one platform can
+  # never result in a partial/broken public release.
+  build-macos:
+    name: Build (macOS)
+    runs-on: macos-latest
 
     steps:
       - name: Checkout code
@@ -30,79 +31,123 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Release (macOS)
-        if: matrix.os == 'macos-latest'
-        run: npm run release:mac
+      - name: Build (macOS)
+        run: npx electron-builder --mac --publish never
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # For code signing (optional - comment out if not using)
+          # For code signing (optional - uncomment if configured)
           # CSC_LINK: ${{ secrets.MAC_CERTS }}
           # CSC_KEY_PASSWORD: ${{ secrets.MAC_CERTS_PASSWORD }}
           # Disable code signing if not configured
           CSC_IDENTITY_AUTO_DISCOVERY: false
 
-      - name: Release (Linux)
-        if: matrix.os == 'ubuntu-latest'
-        run: npm run release:linux
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Release (Windows)
-        if: matrix.os == 'windows-latest'
-        run: npm run release:win
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # For code signing (optional - comment out if not using)
-          # CSC_LINK: ${{ secrets.WIN_CERTS }}
-          # CSC_KEY_PASSWORD: ${{ secrets.WIN_CERTS_PASSWORD }}
-
-  generate-checksums:
-    name: Generate Checksums
-    needs: release
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Download all release artifacts
-        run: |
-          mkdir -p artifacts
-          gh release download ${{ github.ref_name }} --dir artifacts --repo ${{ github.repository }}
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Generate SHA256 checksums
-        run: |
-          cd artifacts
-          # Remove files we don't want to checksum
-          rm -f *.yml *.blockmap SHA256SUMS.txt 2>/dev/null || true
-          # Generate checksums for remaining release files
-          if ls *.dmg *.exe *.AppImage *.deb *.zip 2>/dev/null; then
-            sha256sum *.dmg *.exe *.AppImage *.deb *.zip 2>/dev/null | sort -k2 > SHA256SUMS.txt
-            echo "Generated checksums:"
-            cat SHA256SUMS.txt
-          else
-            echo "No release artifacts found to checksum"
-            exit 1
-          fi
-
-      - name: Upload checksums to release
-        uses: softprops/action-gh-release@v3.0.0
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v7.0.1
         with:
-          files: artifacts/SHA256SUMS.txt
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          name: macos-build
+          path: |
+            dist/*.dmg
+            dist/*.dmg.blockmap
+            dist/*.zip
+            dist/*.zip.blockmap
+            dist/latest-mac.yml
+          retention-days: 7
+          if-no-files-found: error
 
-  update-release-notes:
-    name: Update Release Notes
-    needs: [release, generate-checksums]
+  build-linux:
+    name: Build (Linux)
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v6.0.2
 
-      - name: Update Release Body
+      - name: Setup Node.js
+        uses: actions/setup-node@v6.3.0
+        with:
+          node-version: '24'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build (Linux)
+        run: npx electron-builder --linux --publish never
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: linux-build
+          path: |
+            dist/*.AppImage
+            dist/*.deb
+            dist/latest-linux.yml
+          retention-days: 7
+          if-no-files-found: error
+
+  build-windows:
+    name: Build (Windows)
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6.0.2
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6.3.0
+        with:
+          node-version: '24'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build (Windows)
+        run: npx electron-builder --win --publish never
+        env:
+          # For code signing (optional - uncomment if configured)
+          # CSC_LINK: ${{ secrets.WIN_CERTS }}
+          # CSC_KEY_PASSWORD: ${{ secrets.WIN_CERTS_PASSWORD }}
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: windows-build
+          path: |
+            dist/*.exe
+            dist/latest.yml
+          retention-days: 7
+          if-no-files-found: error
+
+  # Only runs if build-macos, build-linux, AND build-windows all succeeded
+  # (the default GitHub Actions behavior for `needs` — any upstream failure
+  # skips this job, so nothing ever gets published from a partial build set).
+  publish-release:
+    name: Publish Release
+    needs: [build-macos, build-linux, build-windows]
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6.0.2
+
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v8.0.1
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Generate SHA256 checksums
+        run: |
+          cd artifacts
+          ls -la
+          sha256sum *.dmg *.exe *.AppImage *.deb *.zip 2>/dev/null | sort -k2 > SHA256SUMS.txt
+          echo "Generated checksums:"
+          cat SHA256SUMS.txt
+
+      - name: Create GitHub Release
         uses: softprops/action-gh-release@v3.0.0
         with:
+          files: artifacts/*
           body: |
             ## What Should I Download?
 

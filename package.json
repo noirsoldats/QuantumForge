@@ -62,10 +62,10 @@
   },
   "type": "commonjs",
   "devDependencies": {
-    "@electron/rebuild": "^4.0.3",
+    "@electron/rebuild": "^4.1.0",
     "@types/jest": "^30.0.0",
     "electron": "^41.2.1",
-    "electron-builder": "^26.8.1",
+    "electron-builder": "^26.15.3",
     "jest": "^30.3.0"
   },
   "build": {
