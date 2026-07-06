@@ -61,6 +61,12 @@
           </div>
         </div>
 
+        <!-- Liquidity threshold -->
+        <div class="control-group svr-threshold-group">
+          <label for="min-svr">Minimum SVR <span class="optional-label">(sell markets below this are excluded)</span></label>
+          <input type="number" id="min-svr" min="0" step="1" value="0" placeholder="0 = no minimum">
+        </div>
+
         <!-- Market data age warning -->
         <div id="market-data-warning" class="market-data-warning hidden">
           <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">

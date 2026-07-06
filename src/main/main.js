@@ -2006,6 +2006,7 @@ function setupIPCHandlers() {
         market2,
         reprocessingConfig,
         itemReprocessingData,
+        minSvr = 0,
       } = params;
 
       // Intentionally bypasses the active Market Set's configured priceMethod: loot
@@ -2075,16 +2076,29 @@ function setupIPCHandlers() {
 
         const reprValue = calculateReprocessingValue(1, itemYieldRate, reprData, materialPrices);
 
-        // SVR: 7-day average daily volume from cached market history
-        let svr = null;
+        // SVR: 7-day average daily volume from cached market history, per market
+        let m1Svr = null;
         try {
           const history = getCachedMarketHistory(market1.regionId, typeId, 7);
           if (history && history.length > 0) {
             const totalVolume = history.reduce((sum, day) => sum + (day.volume || 0), 0);
-            svr = Math.round(totalVolume / history.length);
+            m1Svr = Math.round(totalVolume / history.length);
           }
         } catch (e) {
           // SVR is optional — no-op on error
+        }
+
+        let m2Svr = null;
+        if (market2) {
+          try {
+            const history2 = getCachedMarketHistory(market2.regionId, typeId, 7);
+            if (history2 && history2.length > 0) {
+              const totalVolume2 = history2.reduce((sum, day) => sum + (day.volume || 0), 0);
+              m2Svr = Math.round(totalVolume2 / history2.length);
+            }
+          } catch (e) {
+            // SVR is optional — no-op on error
+          }
         }
 
         // Derived metrics (per-unit prices; renderer multiplies by qty for totals)
@@ -2106,16 +2120,32 @@ function setupIPCHandlers() {
           ? ((m2Sell - m2Buy) / m2Sell) * 100
           : null;
 
-        // Best action: compare per-unit values
-        const candidates = [
-          { action: 'sell-m1', value: m1Sell },
-          ...(m2Sell !== null ? [{ action: 'sell-m2', value: m2Sell }] : []),
-          ...(reprValue.canReprocess ? [{ action: 'reprocess', value: reprValue.sellValue }] : []),
-        ].filter(c => c.value > 0);
+        // Best action: compare per-unit values. Reprocess wins outright if it beats
+        // both sell markets; otherwise the sell-market choice is gated by minSvr —
+        // if both markets fail the liquidity bar, the result is 'unknown' rather
+        // than falling through to reprocess.
+        const reprocessValue = reprValue.canReprocess ? reprValue.sellValue : -Infinity;
+        let bestAction = 'unknown';
+        let bestValue = 0;
 
-        const best = candidates.length > 0
-          ? candidates.reduce((a, b) => b.value > a.value ? b : a)
-          : { action: 'unknown' };
+        if (reprocessValue > m1Sell && reprocessValue > (m2Sell ?? -Infinity) && reprocessValue > 0) {
+          bestAction = 'reprocess';
+          bestValue = reprocessValue;
+        } else {
+          const m1Ok = m1Sell > 0 && (m1Svr ?? 0) >= minSvr;
+          const m2Ok = m2Sell !== null && m2Sell > 0 && (m2Svr ?? 0) >= minSvr;
+
+          if (!m1Ok && !m2Ok) {
+            bestAction = 'unknown';
+            bestValue = 0;
+          } else if (m1Ok && (!m2Ok || m1Sell >= m2Sell)) {
+            bestAction = 'sell-m1';
+            bestValue = m1Sell;
+          } else if (m2Ok) {
+            bestAction = 'sell-m2';
+            bestValue = m2Sell;
+          }
+        }
 
         itemResults[typeId] = {
           m1Sell,
@@ -2125,12 +2155,13 @@ function setupIPCHandlers() {
           reprocessSell: reprValue.sellValue,
           reprocessBuy: reprValue.buyValue,
           canReprocess: reprValue.canReprocess,
-          svr,
+          m1Svr,
+          m2Svr,
           m1SellVsM2SellPct,
           m1BuyVsM2BuyPct,
           m1Spread,
           m2Spread,
-          bestAction: best.action,
+          bestAction,
         };
       }
 

@@ -77,6 +77,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('market1-hub').addEventListener('change', saveLocations);
   document.getElementById('market2-hub').addEventListener('change', saveLocations);
 
+  // Restore saved minimum SVR threshold and wire change events
+  restoreMinSvr();
+  document.getElementById('min-svr').addEventListener('change', saveMinSvr);
+
   // Restore saved reprocessing config before wiring change events
   restoreReprocessingConfig();
   restoreOreSkills();
@@ -354,6 +358,26 @@ function restoreReprocessingConfig() {
 }
 
 // ============================================================
+// Minimum SVR threshold persistence (localStorage)
+// ============================================================
+const MIN_SVR_KEY = 'lootAnalyzer_minSvr';
+
+function saveMinSvr() {
+  localStorage.setItem(MIN_SVR_KEY, document.getElementById('min-svr').value);
+}
+
+function restoreMinSvr() {
+  const saved = localStorage.getItem(MIN_SVR_KEY);
+  if (saved != null) {
+    document.getElementById('min-svr').value = saved;
+  }
+}
+
+function getMinSvr() {
+  return parseFloat(document.getElementById('min-svr').value) || 0;
+}
+
+// ============================================================
 // Ore Skills Modal
 // ============================================================
 const ORE_SKILLS_KEY = 'lootAnalyzer_oreSkills';
@@ -558,6 +582,7 @@ async function handleAnalyze() {
       itemTypeSkills: Object.fromEntries(
         currentItems.map(i => [i.typeId, i.typeSpecificSkillId || null])
       ),
+      minSvr: getMinSvr(),
     });
 
     currentPrices = priceResult.items || {};
@@ -655,18 +680,33 @@ function renderTable() {
       }
     }
 
-    // Best total value
-    const actionValues = {
-      'sell-m1':   m1SellTotal,
-      'sell-m2':   m2SellTotal !== null ? m2SellTotal : -Infinity,
-      'reprocess': item.canReprocess ? reprocessSellTotal : -Infinity,
-    };
+    // Best action: reprocess wins outright if it beats both sell markets. Otherwise,
+    // the sell-market choice is gated by the configured Minimum SVR — a market whose
+    // liquidity is below the threshold is disqualified. If both sell markets fail the
+    // gate, the result is 'unknown' rather than falling through to reprocess.
+    const reprocessValue = item.canReprocess ? reprocessSellTotal : -Infinity;
+    const m2ValueOrNeg = m2SellTotal !== null ? m2SellTotal : -Infinity;
+
     let bestAction = 'unknown';
     let totalBest  = 0;
-    for (const [action, val] of Object.entries(actionValues)) {
-      if (val > totalBest) {
-        totalBest  = val;
-        bestAction = action;
+
+    if (reprocessValue > m1SellTotal && reprocessValue > m2ValueOrNeg && reprocessValue > 0) {
+      bestAction = 'reprocess';
+      totalBest  = reprocessValue;
+    } else {
+      const minSvr = getMinSvr();
+      const m1Ok = m1SellTotal > 0 && (prices.m1Svr ?? 0) >= minSvr;
+      const m2Ok = m2SellTotal !== null && m2SellTotal > 0 && (prices.m2Svr ?? 0) >= minSvr;
+
+      if (!m1Ok && !m2Ok) {
+        bestAction = 'unknown';
+        totalBest  = 0;
+      } else if (m1Ok && (!m2Ok || m1SellTotal >= m2SellTotal)) {
+        bestAction = 'sell-m1';
+        totalBest  = m1SellTotal;
+      } else if (m2Ok) {
+        bestAction = 'sell-m2';
+        totalBest  = m2SellTotal;
       }
     }
 
@@ -681,7 +721,8 @@ function renderTable() {
       reprocessBuyTotal,
       totalBest,
       bestAction,
-      svr: prices.svr ?? null,
+      m1Svr: prices.m1Svr ?? null,
+      m2Svr: prices.m2Svr ?? null,
       m1SellVsM2SellPct: prices.m1SellVsM2SellPct ?? null,
       m1BuyVsM2BuyPct:   prices.m1BuyVsM2BuyPct ?? null,
       m1Spread:          prices.m1Spread ?? null,
@@ -705,6 +746,9 @@ function renderTable() {
   // Render rows
   for (const row of rows) {
     const tr = document.createElement('tr');
+    if (row.bestAction && row.bestAction !== 'unknown') {
+      tr.classList.add(`row-${row.bestAction}`);
+    }
 
     const hasMkt2 = row.m2SellTotal !== null;
 
@@ -721,7 +765,7 @@ function renderTable() {
       <td>${formatPct(row.m1BuyVsM2BuyPct)}</td>
       <td>${formatPct(row.m1Spread)}</td>
       <td>${formatPct(row.m2Spread)}</td>
-      <td>${formatSVR(row.svr)}</td>
+      <td>${formatSVRPair(row.m1Svr, row.m2Svr, hasMkt2)}</td>
       <td>${formatBestAction(row.bestAction)}</td>
       <td class="col-total">${row.totalBest > 0 ? formatISK(row.totalBest) : '<span class="muted">—</span>'}</td>
     `;
@@ -744,7 +788,7 @@ function getSortValue(row) {
     case 'm1BuyVsM2BuyPct':   return row.m1BuyVsM2BuyPct;
     case 'm1Spread':          return row.m1Spread;
     case 'm2Spread':          return row.m2Spread;
-    case 'svr':               return row.svr;
+    case 'svr':               return row.m1Svr;
     case 'bestAction':        return row.bestAction;
     case 'totalBest':         return row.totalBest;
     default:                  return row.totalBest;
@@ -791,19 +835,27 @@ function formatPct(val) {
   return `<span class="${cls}">${sign}${val.toFixed(1)}%</span>`;
 }
 
-function formatSVR(svr) {
+function svrBadgeClass(svr) {
+  if (svr === null || svr === undefined) return 'unknown';
+  if (svr >= 100) return 'high';
+  if (svr >= 10)  return 'medium';
+  return 'low';
+}
+
+function formatSVR(svr, label) {
   if (svr === null || svr === undefined) {
-    return '<span class="svr-badge unknown">N/A</span>';
+    return `<span class="svr-badge unknown" title="7-day avg daily volume">${label ? label + ': ' : ''}N/A</span>`;
   }
-  let cls, label;
-  if (svr >= 100) {
-    cls = 'high'; label = `${formatQty(svr)}/d`;
-  } else if (svr >= 10) {
-    cls = 'medium'; label = `${formatQty(svr)}/d`;
-  } else {
-    cls = 'low'; label = `${formatQty(svr)}/d`;
+  const cls = svrBadgeClass(svr);
+  const prefix = label ? `${label}: ` : '';
+  return `<span class="svr-badge ${cls}" title="7-day avg daily volume">${prefix}${formatQty(svr)}/d</span>`;
+}
+
+function formatSVRPair(m1Svr, m2Svr, hasMkt2) {
+  if (!hasMkt2) {
+    return formatSVR(m1Svr);
   }
-  return `<span class="svr-badge ${cls}" title="7-day avg daily volume">${label}</span>`;
+  return `${formatSVR(m1Svr, 'M1')} ${formatSVR(m2Svr, 'M2')}`;
 }
 
 function formatBestAction(action) {
