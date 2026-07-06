@@ -1172,6 +1172,37 @@ tr:hover {
   min-width: 45px;
 }
 
+/* Plan-specific price override cells (Materials/Products tabs) - double-click to edit */
+td.price-cell {
+  cursor: pointer;
+}
+
+td.price-cell:hover {
+  background-color: rgba(88, 101, 242, 0.08);
+}
+
+td.price-cell .cell-input {
+  width: auto;
+  min-width: 90px;
+  padding: 6px 8px;
+  background-color: #1e1e2e;
+  border: 1px solid #5865f2;
+  border-radius: 4px;
+  color: #ffffff;
+  font-size: 14px;
+  font-family: inherit;
+}
+
+td.price-cell .cell-input:focus {
+  outline: none;
+  border-color: #4752c4;
+  box-shadow: 0 0 0 2px rgba(88, 101, 242, 0.2);
+}
+
+.plan-override-indicator {
+  cursor: default;
+}
+
 .blueprint-actions {
   white-space: nowrap;
 }

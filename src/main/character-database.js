@@ -483,6 +483,57 @@ function initializeCharacterDatabase() {
     console.error('[Character Database] Plan industry settings migration error:', error);
   }
 
+  // Migration: Create plan_price_overrides table for plan-scoped price overrides
+  // (independent from the acquisition-ledger customPrice mechanism and from the
+  // global market-database.js price_overrides table)
+  try {
+    const tableExists = database.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='plan_price_overrides'").all();
+
+    if (!tableExists || tableExists.length === 0) {
+      console.log('[Character Database] Creating plan_price_overrides table');
+
+      // Create table
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS plan_price_overrides (
+          plan_id TEXT NOT NULL,
+          type_id INTEGER NOT NULL,
+          price REAL NOT NULL,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL,
+          PRIMARY KEY (plan_id, type_id),
+          FOREIGN KEY (plan_id) REFERENCES manufacturing_plans(plan_id) ON DELETE CASCADE
+        )
+      `);
+
+      // Create index
+      database.exec(`
+        CREATE INDEX IF NOT EXISTS idx_plan_price_overrides_plan
+          ON plan_price_overrides(plan_id)
+      `);
+
+      console.log('[Character Database] Plan price overrides table created successfully');
+    }
+  } catch (error) {
+    console.error('[Character Database] Plan price overrides migration error:', error);
+  }
+
+  // Migration: Add last_market_price snapshot column to plan_price_overrides.
+  // Captures the last real market price seen for an overridden type (at override-creation
+  // time, and refreshed on every subsequent "Refresh Prices" run) so deleting the override
+  // can restore price_each to a known-good value instantly, with no live market fetch.
+  try {
+    const overrideColumns = database.pragma('table_info(plan_price_overrides)');
+    const hasLastMarketPrice = overrideColumns.some(col => col.name === 'last_market_price');
+
+    if (!hasLastMarketPrice) {
+      console.log('[Character Database] Adding last_market_price column to plan_price_overrides');
+      database.exec(`ALTER TABLE plan_price_overrides ADD COLUMN last_market_price REAL`);
+      console.log('[Character Database] last_market_price column added successfully');
+    }
+  } catch (error) {
+    console.error('[Character Database] last_market_price migration error:', error);
+  }
+
   // Migration: Add corporation industry jobs support to esi_industry_jobs table
   try {
     const columns = database.pragma('table_info(esi_industry_jobs)');

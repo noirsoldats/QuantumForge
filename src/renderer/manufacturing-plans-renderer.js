@@ -952,8 +952,9 @@ async function loadMaterials() {
           ` : ''}
           <td>${formatNumber(volume, 2)}</td>
           <td>${formatNumber(totalM3, 2)}</td>
-          <td>
+          <td class="price-cell" data-type-id="${m.typeId}" data-effective-price="${m.basePrice ?? ''}">
             ${m.customPrice !== null ? '<span class="custom-price-indicator" title="Custom price set">⚙️</span> ' : ''}
+            ${m.planOverridePrice !== null ? '<span class="plan-override-indicator" title="Plan-specific price override">🔒</span> ' : ''}
             ${price}
           </td>
           <td>${total}</td>
@@ -1079,6 +1080,8 @@ async function loadMaterials() {
       editMaterialPrice(typeId, price);
     });
   });
+
+  wirePriceOverrideCells(container, loadMaterials);
 
   // After rendering, check for warnings
   checkAndDisplayMaterialWarnings(materials);
@@ -1494,6 +1497,75 @@ window.editMaterialPrice = async function(typeId, currentPrice) {
   }
 };
 
+// Wire double-click-to-edit behavior on price cells for plan-specific price overrides.
+// Shared between Materials and Products tabs. Independent from the ledger-based
+// updateMaterialCustomPrice/editMaterialPrice mechanism above.
+function wirePriceOverrideCells(container, reloadFn) {
+  container.querySelectorAll('td.price-cell[data-type-id]').forEach(cell => {
+    cell.addEventListener('dblclick', () => {
+      if (cell.querySelector('.cell-input')) return; // already editing
+      startPriceOverrideEdit(cell, reloadFn);
+    });
+  });
+}
+
+function startPriceOverrideEdit(cell, reloadFn) {
+  const typeId = parseInt(cell.dataset.typeId);
+  const currentValue = cell.dataset.effectivePrice ? parseFloat(cell.dataset.effectivePrice) : '';
+  const originalHtml = cell.innerHTML;
+
+  cell.innerHTML = `<input type="number" class="cell-input" step="0.01" min="0" value="${currentValue}">`;
+  const input = cell.querySelector('.cell-input');
+  input.focus();
+  input.select();
+
+  const cancel = () => {
+    cell.innerHTML = originalHtml;
+  };
+
+  const save = async () => {
+    const raw = input.value.trim();
+    const price = parseFloat(raw);
+    if (raw === '' || isNaN(price) || price <= 0) {
+      showToast('Please enter a valid positive price', 'error');
+      return;
+    }
+    try {
+      await window.electronAPI.plans.setPriceOverride(selectedPlanId, typeId, price);
+      showToast('Price override saved', 'success');
+      await reloadFn();
+      await loadOverview();
+    } catch (error) {
+      showToast('Failed to save price override: ' + error.message, 'error');
+      cell.innerHTML = originalHtml;
+    }
+  };
+
+  const onBlur = () => {
+    const raw = input.value.trim();
+    const price = parseFloat(raw);
+    if (raw !== '' && !isNaN(price) && price > 0) {
+      save();
+    } else {
+      cancel();
+    }
+  };
+
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      input.removeEventListener('blur', onBlur);
+      save();
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      input.removeEventListener('blur', onBlur);
+      cancel();
+    }
+  });
+
+  input.addEventListener('blur', onBlur);
+}
+
 // Load products tab
 async function loadProducts() {
   const products = await window.electronAPI.plans.getProducts(selectedPlanId);
@@ -1545,11 +1617,14 @@ async function loadProducts() {
               const total = p.basePrice ? formatISK(p.basePrice * p.quantity) : 'N/A';
 
               return `
-                <tr>
+                <tr data-type-id="${p.typeId}">
                   <td>${escapeHtml(name)}</td>
                   <td>${formatNumber(p.quantity)}</td>
                   <td>${formatNumber(totalM3, 2)} m³</td>
-                  <td>${price}</td>
+                  <td class="price-cell" data-type-id="${p.typeId}" data-effective-price="${p.basePrice ?? ''}">
+                    ${p.planOverridePrice !== null ? '<span class="plan-override-indicator" title="Plan-specific price override">🔒</span> ' : ''}
+                    ${price}
+                  </td>
                   <td>${total}</td>
                 </tr>
               `;
@@ -1596,11 +1671,14 @@ async function loadProducts() {
               const rowIndent = depth * 20;
 
               return `
-                <tr>
+                <tr data-type-id="${p.typeId}">
                   <td style="padding-left: ${rowIndent}px;">${escapeHtml(name)}</td>
                   <td>${formatNumber(p.quantity)}</td>
                   <td>${formatNumber(totalM3, 2)} m³</td>
-                  <td>${price}</td>
+                  <td class="price-cell" data-type-id="${p.typeId}" data-effective-price="${p.basePrice ?? ''}">
+                    ${p.planOverridePrice !== null ? '<span class="plan-override-indicator" title="Plan-specific price override">🔒</span> ' : ''}
+                    ${price}
+                  </td>
                   <td>${total}</td>
                 </tr>
               `;
@@ -1614,6 +1692,8 @@ async function loadProducts() {
   }
 
   container.innerHTML = html;
+
+  wirePriceOverrideCells(container, loadProducts);
 }
 
 /**
@@ -1843,19 +1923,6 @@ function renderTreeNodes(nodes, finalProduct) {
  * Attach event listeners for reaction buttons
  */
 function attachReactionEventListeners() {
-  // Refresh prices button
-  const refreshBtn = document.getElementById('refresh-reaction-prices-btn');
-  if (refreshBtn) {
-    refreshBtn.onclick = async () => {
-      await window.electronAPI.plans.recalculateMaterials(selectedPlanId, true, activeMarketSet?.id);
-      await loadReactions();
-      // Reload overview and plans list to reflect updated prices
-      await loadOverview();
-      await loadPlans();
-      showToast('Reaction prices refreshed', 'success');
-    };
-  }
-
   // Save facilities button
   const saveFacilitiesBtn = document.getElementById('save-reaction-facilities-btn');
   if (saveFacilitiesBtn) {
@@ -3563,8 +3630,87 @@ async function loadSettings() {
       reactionsCheckbox.addEventListener('change', handlePlanReactionsToggle);
     }
 
+    // Load plan-specific price overrides
+    await loadPlanPriceOverrides();
+
   } catch (error) {
     console.error('Error loading settings:', error);
+  }
+}
+
+/**
+ * Load and render the plan-scoped price overrides list in the Settings tab.
+ */
+async function loadPlanPriceOverrides() {
+  const containerEl = document.getElementById('plan-price-overrides-container');
+  if (!containerEl) return;
+
+  try {
+    const overrides = await window.electronAPI.plans.getPriceOverrides(selectedPlanId);
+
+    if (overrides.length === 0) {
+      containerEl.innerHTML = '<p class="no-data">No price overrides set for this plan.</p>';
+      return;
+    }
+
+    const typeIds = overrides.map(o => o.typeId);
+    const names = await window.electronAPI.sde.getTypeNames(typeIds);
+
+    let html = `
+      <table>
+        <thead>
+          <tr>
+            <th>Item</th>
+            <th>Override Price</th>
+            <th>Last Updated</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+    `;
+
+    for (const o of overrides) {
+      const name = names[o.typeId] || `Type ${o.typeId}`;
+      const updated = o.updatedAt ? new Date(o.updatedAt).toLocaleString() : '—';
+      html += `
+        <tr>
+          <td>${escapeHtml(name)}</td>
+          <td>${formatISK(o.price)}</td>
+          <td>${updated}</td>
+          <td>
+            <button class="secondary-button small delete-price-override-btn" data-type-id="${o.typeId}" data-item-name="${escapeHtml(name)}" data-last-market-price="${o.lastMarketPrice ?? ''}">Delete</button>
+          </td>
+        </tr>
+      `;
+    }
+
+    html += '</tbody></table>';
+    containerEl.innerHTML = html;
+
+    containerEl.querySelectorAll('.delete-price-override-btn').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const typeId = parseInt(btn.dataset.typeId);
+        const itemName = btn.dataset.itemName;
+        const lastMarketPriceRaw = btn.dataset.lastMarketPrice;
+        const lastMarketPrice = lastMarketPriceRaw !== '' ? parseFloat(lastMarketPriceRaw) : null;
+        const revertMsg = lastMarketPrice !== null
+          ? `Remove price override for ${itemName}? The price will revert to ${formatISK(lastMarketPrice)}.`
+          : `Remove price override for ${itemName}? No market price is available for this item yet — it will keep its current value until the next "Refresh Prices".`;
+        if (!confirm(revertMsg)) return;
+        try {
+          await window.electronAPI.plans.removePriceOverride(selectedPlanId, typeId);
+          showToast('Price override removed', 'success');
+          await loadPlanPriceOverrides();
+          await loadOverview();
+        } catch (error) {
+          showToast('Failed to remove price override: ' + error.message, 'error');
+        }
+      });
+    });
+
+  } catch (error) {
+    console.error('Error loading plan price overrides:', error);
+    containerEl.innerHTML = '<p class="error-text">Failed to load price overrides</p>';
   }
 }
 

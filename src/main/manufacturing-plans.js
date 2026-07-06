@@ -2992,11 +2992,39 @@ async function recalculatePlanMaterials(planId, refreshPrices = false, marketSet
       // PHASE 3: Price each collected node and insert in one pass
       // (Replaces the three separate INSERT loops for materials, products, intermediates)
 
+      // Plan-scoped price overrides always win and are re-stamped on every recalculation
+      // (including "Refresh Prices"), so they survive until the user changes/removes them.
+      const overrideMap = getPlanPriceOverrideMap(planId);
+
       for (const node of collectedNodes) {
         let price = null;
         let priceFrozenAt = null;
 
-        if (node.nodeType === 'material') {
+        if (overrideMap.has(node.typeId)) {
+          price = overrideMap.get(node.typeId);
+          priceFrozenAt = now;
+
+          // Even though the override wins for price_each, still capture what the market
+          // actually shows on an explicit refresh, so a later delete has a fresh snapshot
+          // to revert to instead of a stale one from whenever the override was first set.
+          if (refreshPrices) {
+            try {
+              const location = node.nodeType === 'material' ? inputLocation : outputLocation;
+              const sideSettings = node.nodeType === 'material' ? marketSettings.inputMaterials : marketSettings.outputProducts;
+              const marketPriceResult = await calculateRealisticPrice(
+                node.typeId,
+                location.regionId,
+                location.locationId,
+                sideSettings.priceType,
+                node.quantityNeeded,
+                sideSettings
+              );
+              setLastMarketPrice(planId, node.typeId, marketPriceResult.price);
+            } catch (error) {
+              console.warn(`Could not refresh market snapshot for overridden type ${node.typeId}:`, error.message);
+            }
+          }
+        } else if (node.nodeType === 'material') {
           if (refreshPrices) {
             try {
               const priceResult = await calculateRealisticPrice(
@@ -3250,6 +3278,8 @@ async function getPlanMaterials(planId, includeAssets = false) {
       }
     }
 
+    const overrideMap = getPlanPriceOverrideMap(planId);
+
     const result = materialNodes.map(m => {
       const ledger = ledgerMap.get(m.type_id);
       const netAcquired = ledger?.net_acquired || 0;
@@ -3257,6 +3287,7 @@ async function getPlanMaterials(planId, includeAssets = false) {
         typeId: m.type_id,
         quantity: m.quantity_needed,
         basePrice: m.price_each,
+        planOverridePrice: overrideMap.has(m.type_id) ? overrideMap.get(m.type_id) : null,
         priceFrozenAt: m.price_frozen_at,
         manuallyAcquired: netAcquired > 0 ? 1 : 0,
         manuallyAcquiredQuantity: netAcquired,
@@ -3437,10 +3468,13 @@ function getPlanProducts(planId) {
       ORDER BY is_intermediate DESC, quantity DESC
     `).all(planId);
 
+    const overrideMap = getPlanPriceOverrideMap(planId);
+
     return products.map(p => ({
       typeId: p.type_id,
       quantity: p.quantity,
       basePrice: p.base_price,
+      planOverridePrice: overrideMap.has(p.type_id) ? overrideMap.get(p.type_id) : null,
       priceFrozenAt: p.price_frozen_at,
       isIntermediate: p.is_intermediate === 1,
       intermediateDepth: p.intermediate_depth || 0,
@@ -4081,6 +4115,168 @@ function updateMaterialCustomPrice(planId, typeId, customPrice) {
 }
 
 /**
+ * Set (create or update) a plan-scoped price override for a type.
+ * This is independent of the acquisition-ledger customPrice mechanism (updateMaterialCustomPrice)
+ * and the global market-database price_overrides table (market-pricing.js).
+ * The override is written directly into plan_material_nodes.price_each so it immediately
+ * flows through to getPlanMaterials/getPlanProducts/getPlanSummary/getPlanAnalytics without
+ * requiring a recalculation, and recalculatePlanMaterials re-applies it on every "Refresh Prices"
+ * until the user changes or removes it.
+ * On first creation (no override row exists yet for this type), snapshots the node's current
+ * price_each as last_market_price — this must be a real market price at that point, since no
+ * override existed before. Editing an existing override leaves last_market_price untouched.
+ * @param {string} planId - Plan ID
+ * @param {number} typeId - Type ID
+ * @param {number} price - Override price (must be a positive number)
+ * @returns {object} { success: true }
+ */
+function setPlanPriceOverride(planId, typeId, price) {
+  const db = getCharacterDatabase();
+
+  try {
+    const now = Date.now();
+
+    const existingOverride = db.prepare(
+      `SELECT last_market_price FROM plan_price_overrides WHERE plan_id = ? AND type_id = ?`
+    ).get(planId, typeId);
+
+    let lastMarketPrice = existingOverride ? existingOverride.last_market_price : null;
+    if (!existingOverride) {
+      const currentNode = db.prepare(
+        `SELECT price_each FROM plan_material_nodes WHERE plan_id = ? AND type_id = ? LIMIT 1`
+      ).get(planId, typeId);
+      lastMarketPrice = currentNode ? currentNode.price_each : null;
+    }
+
+    db.prepare(`
+      INSERT INTO plan_price_overrides (plan_id, type_id, price, last_market_price, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT(plan_id, type_id) DO UPDATE SET price = excluded.price, updated_at = excluded.updated_at
+    `).run(planId, typeId, price, lastMarketPrice, now, now);
+
+    // Immediately stamp the override onto every existing node for this type in this plan
+    // so it's reflected without requiring a recalculation.
+    db.prepare(`
+      UPDATE plan_material_nodes
+      SET price_each = ?, price_frozen_at = ?
+      WHERE plan_id = ? AND type_id = ?
+    `).run(price, now, planId, typeId);
+
+    console.log(`[Plans] Set plan price override for type ${typeId} in plan ${planId}: ${price}`);
+    return { success: true };
+  } catch (error) {
+    console.error('[Plans] Error setting plan price override:', error);
+    throw error;
+  }
+}
+
+/**
+ * Internal helper: update the last_market_price snapshot for an existing override row,
+ * called from recalculatePlanMaterials whenever a "Refresh Prices" run touches an
+ * overridden type, so the snapshot stays current with the latest market read.
+ * @param {string} planId - Plan ID
+ * @param {number} typeId - Type ID
+ * @param {number} marketPrice - Freshly fetched market price
+ */
+function setLastMarketPrice(planId, typeId, marketPrice) {
+  const db = getCharacterDatabase();
+  db.prepare(`
+    UPDATE plan_price_overrides SET last_market_price = ? WHERE plan_id = ? AND type_id = ?
+  `).run(marketPrice, planId, typeId);
+}
+
+/**
+ * Remove a plan-scoped price override. Restores price_each to the last_market_price
+ * snapshot captured on the override row (from override-creation time or the most recent
+ * "Refresh Prices" run, whichever is more recent) — no live market fetch, no dependency
+ * on whatever Market Set the plan happens to resolve to at delete time.
+ * @param {string} planId - Plan ID
+ * @param {number} typeId - Type ID
+ * @returns {object} { success: true, removed: boolean }
+ */
+function removePlanPriceOverride(planId, typeId) {
+  const db = getCharacterDatabase();
+
+  try {
+    const override = db.prepare(
+      `SELECT last_market_price FROM plan_price_overrides WHERE plan_id = ? AND type_id = ?`
+    ).get(planId, typeId);
+
+    const result = db.prepare(`
+      DELETE FROM plan_price_overrides WHERE plan_id = ? AND type_id = ?
+    `).run(planId, typeId);
+
+    if (override && override.last_market_price !== null) {
+      db.prepare(`
+        UPDATE plan_material_nodes
+        SET price_each = ?, price_frozen_at = ?
+        WHERE plan_id = ? AND type_id = ?
+      `).run(override.last_market_price, Date.now(), planId, typeId);
+    } else {
+      // Rare edge case: no market price was ever available for this node (e.g. brand-new
+      // item with no market data). Leave price_each as the stale override value; the next
+      // "Refresh Prices" will correct it like any other node.
+      console.warn(`[Plans] No market price snapshot available for type ${typeId} in plan ${planId}; price_each left unchanged until next Refresh Prices`);
+    }
+
+    console.log(`[Plans] Removed plan price override for type ${typeId} in plan ${planId}`);
+    return { success: true, removed: result.changes > 0 };
+  } catch (error) {
+    console.error('[Plans] Error removing plan price override:', error);
+    throw error;
+  }
+}
+
+/**
+ * Get all plan-scoped price overrides for a plan (for Settings tab display).
+ * @param {string} planId - Plan ID
+ * @returns {Array<{typeId: number, price: number, lastMarketPrice: number|null, createdAt: number, updatedAt: number}>}
+ */
+function getPlanPriceOverrides(planId) {
+  const db = getCharacterDatabase();
+
+  try {
+    const rows = db.prepare(`
+      SELECT type_id, price, last_market_price, created_at, updated_at
+      FROM plan_price_overrides
+      WHERE plan_id = ?
+      ORDER BY updated_at DESC
+    `).all(planId);
+
+    return rows.map(r => ({
+      typeId: r.type_id,
+      price: r.price,
+      lastMarketPrice: r.last_market_price,
+      createdAt: r.created_at,
+      updatedAt: r.updated_at,
+    }));
+  } catch (error) {
+    console.error('[Plans] Error getting plan price overrides:', error);
+    return [];
+  }
+}
+
+/**
+ * Internal helper: get a Map<typeId, price> of plan-scoped price overrides,
+ * for use by recalculatePlanMaterials/getPlanMaterials/getPlanProducts.
+ * @param {string} planId - Plan ID
+ * @returns {Map<number, number>}
+ */
+function getPlanPriceOverrideMap(planId) {
+  const db = getCharacterDatabase();
+
+  try {
+    const rows = db.prepare(`
+      SELECT type_id, price FROM plan_price_overrides WHERE plan_id = ?
+    `).all(planId);
+    return new Map(rows.map(r => [r.type_id, r.price]));
+  } catch (error) {
+    console.error('[Plans] Error building plan price override map:', error);
+    return new Map();
+  }
+}
+
+/**
  * Cleanup excess acquisitions (reduce to match needed quantity)
  * @param {string} planId - Plan ID
  * @param {number|null} typeId - Material type ID (null for all materials)
@@ -4524,6 +4720,9 @@ module.exports = {
   unmarkMaterialAcquired,
   updateMaterialAcquisition,
   updateMaterialCustomPrice,
+  setPlanPriceOverride,
+  removePlanPriceOverride,
+  getPlanPriceOverrides,
   cleanupExcessAcquisitions,
   getAcquisitionLog,
   getReactions,

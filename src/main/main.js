@@ -155,6 +155,9 @@ const {
   unmarkMaterialAcquired,
   updateMaterialAcquisition,
   updateMaterialCustomPrice,
+  setPlanPriceOverride,
+  removePlanPriceOverride,
+  getPlanPriceOverrides,
   cleanupExcessAcquisitions,
   getAcquisitionLog,
   getMaterialTree,
@@ -1368,6 +1371,18 @@ function setupIPCHandlers() {
 
   ipcMain.handle('plans:updateMaterialCustomPrice', (event, planId, typeId, customPrice) => {
     return updateMaterialCustomPrice(planId, typeId, customPrice);
+  });
+
+  ipcMain.handle('plans:setPriceOverride', (event, planId, typeId, price) => {
+    return setPlanPriceOverride(planId, typeId, price);
+  });
+
+  ipcMain.handle('plans:removePriceOverride', (event, planId, typeId) => {
+    return removePlanPriceOverride(planId, typeId);
+  });
+
+  ipcMain.handle('plans:getPriceOverrides', (event, planId) => {
+    return getPlanPriceOverrides(planId);
   });
 
   ipcMain.handle('plans:cleanupExcessAcquisitions', (event, planId, typeId) => {
