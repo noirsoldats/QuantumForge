@@ -29,6 +29,9 @@ Thumbs.db
 # Testing
 coverage/
 
+# Cached native build artifacts (better-sqlite3 ABI swap cache)
+.native-cache/
+
 # Electron
 out/
 

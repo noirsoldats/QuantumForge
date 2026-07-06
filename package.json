@@ -20,16 +20,14 @@
     "version:minor": "npm version minor",
     "version:major": "npm version major",
     "rebuild": "electron-rebuild",
-    "rebuild:node": "npm rebuild better-sqlite3 --build-from-source",
-    "rebuild:electron": "electron-rebuild",
+    "rebuild:node": "node scripts/swap-native-sqlite.js node",
+    "rebuild:electron": "node scripts/swap-native-sqlite.js electron",
     "postinstall": "electron-builder install-app-deps",
     "clean": "rm -rf dist/",
-    "pretest": "npm run rebuild:node",
-    "test": "jest",
-    "test:watch": "jest --watch",
-    "test:coverage": "jest --coverage",
-    "test:sde": "jest tests/sde",
-    "posttest": "npm run rebuild:electron"
+    "test": "node scripts/run-tests.js",
+    "test:watch": "node scripts/run-tests.js --watch",
+    "test:coverage": "node scripts/run-tests.js --coverage",
+    "test:sde": "node scripts/run-tests.js tests/sde"
   },
   "jest": {
     "testEnvironment": "node",
