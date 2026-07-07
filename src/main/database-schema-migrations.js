@@ -802,6 +802,47 @@ const migrations = [
     down: (db) => {
       console.log('[Migration 008] Rollback not implemented');
     }
+  },
+  {
+    id: '009_recalculate_plans_nested_reactions',
+    description: 'One-time recalculation of all manufacturing plans to backfill nested-reaction sourcing rows',
+    up: async (db) => {
+      try {
+        const { getMarketSets } = require('./settings-manager');
+        if (getMarketSets().length === 0) {
+          console.log('[Migration 009] No market sets configured yet, skipping (nothing to recalculate meaningfully)');
+          return;
+        }
+
+        const { sdeExists } = require('./sde-manager');
+        if (!sdeExists()) {
+          console.log('[Migration 009] SDE not present yet, skipping - will not retry automatically');
+          return;
+        }
+
+        const planIds = db.prepare('SELECT plan_id FROM manufacturing_plans').all().map(r => r.plan_id);
+        console.log(`[Migration 009] Recalculating ${planIds.length} plan(s)...`);
+
+        const { recalculatePlanMaterials } = require('./manufacturing-plans');
+        let succeeded = 0, failed = 0;
+        for (const planId of planIds) {
+          try {
+            await recalculatePlanMaterials(planId, false);
+            succeeded++;
+          } catch (error) {
+            failed++;
+            console.error(`[Migration 009] Failed to recalculate plan ${planId}:`, error);
+          }
+        }
+        console.log(`[Migration 009] Done: ${succeeded} succeeded, ${failed} failed`);
+      } catch (error) {
+        // Never let this migration throw - a crashed migration blocks app startup entirely.
+        console.error('[Migration 009] Unexpected error, skipping this migration run:', error);
+      }
+    },
+    down: (db) => {
+      console.log('[Migration 009] Rollback not implemented (recalculation is not reversible)');
+    }
   }
   // Add future migrations here
 ];

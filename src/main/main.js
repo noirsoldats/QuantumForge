@@ -1229,14 +1229,59 @@ function setupIPCHandlers() {
   });
 
   // Reaction management in plans
-  ipcMain.handle('plans:getReactions', (event, planId) => {
+  ipcMain.handle('plans:getReactions', async (event, planId) => {
     const { getReactions } = require('./manufacturing-plans');
-    return getReactions(planId);
+    return await getReactions(planId);
+  });
+
+  ipcMain.handle('plans:setReactionChildBuildPlan', async (event, planId, reactionTypeId, childTypeId, buildPlan) => {
+    const { setReactionChildBuildPlan } = require('./manufacturing-plans');
+    return await setReactionChildBuildPlan(planId, reactionTypeId, childTypeId, buildPlan);
+  });
+
+  ipcMain.handle('plans:getBuildItems', async (event, planId) => {
+    const { getPlanBuildItems } = require('./manufacturing-plans');
+    return await getPlanBuildItems(planId);
+  });
+
+  ipcMain.handle('plans:updateBuildItemsByType', async (event, planId, itemType, blueprintTypeId, updates) => {
+    const { updateBuildItemsByType } = require('./manufacturing-plans');
+    return await updateBuildItemsByType(planId, itemType, blueprintTypeId, updates);
   });
 
   ipcMain.handle('plans:markReactionBuilt', async (event, planBlueprintId, builtRuns) => {
     const { markReactionBuilt } = require('./manufacturing-plans');
     return await markReactionBuilt(planBlueprintId, builtRuns);
+  });
+
+  ipcMain.handle('plans:calculateReactionTree', async (event, reactionBlueprintId, runs, characterId, facilityOrId, marketSetId) => {
+    const { getReactionTreeForPlan } = require('./manufacturing-plans');
+
+    // Accept either a facility snapshot object or a facilityId string/number, same as
+    // reactions:calculateMaterials above
+    let facility = null;
+    if (facilityOrId) {
+      if (typeof facilityOrId === 'object') {
+        facility = facilityOrId;
+      } else {
+        const { getManufacturingFacility } = require('./settings-manager');
+        facility = getManufacturingFacility(facilityOrId);
+      }
+
+      if (facility && facility.systemId) {
+        const { getSystemSecurityStatus } = require('./sde-database');
+        facility.securityStatus = await getSystemSecurityStatus(facility.systemId);
+      }
+
+      if (facility && facility.structureTypeId) {
+        const { getStructureBonuses } = require('./sde-database');
+        const bonuses = await getStructureBonuses(facility.structureTypeId);
+        facility.structureBonuses = bonuses;
+      }
+    }
+
+    const marketSet = marketSetId ? getMarketSetById(marketSetId) : getDefaultMarketSet();
+    return await getReactionTreeForPlan(reactionBlueprintId, runs, characterId, facility, marketSet);
   });
 
   ipcMain.handle('plans:getMaterials', async (event, planId, includeAssets) => {
@@ -1395,6 +1440,11 @@ function setupIPCHandlers() {
 
   ipcMain.handle('plans:getMaterialTree', async (event, planId, planBlueprintId) => {
     return getMaterialTree(planId, planBlueprintId || null);
+  });
+
+  ipcMain.handle('plans:getMaterialTreeNodeDetail', async (event, planBlueprintId) => {
+    const { getMaterialTreeNodeDetail } = require('./manufacturing-plans');
+    return getMaterialTreeNodeDetail(planBlueprintId);
   });
 
   // Manufacturing Summary Window

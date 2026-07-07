@@ -430,6 +430,14 @@ tr[data-editing="true"] .editable-cell {
   color: #888;
 }
 
+.stat-card .stat-meta-job-cost {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid #3a3a4e;
+  color: #b9bbbe;
+  cursor: help;
+}
+
 .description-section {
   background-color: #2a2a3e;
   border: 1px solid #3a3a4e;
@@ -1217,6 +1225,39 @@ td.price-cell .cell-input:focus {
 
 tr[data-editing="true"] {
   background-color: rgba(88, 101, 242, 0.05);
+}
+
+/* Build List Tab */
+.build-list-section-header {
+  margin: 0;
+  padding: 14px 16px 10px;
+  font-size: 13px;
+  font-weight: 700;
+  color: #b9bbbe;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  border-bottom: 1px solid #3a3a4e;
+}
+
+.build-list-section-header:not(:first-child) {
+  border-top: 1px solid #3a3a4e;
+  margin-top: 4px;
+}
+
+.build-list-subline {
+  font-size: 11px;
+  color: #72767d;
+  margin-top: 2px;
+}
+
+.mixed-value {
+  color: #faa61a;
+  font-style: italic;
+}
+
+.badge-reaction {
+  background: #9d7fff;
+  color: white;
 }
 
 /* Jobs Tab Section Styling */
@@ -2096,20 +2137,9 @@ tr[data-editing="true"] {
   white-space: nowrap;
 }
 
-.reaction-facility-select {
-  flex: 1;
-  max-width: 280px;
-  padding: 5px 8px;
-  background: var(--bg-primary);
-  color: var(--text-primary);
-  border: 1px solid var(--border-color);
-  border-radius: 5px;
+.reaction-readonly-value {
   font-size: 13px;
-}
-
-.reaction-facility-select option {
-  background: #1e1e2e;
-  color: #ffffff;
+  color: var(--text-primary);
 }
 
 .reaction-actions {
@@ -2254,6 +2284,255 @@ tr[data-editing="true"] {
 .material-tree .tree-node-material {
   border-left: 3px solid #4f545c;
   opacity: 0.9;
+}
+
+.tree-node-buildplan {
+  font-size: 11px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+/* ============================================================================
+   Blueprint Tree tab (.bp-tree) - a tree-table: fixed right-side data columns
+   under a labeled header so values align vertically; nested children
+   containers draw indent rails connecting parent to child.
+   Role colors: product #5865f2 (blue) / intermediate #43b581 (green) /
+   reaction #9d7fff (purple) / raw #72767d (gray).
+   ============================================================================ */
+.bp-tree {
+  background-color: #2a2a3e;
+  border: 1px solid #3a3a4e;
+  border-radius: 8px;
+  padding: 6px 12px 12px;
+  overflow-x: auto;
+}
+
+/* Shared row grid: toggle | name | qty | runs | ME | source | price | chip | details */
+.bp-header,
+.bp-row {
+  display: grid;
+  grid-template-columns: 22px minmax(140px, 1fr) 96px 64px 40px 118px 100px 116px 64px;
+  align-items: center;
+  gap: 8px;
+  min-width: 720px;
+}
+
+.bp-header {
+  padding: 8px 6px 6px;
+  border-bottom: 1px solid #3a3a4e;
+  margin-bottom: 4px;
+  font-size: 10px;
+  font-weight: 700;
+  color: #72767d;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+}
+
+.bp-header .bp-cell,
+.bp-header .bp-cell-chip {
+  text-align: right;
+}
+
+.bp-header .bp-cell-left {
+  text-align: left;
+}
+
+.bp-row {
+  padding: 5px 6px;
+  border-radius: 4px;
+}
+
+.bp-row:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+/* Product rows anchor the tree - slightly lifted, blue-tinted like the app's cards */
+.bp-row-product {
+  background: linear-gradient(90deg, rgba(88, 101, 242, 0.10), transparent 70%);
+}
+
+.bp-name {
+  font-size: 13px;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.bp-row-product .bp-name {
+  font-weight: 600;
+}
+
+.bp-row-raw .bp-name {
+  color: var(--text-secondary);
+}
+
+.bp-cell {
+  font-size: 12px;
+  color: var(--text-secondary);
+  text-align: right;
+  white-space: nowrap;
+}
+
+.bp-cell-left {
+  text-align: left;
+  font-size: 11px;
+}
+
+.bp-num {
+  font-family: 'Courier New', monospace;
+  color: #dcddde;
+}
+
+.bp-row-raw .bp-num {
+  color: var(--text-secondary);
+}
+
+/* Collapse chevron + leaf dots */
+.bp-toggle {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--text-secondary);
+  font-size: 12px;
+  width: 20px;
+  padding: 0;
+  text-align: center;
+}
+
+.bp-toggle:hover {
+  color: var(--text-primary);
+}
+
+.bp-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  justify-self: center;
+}
+
+.bp-dot-product { background: #5865f2; }
+.bp-dot-intermediate { background: #43b581; }
+.bp-dot-reaction { background: #9d7fff; }
+.bp-dot-raw { background: #4f545c; }
+
+/* Role chips - translucent tint + colored text, one consistent treatment */
+.bp-cell-chip {
+  text-align: right;
+}
+
+.bp-chip {
+  display: inline-block;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  padding: 2px 7px;
+  border-radius: 3px;
+  white-space: nowrap;
+}
+
+.bp-chip-product {
+  color: #7c88ff;
+  background: rgba(88, 101, 242, 0.14);
+  border: 1px solid rgba(88, 101, 242, 0.35);
+}
+
+.bp-chip-intermediate {
+  color: #43b581;
+  background: rgba(67, 181, 129, 0.12);
+  border: 1px solid rgba(67, 181, 129, 0.3);
+}
+
+.bp-chip-reaction {
+  color: #b9a3ff;
+  background: rgba(157, 127, 255, 0.12);
+  border: 1px solid rgba(157, 127, 255, 0.35);
+}
+
+.bp-chip-raw {
+  color: #8e9297;
+  background: rgba(114, 118, 125, 0.12);
+  border: 1px solid rgba(114, 118, 125, 0.3);
+}
+
+/* Indent rails: each children container draws a guide line under its parent's chevron */
+.bp-children {
+  margin-left: 10px;
+  padding-left: 11px;
+  border-left: 1px solid #3a3a4e;
+}
+
+/* Details button + panel */
+.bp-cell-btn {
+  text-align: right;
+}
+
+.bp-details-btn {
+  background: none;
+  border: 1px solid var(--border-color);
+  color: var(--text-secondary);
+  border-radius: 4px;
+  font-size: 10px;
+  padding: 2px 8px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.bp-details-btn:hover {
+  color: var(--text-primary);
+  border-color: var(--text-primary);
+}
+
+.bp-detail {
+  margin: 2px 6px 6px 30px;
+  padding: 10px 14px;
+  background: rgba(88, 101, 242, 0.05);
+  border: 1px solid #3a3a4e;
+  border-radius: 4px;
+  font-size: 12px;
+}
+
+.bp-detail-stats {
+  display: flex;
+  gap: 22px;
+  flex-wrap: wrap;
+}
+
+.bp-detail-stat {
+  color: var(--text-primary);
+  font-family: 'Courier New', monospace;
+  font-size: 12px;
+}
+
+.bp-detail-label {
+  display: block;
+  font-family: inherit;
+  font-size: 9px;
+  font-weight: 700;
+  color: #72767d;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 2px;
+}
+
+.bp-detail-materials {
+  margin-top: 10px;
+}
+
+.bp-detail-materials ul {
+  margin: 4px 0 0 0;
+  padding-left: 18px;
+  color: var(--text-secondary);
+  columns: 2;
+  column-gap: 32px;
+}
+
+.bp-detail-materials li {
+  margin-bottom: 2px;
+  break-inside: avoid;
 }
 
 .tree-collapse-btn {

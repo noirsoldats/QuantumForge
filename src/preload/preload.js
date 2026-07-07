@@ -178,6 +178,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     markIntermediateBuilt: (intermediateBlueprintId, builtRuns) => ipcRenderer.invoke('plans:markIntermediateBuilt', intermediateBlueprintId, builtRuns),
     // Reaction functions
     getReactions: (planId) => ipcRenderer.invoke('plans:getReactions', planId),
+    setReactionChildBuildPlan: (planId, reactionTypeId, childTypeId, buildPlan) => ipcRenderer.invoke('plans:setReactionChildBuildPlan', planId, reactionTypeId, childTypeId, buildPlan),
+    calculateReactionTree: (reactionBlueprintId, runs, characterId, facilityId, marketSetId) => ipcRenderer.invoke('plans:calculateReactionTree', reactionBlueprintId, runs, characterId, facilityId, marketSetId),
+    getBuildItems: (planId) => ipcRenderer.invoke('plans:getBuildItems', planId),
+    updateBuildItemsByType: (planId, itemType, blueprintTypeId, updates) => ipcRenderer.invoke('plans:updateBuildItemsByType', planId, itemType, blueprintTypeId, updates),
     markReactionBuilt: (planBlueprintId, builtRuns) => ipcRenderer.invoke('plans:markReactionBuilt', planBlueprintId, builtRuns),
     getMaterials: (planId, includeAssets) => ipcRenderer.invoke('plans:getMaterials', planId, includeAssets),
     getProducts: (planId) => ipcRenderer.invoke('plans:getProducts', planId),
@@ -215,6 +219,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     cleanupExcessAcquisitions: (planId, typeId) => ipcRenderer.invoke('plans:cleanupExcessAcquisitions', planId, typeId),
     getAcquisitionLog: (planId, typeId) => ipcRenderer.invoke('plans:getAcquisitionLog', planId, typeId),
     getMaterialTree: (planId, planBlueprintId) => ipcRenderer.invoke('plans:getMaterialTree', planId, planBlueprintId),
+    getMaterialTreeNodeDetail: (planBlueprintId) => ipcRenderer.invoke('plans:getMaterialTreeNodeDetail', planBlueprintId),
   },
 
   // Location API

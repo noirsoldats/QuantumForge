@@ -56,6 +56,9 @@ let selectedBlueprintTypeId = null;
 let facilities = [];
 let materialsTreeView = false;
 const materialsNodeCollapsed = new Map();
+const blueprintTreeNodeCollapsed = new Map();
+const blueprintTreeNodeDetailOpen = new Map(); // nodeId -> bool, detail panel expanded
+const blueprintTreeNodeDetailCache = new Map(); // sourcePlanBlueprintId -> detail response
 let autoRefreshInterval = null;
 let bulkEditMode = false;
 
@@ -333,6 +336,9 @@ async function loadTabContent(tabName) {
     case 'blueprints':
       await loadBlueprints();
       break;
+    case 'build-list':
+      await loadBuildList();
+      break;
     case 'materials':
       await loadMaterials();
       break;
@@ -341,6 +347,9 @@ async function loadTabContent(tabName) {
       break;
     case 'reactions':
       await loadReactions();
+      break;
+    case 'blueprint-tree':
+      await loadBlueprintTree();
       break;
     case 'jobs':
       await loadJobs();
@@ -363,6 +372,11 @@ async function loadOverview() {
 
   document.getElementById('overview-material-cost').textContent = formatISK(summary.materialCost);
   document.getElementById('overview-material-meta').textContent = `${summary.materialsWithPrice}/${summary.totalMaterials} priced`;
+
+  const jobCost = summary.jobInstallationCost || 0;
+  const jobCount = summary.jobCount || 0;
+  document.getElementById('overview-job-cost').textContent =
+    `+ ${formatISK(jobCost)} job installation${jobCount > 0 ? ` (${jobCount} job${jobCount === 1 ? '' : 's'})` : ''}`;
 
   document.getElementById('overview-product-value').textContent = formatISK(summary.productValue);
   document.getElementById('overview-product-meta').textContent = `${summary.productsWithPrice}/${summary.totalProducts} priced`;
@@ -446,6 +460,13 @@ async function loadBlueprints() {
     // Calculate runs per line for display hint
     const runsPerLine = Math.ceil(blueprint.runs / blueprint.lines);
 
+    // ME/TE/Facility/Build Plan are read-only here - they're edited per item type on the
+    // Build List tab. Only Runs/Lines (per plan entry) stay editable on this tab.
+    const buildPlanText = blueprint.useIntermediates === 'components' ? 'Buy Components'
+      : blueprint.useIntermediates === 'buy' ? 'Buy Intermediate'
+      : blueprint.useIntermediates === 'build_buy' ? 'Build/Buy'
+      : 'Raw Materials';
+
     html += `
       <tr data-blueprint-id="${blueprint.planBlueprintId}" data-editing="false" class="top-level-blueprint">
         <td><strong>${escapeHtml(name)}</strong></td>
@@ -457,30 +478,10 @@ async function loadBlueprints() {
           <span class="cell-value">${blueprint.lines}<span class="runs-per-line-hint">(${runsPerLine}/line)</span></span>
           <input type="number" class="cell-input" value="${blueprint.lines}" min="1" style="display: none;">
         </td>
-        <td class="editable-cell" data-field="meLevel">
-          <span class="cell-value">${blueprint.meLevel}</span>
-          <input type="number" class="cell-input" value="${blueprint.meLevel}" min="0" max="10" style="display: none;">
-        </td>
-        <td class="editable-cell" data-field="teLevel">
-          <span class="cell-value">${blueprint.teLevel || 0}</span>
-          <input type="number" class="cell-input" value="${blueprint.teLevel || 0}" min="0" max="20" style="display: none;">
-        </td>
-        <td class="editable-cell" data-field="facilityId">
-          <span class="cell-value">${escapeHtml(facilityName)}</span>
-          <select class="cell-input" style="display: none;">
-            <option value="">No facility</option>
-            ${facilities.map(f => `<option value="${f.id}" ${f.id === facilityId ? 'selected' : ''}>${escapeHtml(f.name)}</option>`).join('')}
-          </select>
-        </td>
-        <td class="editable-cell" data-field="useIntermediates">
-          <span class="cell-value">${blueprint.useIntermediates === 'raw_materials' ? 'Raw Materials' : blueprint.useIntermediates === 'components' ? 'Buy Components' : blueprint.useIntermediates === 'buy' ? 'Buy Intermediate' : blueprint.useIntermediates === 'build_buy' ? 'Build/Buy' : 'Raw Materials'}</span>
-          <select class="cell-input" style="display: none;">
-            <option value="raw_materials" ${(!blueprint.useIntermediates || blueprint.useIntermediates === 'raw_materials') ? 'selected' : ''}>Raw Materials</option>
-            <option value="components" ${blueprint.useIntermediates === 'components' ? 'selected' : ''}>Buy Components</option>
-            <option value="buy" ${blueprint.useIntermediates === 'buy' ? 'selected' : ''}>Buy Intermediate</option>
-            <option value="build_buy" ${blueprint.useIntermediates === 'build_buy' ? 'selected' : ''} disabled>Build/Buy (Coming in a future update)</option>
-          </select>
-        </td>
+        <td>${blueprint.meLevel}</td>
+        <td>${blueprint.teLevel || 0}</td>
+        <td>${escapeHtml(facilityName)}</td>
+        <td>${buildPlanText}</td>
         <td class="blueprint-actions">
           <button class="secondary-button small edit-btn" data-action="edit">Edit</button>
           <button class="primary-button small save-btn" data-action="save" style="display: none;">Save</button>
@@ -500,7 +501,6 @@ async function loadBlueprints() {
         const intName = names[intermediate.blueprintTypeId] || `Type ${intermediate.blueprintTypeId}`;
         const intProductName = productNames[intermediate.intermediateProductTypeId] || `Type ${intermediate.intermediateProductTypeId}`;
         const intFacilityName = intermediate.facilitySnapshot ? (intermediate.facilitySnapshot.name || 'Unknown') : 'None';
-        const intFacilityId = intermediate.facilityId || '';
 
         // Build status badge with partial quantity support
         let builtBadge = '';
@@ -522,6 +522,13 @@ async function loadBlueprints() {
         // Create indent arrow based on depth
         const arrow = '↳' + '\u00A0'.repeat(depth - 1); // Arrow + non-breaking spaces for nested levels
 
+        // Intermediates are read-only here (ME/TE/Facility/Build Plan are edited per item
+        // type on the Build List tab); only Mark Built remains interactive.
+        const intBuildPlanText = intermediate.useIntermediates === 'components' ? 'Buy Components'
+          : intermediate.useIntermediates === 'buy' ? 'Buy Intermediate'
+          : intermediate.useIntermediates === 'build_buy' ? 'Build/Buy'
+          : 'Raw Materials';
+
         html += `
           <tr data-blueprint-id="${intermediate.planBlueprintId}" data-editing="false" class="intermediate-blueprint" data-depth="${depth}">
             <td style="padding-left: ${indentPx}px;">
@@ -530,41 +537,14 @@ async function loadBlueprints() {
             </td>
             <td>${runsNeeded.toLocaleString()}</td>
             <td><span style="color: #72767d;">-</span></td>
-            <td class="editable-cell" data-field="meLevel">
-              <span class="cell-value">${intermediate.meLevel}</span>
-              <input type="number" class="cell-input" value="${intermediate.meLevel}" min="0" max="10" style="display: none;">
-            </td>
-            <td class="editable-cell" data-field="teLevel">
-              <span class="cell-value">${intermediate.teLevel || 0}</span>
-              <input type="number" class="cell-input" value="${intermediate.teLevel || 0}" min="0" max="20" style="display: none;">
-            </td>
-            <td class="editable-cell" data-field="facilityId">
-              <span class="cell-value">${escapeHtml(intFacilityName)}</span>
-              <select class="cell-input" style="display: none;">
-                <option value="">No facility</option>
-                ${facilities.map(f => `<option value="${f.id}" ${f.id === intFacilityId ? 'selected' : ''}>${escapeHtml(f.name)}</option>`).join('')}
-              </select>
-            </td>
-            <td class="editable-cell" data-field="useIntermediates">
-              <span class="cell-value">
-                ${intermediate.useIntermediates === 'components' ? 'Buy Components' :
-                  intermediate.useIntermediates === 'buy' ? 'Buy Intermediate' :
-                  intermediate.useIntermediates === 'build_buy' ? 'Build/Buy' : 'Raw Materials'}
-              </span>
-              <select class="cell-input" style="display: none;">
-                <option value="raw_materials" ${(!intermediate.useIntermediates || intermediate.useIntermediates === 'raw_materials') ? 'selected' : ''}>Raw Materials</option>
-                <option value="components" ${intermediate.useIntermediates === 'components' ? 'selected' : ''}>Buy Components</option>
-                <option value="buy" ${intermediate.useIntermediates === 'buy' ? 'selected' : ''}>Buy Intermediate</option>
-                <option value="build_buy" ${intermediate.useIntermediates === 'build_buy' ? 'selected' : ''} disabled>Build/Buy (Coming in a future update)</option>
-              </select>
-            </td>
+            <td>${intermediate.meLevel}</td>
+            <td>${intermediate.teLevel || 0}</td>
+            <td>${escapeHtml(intFacilityName)}</td>
+            <td>${intBuildPlanText}</td>
             <td class="blueprint-actions">
               <button class="secondary-button small toggle-built-btn" data-action="toggle-built" data-is-built="${intermediate.isBuilt ? '1' : '0'}">
                 ${intermediate.builtRuns > 0 ? 'Edit Built Qty' : 'Mark Built'}
               </button>
-              <button class="secondary-button small edit-btn" data-action="edit">Edit</button>
-              <button class="primary-button small save-btn" data-action="save" style="display: none;">Save</button>
-              <button class="secondary-button small cancel-btn" data-action="cancel" style="display: none;">Cancel</button>
             </td>
           </tr>
         `;
@@ -592,27 +572,274 @@ async function loadBlueprints() {
     row.querySelector('[data-action="remove"]')?.addEventListener('click', () => removeBlueprint(blueprintId));
   });
 
-  // Add event listeners for intermediate blueprint actions
+  // Add event listeners for intermediate blueprint actions (read-only rows - only Mark Built)
   container.querySelectorAll('.intermediate-blueprint').forEach(row => {
     const blueprintId = row.dataset.blueprintId;
     row.querySelector('[data-action="toggle-built"]')?.addEventListener('click', (e) => toggleIntermediateBuilt(blueprintId, e.target.dataset.isBuilt === '1'));
-    row.querySelector('[data-action="edit"]')?.addEventListener('click', () => editIntermediateBlueprint(blueprintId));
-    row.querySelector('[data-action="save"]')?.addEventListener('click', () => saveIntermediateBlueprintEdit(blueprintId));
-    row.querySelector('[data-action="cancel"]')?.addEventListener('click', () => cancelIntermediateBlueprintEdit(blueprintId));
   });
+}
+
+// ============================================================================
+// BUILD LIST TAB - aggregated per-type editing home for ME/TE/Build Plan/etc.
+// ============================================================================
+
+/** True when a per-field value from getPlanBuildItems is a { mixed: true } marker. */
+function isMixedValue(v) {
+  return v !== null && typeof v === 'object' && v.mixed === true;
+}
+
+async function loadBuildList() {
+  const container = document.getElementById('build-list-container');
+  if (!container) return;
+
+  try {
+    const items = await window.electronAPI.plans.getBuildItems(selectedPlanId);
+
+    if (items.length === 0) {
+      container.innerHTML = renderEmptyState(
+        'Nothing to build yet',
+        'Add blueprints to this plan and every blueprint and reaction it uses will be listed here.',
+        '<rect x="2" y="7" width="20" height="14" rx="2"></rect><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"></path>'
+      );
+      return;
+    }
+
+    renderBuildList(items);
+  } catch (error) {
+    console.error('Error loading build list:', error);
+    container.innerHTML = `<div class="error-state"><p>Error loading build list: ${error.message}</p></div>`;
+  }
+}
+
+function renderBuildList(items) {
+  const container = document.getElementById('build-list-container');
+
+  const sections = [
+    { title: 'Blueprints', roles: ['blueprint'] },
+    { title: 'Intermediates', roles: ['intermediate'] },
+    { title: 'Reactions', roles: ['reaction', 'sub-reaction'] }
+  ];
+
+  const roleBadge = (role) => {
+    switch (role) {
+      case 'blueprint': return '<span class="badge badge-product">BLUEPRINT</span>';
+      case 'intermediate': return '<span class="badge badge-intermediate">INTERMEDIATE</span>';
+      case 'reaction': return '<span class="badge badge-reaction">REACTION</span>';
+      case 'sub-reaction': return '<span class="badge badge-reaction">SUB-REACTION</span>';
+      default: return '';
+    }
+  };
+
+  const buildPlanLabel = (v) => v === 'components' ? 'Buy Components' : v === 'buy' ? 'Buy Intermediate' : 'Raw Materials';
+  const facilityName = (id) => {
+    if (!id) return 'None';
+    const fac = facilities.find(f => String(f.id) === String(id));
+    return fac ? fac.name : 'Unknown';
+  };
+  const mixedSpan = '<em class="mixed-value">Mixed</em>';
+
+  let html = '';
+
+  for (const section of sections) {
+    const sectionItems = items.filter(i => section.roles.includes(i.role));
+    if (sectionItems.length === 0) continue;
+
+    html += `<h4 class="build-list-section-header">${section.title}</h4>`;
+    html += `
+      <table class="blueprints-table build-list-table">
+        <thead>
+          <tr>
+            <th>Item</th>
+            <th>Uses</th>
+            <th>Runs</th>
+            <th>Lines</th>
+            <th>ME</th>
+            <th>TE</th>
+            <th>Facility</th>
+            <th>Build Plan</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+    `;
+
+    for (const item of sectionItems) {
+      const isReaction = item.itemType === 'reaction';
+      const rowKey = `${item.itemType}:${item.blueprintTypeId}`;
+
+      // Item cell: name + role badge, product subline when it differs
+      let itemCell = `<strong>${escapeHtml(item.typeName)}</strong> ${roleBadge(item.role)}`;
+      if (item.productName && item.productName !== item.typeName) {
+        itemCell += `<div class="build-list-subline">Product: ${escapeHtml(item.productName)}</div>`;
+      }
+
+      // Runs/Lines: editable only for single top-level manufacturing instances
+      const runsCell = item.runsEditable
+        ? `<td class="editable-cell" data-field="runs">
+             <span class="cell-value">${formatNumber(item.runs)}</span>
+             <input type="number" class="cell-input" value="${item.runs}" min="1" style="display: none;">
+           </td>`
+        : `<td>${formatNumber(item.totalRuns)}</td>`;
+      const linesCell = item.runsEditable
+        ? `<td class="editable-cell" data-field="lines">
+             <span class="cell-value">${item.lines}</span>
+             <input type="number" class="cell-input" value="${item.lines}" min="1" style="display: none;">
+           </td>`
+        : `<td>—</td>`;
+
+      // ME/TE: manufacturing only; Mixed placeholder input starts blank (blank = leave unchanged)
+      const numberCell = (field, value) => {
+        if (isReaction) return '<td>—</td>';
+        const mixed = isMixedValue(value);
+        const max = field === 'meLevel' ? 10 : 20;
+        return `<td class="editable-cell" data-field="${field}" ${mixed ? 'title="Instances differ - saving a value applies it to all uses"' : ''}>
+          <span class="cell-value">${mixed ? mixedSpan : (value ?? 0)}</span>
+          <input type="number" class="cell-input" value="${mixed ? '' : (value ?? 0)}" placeholder="${mixed ? 'Mixed' : ''}" min="0" max="${max}" style="display: none;">
+        </td>`;
+      };
+
+      // Facility select (blank option when mixed; blank = leave unchanged)
+      const facilityMixed = isMixedValue(item.facilityId);
+      const facilityOptions = [
+        facilityMixed ? '<option value="" selected>— Mixed —</option>' : '',
+        `<option value=""${!facilityMixed && !item.facilityId ? ' selected' : ''}>No facility</option>`,
+        ...facilities.map(f => `<option value="${f.id}"${!facilityMixed && String(f.id) === String(item.facilityId) ? ' selected' : ''}>${escapeHtml(f.name)}</option>`)
+      ].join('');
+      const facilityCell = `<td class="editable-cell" data-field="facilityId" ${facilityMixed ? 'title="Instances differ - picking a facility applies it to all uses"' : ''}>
+        <span class="cell-value">${facilityMixed ? mixedSpan : escapeHtml(facilityName(item.facilityId))}</span>
+        <select class="cell-input" style="display: none;">${facilityOptions}</select>
+      </td>`;
+
+      // Build Plan select
+      const bpMixed = isMixedValue(item.useIntermediates);
+      const bpValue = bpMixed ? null : (item.useIntermediates || 'raw_materials');
+      const buildPlanCell = `<td class="editable-cell" data-field="useIntermediates" ${bpMixed ? 'title="Instances differ - picking a plan applies it to all uses"' : ''}>
+        <span class="cell-value">${bpMixed ? mixedSpan : buildPlanLabel(bpValue)}</span>
+        <select class="cell-input" style="display: none;">
+          ${bpMixed ? '<option value="" selected>— Mixed —</option>' : ''}
+          <option value="raw_materials"${bpValue === 'raw_materials' ? ' selected' : ''}>Raw Materials</option>
+          <option value="components"${bpValue === 'components' ? ' selected' : ''}>Buy Components</option>
+          <option value="buy"${bpValue === 'buy' ? ' selected' : ''}>Buy Intermediate</option>
+        </select>
+      </td>`;
+
+      html += `
+        <tr class="build-list-row" data-row-key="${rowKey}" data-item-type="${item.itemType}" data-blueprint-type-id="${item.blueprintTypeId}" data-editing="false">
+          <td>${itemCell}</td>
+          <td>${item.instanceCount > 1 ? item.instanceCount : '—'}</td>
+          ${runsCell}
+          ${linesCell}
+          ${numberCell('meLevel', item.meLevel)}
+          ${numberCell('teLevel', item.teLevel)}
+          ${facilityCell}
+          ${buildPlanCell}
+          <td class="blueprint-actions">
+            <button class="secondary-button small" data-action="edit">Edit</button>
+            <button class="primary-button small" data-action="save" style="display: none;">Save</button>
+            <button class="secondary-button small" data-action="cancel" style="display: none;">Cancel</button>
+          </td>
+        </tr>
+      `;
+    }
+
+    html += '</tbody></table>';
+  }
+
+  container.innerHTML = html;
+
+  container.querySelectorAll('.build-list-row').forEach(row => {
+    row.querySelector('[data-action="edit"]')?.addEventListener('click', () => toggleBuildListRowEditing(row, true));
+    row.querySelector('[data-action="cancel"]')?.addEventListener('click', () => toggleBuildListRowEditing(row, false));
+    row.querySelector('[data-action="save"]')?.addEventListener('click', () => saveBuildListRow(row));
+  });
+}
+
+/** Flip a Build List row between display and edit mode (same pattern as the Blueprints tab). */
+function toggleBuildListRowEditing(row, editing) {
+  row.dataset.editing = editing ? 'true' : 'false';
+  row.querySelectorAll('.editable-cell').forEach(cell => {
+    const value = cell.querySelector('.cell-value');
+    const input = cell.querySelector('.cell-input');
+    if (value) value.style.display = editing ? 'none' : '';
+    if (input) input.style.display = editing ? '' : 'none';
+  });
+  row.querySelector('[data-action="edit"]').style.display = editing ? 'none' : '';
+  row.querySelector('[data-action="save"]').style.display = editing ? '' : 'none';
+  row.querySelector('[data-action="cancel"]').style.display = editing ? '' : 'none';
+}
+
+async function saveBuildListRow(row) {
+  const itemType = row.dataset.itemType;
+  const blueprintTypeId = parseInt(row.dataset.blueprintTypeId);
+
+  const updates = {};
+  row.querySelectorAll('.editable-cell').forEach(cell => {
+    const field = cell.dataset.field;
+    const input = cell.querySelector('.cell-input');
+    if (!input) return;
+    const val = input.value;
+    // Blank means "left on the Mixed placeholder" - don't overwrite instances
+    if (val === '') return;
+
+    if (field === 'facilityId') {
+      updates.facilityId = val || null;
+      const fac = facilities.find(f => String(f.id) === String(val));
+      updates.facilitySnapshot = fac || null;
+    } else if (field === 'useIntermediates') {
+      updates.useIntermediates = val;
+    } else {
+      updates[field] = parseInt(val);
+    }
+  });
+
+  if (Object.keys(updates).length === 0) {
+    toggleBuildListRowEditing(row, false);
+    return;
+  }
+
+  try {
+    showLoading('Updating and recalculating...');
+    const success = await window.electronAPI.plans.updateBuildItemsByType(
+      selectedPlanId,
+      itemType,
+      blueprintTypeId,
+      updates
+    );
+    if (!success) {
+      showToast('Failed to update item', 'error');
+      return;
+    }
+    // Reaction trees are cached without build-plan awareness - clear before re-render
+    await window.electronAPI.reactions.clearCaches();
+    await loadBuildList();
+    await loadOverview();
+    await loadPlans();
+    showToast('Item updated', 'success');
+  } catch (error) {
+    console.error('Error saving build list row:', error);
+    showToast('Failed to update item: ' + error.message, 'error');
+  } finally {
+    hideLoading();
+  }
 }
 
 /**
  * Categorize a material based on its category and group IDs
  * @param {Object} categoryInfo - { categoryID, groupID }
- * @returns {string} Category name: 'Minerals', 'Reaction Materials', 'Planetary Materials', or 'Other'
+ * @returns {string} Category name: 'Minerals', 'Ice Products', 'Reaction Materials', 'Planetary Materials', or 'Other'
  */
 function categorizeMaterial(categoryInfo) {
   const { categoryID, groupID } = categoryInfo;
 
   // Minerals: categoryID = 4 AND groupID = 18
-  if (categoryID === 4 && ([18, 422, 423].includes(groupID))) {
+  if (categoryID === 4 && ([18, 422].includes(groupID))) {
     return 'Minerals';
+  }
+
+  // Ice Products: categoryID = 4 AND groupID = 423 (Heavy Water, Liquid Ozone,
+  // Strontium Clathrates, and the four Isotopes - Oxygen/Helium/Hydrogen/Nitrogen)
+  if (categoryID === 4 && groupID === 423) {
+    return 'Ice Products';
   }
 
   // Reaction Materials:
@@ -650,6 +877,7 @@ function categorizeMaterial(categoryInfo) {
 function groupMaterialsByCategory(materials, categoryInfoMap) {
   const groups = {
     'Minerals': [],
+    'Ice Products': [],
     'Reaction Materials': [],
     'Planetary Materials': [],
     'Gas Cloud Materials': [],
@@ -748,6 +976,224 @@ function renderMaterialTree(treeNodes) {
   });
 }
 
+/**
+ * Load the Blueprint Tree tab: the full plan-wide manufacturing + reaction dependency tree,
+ * read-only, with expandable per-node detail panels (ME/TE, direct materials, time, job cost).
+ */
+async function loadBlueprintTree() {
+  const container = document.getElementById('blueprint-tree-container');
+  if (!container) return;
+
+  try {
+    const treeData = await window.electronAPI.plans.getMaterialTree(selectedPlanId);
+    renderBlueprintTree(treeData);
+  } catch (error) {
+    console.error('Error loading blueprint tree:', error);
+    container.innerHTML = `<div class="error-state"><p>Error loading blueprint tree: ${error.message}</p></div>`;
+  }
+}
+
+function renderBlueprintTree(treeNodes) {
+  const container = document.getElementById('blueprint-tree-container');
+  if (!container) return;
+
+  if (!treeNodes || treeNodes.length === 0) {
+    container.innerHTML = renderEmptyState(
+      'No blueprint tree data',
+      'Add blueprints to this plan and the dependency tree will be calculated automatically.',
+      '<rect x="2" y="7" width="20" height="14" rx="2"></rect><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"></path>'
+    );
+    return;
+  }
+
+  // Role: product (blue) / reaction (purple) / intermediate (green) / raw (gray)
+  const nodeRole = (node) => {
+    if (node.nodeType === 'product') return 'product';
+    if (node.nodeType === 'intermediate') return node.isReaction ? 'reaction' : 'intermediate';
+    return 'raw';
+  };
+
+  const buildPlanLabel = (buildPlan) => {
+    if (buildPlan === 'components') return 'Buy Components';
+    if (buildPlan === 'buy') return 'Buy Intermediate';
+    return 'Raw Materials';
+  };
+
+  // Column header row - shares the row grid so labels align with the data columns below
+  let html = `
+    <div class="bp-tree">
+      <div class="bp-header">
+        <span></span>
+        <span class="bp-header-name">Item</span>
+        <span class="bp-cell">Quantity</span>
+        <span class="bp-cell">Runs</span>
+        <span class="bp-cell">ME</span>
+        <span class="bp-cell bp-cell-left">Source</span>
+        <span class="bp-cell">Price/ea</span>
+        <span class="bp-cell-chip">Type</span>
+        <span></span>
+      </div>
+  `;
+
+  function renderNode(node) {
+    const hasChildren = node.children && node.children.length > 0;
+    const isCollapsed = blueprintTreeNodeCollapsed.get(node.nodeId);
+    const isDetailOpen = blueprintTreeNodeDetailOpen.get(node.nodeId);
+    const role = nodeRole(node);
+
+    const toggle = hasChildren
+      ? `<button class="bp-toggle" data-node-id="${node.nodeId}" aria-label="${isCollapsed ? 'Expand' : 'Collapse'}">${isCollapsed ? '&#9656;' : '&#9662;'}</button>`
+      : `<span class="bp-dot bp-dot-${role}"></span>`;
+
+    // Raw material leaves have no blueprint/reaction behind them - their
+    // sourcePlanBlueprintId (when set) points at the PARENT's row, so a Details
+    // button there would misleadingly show the parent's stats. Buildable nodes only.
+    const detailBtn = (node.nodeType !== 'material' && node.sourcePlanBlueprintId)
+      ? `<button class="bp-details-btn" data-node-id="${node.nodeId}" data-source-id="${node.sourcePlanBlueprintId}">${isDetailOpen ? 'Hide' : 'Details'}</button>`
+      : '';
+
+    // Fixed columns keep values vertically aligned across rows; blanks stay blank
+    // (under a labeled header) instead of collapsing the row's layout.
+    const showSource = node.nodeType !== 'material' && node.buildPlan;
+
+    html += `<div class="bp-node" data-node-id="${node.nodeId}">`;
+    html += `
+      <div class="bp-row bp-row-${role}">
+        ${toggle}
+        <span class="bp-name" title="${escapeHtml(node.typeName)}">${escapeHtml(node.typeName)}</span>
+        <span class="bp-cell bp-num">${formatNumber(node.quantityNeeded)}</span>
+        <span class="bp-cell bp-num">${node.runsNeeded != null ? formatNumber(node.runsNeeded) : ''}</span>
+        <span class="bp-cell bp-num">${node.meLevel != null ? node.meLevel : ''}</span>
+        <span class="bp-cell bp-cell-left">${showSource ? buildPlanLabel(node.buildPlan) : ''}</span>
+        <span class="bp-cell bp-num">${node.priceEach ? formatISK(node.priceEach) : ''}</span>
+        <span class="bp-cell-chip"><span class="bp-chip bp-chip-${role}">${role.toUpperCase()}</span></span>
+        <span class="bp-cell-btn">${detailBtn}</span>
+      </div>
+    `;
+    html += `<div class="bp-detail" data-detail-for="${node.nodeId}" style="display: ${isDetailOpen ? 'block' : 'none'};"></div>`;
+
+    if (hasChildren) {
+      html += `<div class="bp-children" data-children-for="${node.nodeId}" style="display: ${isCollapsed ? 'none' : 'block'};">`;
+      for (const child of node.children) {
+        renderNode(child);
+      }
+      html += '</div>';
+    }
+
+    html += '</div>';
+  }
+
+  for (const rootNode of treeNodes) {
+    renderNode(rootNode);
+  }
+
+  html += '</div>';
+  container.innerHTML = html;
+
+  // Collapse toggles flip the children container in place - no re-render needed
+  container.querySelectorAll('.bp-toggle').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      const nodeId = e.currentTarget.dataset.nodeId;
+      const collapsed = !blueprintTreeNodeCollapsed.get(nodeId);
+      blueprintTreeNodeCollapsed.set(nodeId, collapsed);
+      const childrenEl = container.querySelector(`.bp-children[data-children-for="${nodeId}"]`);
+      if (childrenEl) childrenEl.style.display = collapsed ? 'none' : 'block';
+      e.currentTarget.innerHTML = collapsed ? '&#9656;' : '&#9662;';
+      e.currentTarget.setAttribute('aria-label', collapsed ? 'Expand' : 'Collapse');
+    });
+  });
+
+  // Detail panels - fetch lazily on first open, cache thereafter
+  container.querySelectorAll('.bp-details-btn').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      const nodeId = e.currentTarget.dataset.nodeId;
+      const sourceId = e.currentTarget.dataset.sourceId;
+      const currentlyOpen = blueprintTreeNodeDetailOpen.get(nodeId);
+      blueprintTreeNodeDetailOpen.set(nodeId, !currentlyOpen);
+
+      const detailPanel = container.querySelector(`.bp-detail[data-detail-for="${nodeId}"]`);
+      if (!detailPanel) return;
+
+      if (currentlyOpen) {
+        detailPanel.style.display = 'none';
+        e.currentTarget.textContent = 'Details';
+        return;
+      }
+
+      e.currentTarget.textContent = 'Hide';
+      detailPanel.style.display = 'block';
+
+      let detail = blueprintTreeNodeDetailCache.get(sourceId);
+      if (!detail) {
+        detailPanel.innerHTML = '<p class="empty-hint">Loading...</p>';
+        try {
+          detail = await window.electronAPI.plans.getMaterialTreeNodeDetail(sourceId);
+          blueprintTreeNodeDetailCache.set(sourceId, detail);
+        } catch (error) {
+          console.error('Error loading node detail:', error);
+          detailPanel.innerHTML = `<p class="empty-hint">Failed to load details: ${error.message}</p>`;
+          return;
+        }
+      }
+
+      detailPanel.innerHTML = renderBlueprintTreeNodeDetail(detail);
+    });
+  });
+}
+
+function renderBlueprintTreeNodeDetail(detail) {
+  if (!detail) {
+    return '<p class="empty-hint">No detail available for this node.</p>';
+  }
+
+  let html = '<div class="bp-detail-stats">';
+  html += `<span class="bp-detail-stat"><span class="bp-detail-label">Runs</span>${formatNumber(detail.runs)}</span>`;
+  if (detail.blueprintType !== 'reaction') {
+    html += `<span class="bp-detail-stat"><span class="bp-detail-label">ME</span>${detail.meLevel ?? 0}</span>`;
+    html += `<span class="bp-detail-stat"><span class="bp-detail-label">TE</span>${detail.teLevel ?? 0}</span>`;
+  }
+  if (detail.time != null) {
+    html += `<span class="bp-detail-stat"><span class="bp-detail-label">Time</span>${formatTime(detail.time)}</span>`;
+  }
+  if (detail.jobCost != null) {
+    html += `<span class="bp-detail-stat"><span class="bp-detail-label">Job Cost</span>${formatISK(detail.jobCost)}</span>`;
+  }
+  html += '</div>';
+
+  if (detail.materials && detail.materials.length > 0) {
+    html += '<div class="bp-detail-materials">';
+    html += '<span class="bp-detail-label">Direct Material Inputs</span>';
+    html += '<ul>';
+    for (const mat of detail.materials) {
+      html += `<li>${escapeHtml(mat.typeName)} <span class="bp-num">×${formatNumber(mat.quantity)}</span></li>`;
+    }
+    html += '</ul>';
+    html += '</div>';
+  }
+
+  return html;
+}
+
+/**
+ * Format seconds as a human-readable duration (e.g. "1d 4h 30m").
+ */
+function formatTime(seconds) {
+  if (!seconds || seconds <= 0) return '0s';
+
+  const days = Math.floor(seconds / 86400);
+  const hours = Math.floor((seconds % 86400) / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const secs = Math.floor(seconds % 60);
+
+  const parts = [];
+  if (days > 0) parts.push(`${days}d`);
+  if (hours > 0) parts.push(`${hours}h`);
+  if (minutes > 0) parts.push(`${minutes}m`);
+  if (secs > 0 || parts.length === 0) parts.push(`${secs}s`);
+
+  return parts.join(' ');
+}
+
 // Load materials tab
 async function loadMaterials() {
   const includeAssets = document.getElementById('include-assets-checkbox').checked;
@@ -806,7 +1252,7 @@ async function loadMaterials() {
   const groupedMaterials = groupMaterialsByCategory(materials, categoryInfo);
 
   // Category display order
-  const categoryOrder = ['Minerals', 'Reaction Materials', 'Planetary Materials', 'Gas Cloud Materials', 'Salvage Materials', 'Other'];
+  const categoryOrder = ['Minerals', 'Ice Products', 'Reaction Materials', 'Planetary Materials', 'Gas Cloud Materials', 'Salvage Materials', 'Other'];
 
   // Build HTML with collapsible category sections
   let html = `
@@ -1703,8 +2149,11 @@ async function loadReactions() {
   const container = document.getElementById('reactions-container');
 
   try {
-    // Get reactions from the plan
-    const reactions = await window.electronAPI.plans.getReactions(selectedPlanId);
+    // Get reactions from the plan - only render top-level reactions as cards; nested
+    // sub-reactions (e.g. Fernite Alloy feeding into Fernite Carbide) already appear inside
+    // their parent's tree, so rendering them again as separate cards would duplicate branches.
+    const allReactions = await window.electronAPI.plans.getReactions(selectedPlanId);
+    const reactions = allReactions.filter(r => r.isTopLevel);
 
     if (reactions.length === 0) {
       container.innerHTML = `
@@ -1743,11 +2192,15 @@ async function loadReactions() {
       try {
         // Get reaction calculation with runs — use the frozen facilitySnapshot so the
         // Reactions tab uses the same facility configuration as the stored Materials tab.
-        const calculation = await window.electronAPI.reactions.calculateMaterials(
-          reaction.reactionTypeId,
+        // calculateReactionTree (not the shared reactions.calculateMaterials) respects this
+        // reaction's own Build Plan choice and its children's, matching what actually gets
+        // persisted to the Materials tab shopping list.
+        const calculation = await window.electronAPI.plans.calculateReactionTree(
+          reaction.planBlueprintId,
           reaction.runs,
           null, // characterId
-          reaction.facilitySnapshot || reaction.facilityId
+          reaction.facilitySnapshot || reaction.facilityId,
+          activeMarketSet?.id
         );
 
         html += await renderReactionTree(reaction, calculation);
@@ -1763,12 +2216,6 @@ async function loadReactions() {
 
     container.innerHTML = html || '<div class="loading">No reaction data available</div>';
 
-    // Show save facilities button if there are reactions
-    const saveFacilitiesBtn = document.getElementById('save-reaction-facilities-btn');
-    if (saveFacilitiesBtn) {
-      saveFacilitiesBtn.style.display = reactions.length > 0 ? 'inline-flex' : 'none';
-    }
-
     // Attach event listeners for reaction actions
     attachReactionEventListeners();
 
@@ -1779,11 +2226,6 @@ async function loadReactions() {
         <p>Error loading reactions: ${error.message}</p>
       </div>
     `;
-    // Hide save facilities button on error
-    const saveFacilitiesBtn = document.getElementById('save-reaction-facilities-btn');
-    if (saveFacilitiesBtn) {
-      saveFacilitiesBtn.style.display = 'none';
-    }
   }
 }
 
@@ -1803,13 +2245,17 @@ async function renderReactionTree(reaction, calculation) {
     builtBadge = ` <span class="status-badge ${statusClass}">${formatNumber(reaction.builtRuns)}/${formatNumber(reaction.runs)} Built (${percentage}%)</span>`;
   }
 
-  // Build facility dropdown
-  let facilityOptions = '<option value="">No facility</option>';
-  facilities.forEach(facility => {
-    // Use string comparison to handle type mismatches
-    const selected = String(reaction.facilityId) === String(facility.id) ? 'selected' : '';
-    facilityOptions += `<option value="${facility.id}" ${selected}>${escapeHtml(facility.name)}</option>`;
-  });
+  // Read-only facility + Build Plan labels - all editing lives on the Build List tab
+  const facilityDisplayName = (() => {
+    if (!reaction.facilityId) return 'None';
+    if (reaction.facilitySnapshot?.name) return reaction.facilitySnapshot.name;
+    const fac = facilities.find(f => String(f.id) === String(reaction.facilityId));
+    return fac ? fac.name : 'Unknown';
+  })();
+  const topLevelBuildPlan = reaction.useIntermediates || 'raw_materials';
+  const buildPlanDisplay = topLevelBuildPlan === 'components' ? 'Buy Components'
+    : topLevelBuildPlan === 'buy' ? 'Buy Intermediate'
+    : 'Raw Materials';
 
   // Total quantity produced by this reaction
   const totalQty = calculation.product ? calculation.product.quantity : reaction.runs;
@@ -1837,9 +2283,11 @@ async function renderReactionTree(reaction, calculation) {
           </div>
           <div class="reaction-facility-row">
             <span class="reaction-facility-label">Facility:</span>
-            <select class="reaction-facility-select" data-reaction-id="${reaction.planBlueprintId}">
-              ${facilityOptions}
-            </select>
+            <span class="reaction-readonly-value">${escapeHtml(facilityDisplayName)}</span>
+          </div>
+          <div class="reaction-facility-row">
+            <span class="reaction-facility-label">Build Plan:</span>
+            <span class="reaction-readonly-value">${buildPlanDisplay}</span>
           </div>
         </div>
         <div class="reaction-actions">
@@ -1853,7 +2301,7 @@ async function renderReactionTree(reaction, calculation) {
 
   // Render the tree if available
   if (calculation.tree && calculation.tree.length > 0) {
-    html += renderTreeNodes(calculation.tree, product);
+    html += renderTreeNodes(calculation.tree, product, reaction.planId, reaction.reactionTypeId, product?.typeID);
   } else {
     html += '<p class="empty-hint">No tree data available</p>';
   }
@@ -1868,8 +2316,13 @@ async function renderReactionTree(reaction, calculation) {
 
 /**
  * Render tree nodes recursively (similar to reactions-calculator)
+ * @param {Array} nodes - Tree nodes to render
+ * @param {Object} finalProduct - The root reaction's product (for PRODUCT badge at depth 0)
+ * @param {string} planId - Plan ID (for sourcing dropdown IPC calls)
+ * @param {number} parentReactionTypeId - Reaction type ID that produced this list of nodes
+ * @param {number} parentProductTypeId - typeId of the reaction product that consumes these nodes as inputs
  */
-function renderTreeNodes(nodes, finalProduct) {
+function renderTreeNodes(nodes, finalProduct, planId, parentReactionTypeId, parentProductTypeId) {
   let html = '';
 
   for (const node of nodes) {
@@ -1886,6 +2339,9 @@ function renderTreeNodes(nodes, finalProduct) {
     } else if (node.isIntermediate) {
       nodeClass += ' tree-node-intermediate';
       badge = '<span class="badge badge-intermediate">INTERMEDIATE</span>';
+    } else if (node.isManufactured) {
+      nodeClass += ' tree-node-intermediate';
+      badge = '<span class="badge badge-intermediate">MANUFACTURED</span>';
     } else {
       nodeClass += ' tree-node-raw';
       badge = '<span class="badge badge-raw">RAW</span>';
@@ -1893,6 +2349,13 @@ function renderTreeNodes(nodes, finalProduct) {
 
     const runsLabel = node.isIntermediate && node.runsNeeded != null
       ? `<span class="tree-node-runs">${formatNumber(node.runsNeeded)} run${node.runsNeeded !== 1 ? 's' : ''}</span>`
+      : '';
+
+    // Read-only sourcing chip for buildable nodes whose Build Plan differs from the
+    // default - editing lives on the Build List tab.
+    const buildPlan = node.buildPlan || 'raw_materials';
+    const sourcingChip = (node.hasProducer && buildPlan !== 'raw_materials')
+      ? `<span class="tree-node-buildplan">${buildPlan === 'components' ? 'Buy Components' : 'Buy Intermediate'}</span>`
       : '';
 
     html += `
@@ -1905,12 +2368,14 @@ function renderTreeNodes(nodes, finalProduct) {
           ${runsLabel}
           <span class="tree-node-quantity">×${formatNumber(node.quantity)}</span>
           ${badge}
+          ${sourcingChip}
         </div>
     `;
 
-    // Render children recursively if present
+    // Render children recursively if present (buildPlan 'raw_materials'/'components' both
+    // return children from calculateReactionMaterials at differing depths; 'buy' nodes have none)
     if (node.children && node.children.length > 0) {
-      html += renderTreeNodes(node.children, finalProduct);
+      html += renderTreeNodes(node.children, finalProduct, planId, node.reactionTypeID ?? parentReactionTypeId, node.typeID);
     }
 
     html += '</div>';
@@ -1920,84 +2385,11 @@ function renderTreeNodes(nodes, finalProduct) {
 }
 
 /**
- * Attach event listeners for reaction buttons
+ * Attach event listeners for reaction buttons.
+ * The Reactions tab is informational - all sourcing/facility/ME editing lives on the
+ * Build List tab. Only progress tracking (Mark Built) remains interactive here.
  */
 function attachReactionEventListeners() {
-  // Save facilities button
-  const saveFacilitiesBtn = document.getElementById('save-reaction-facilities-btn');
-  if (saveFacilitiesBtn) {
-    saveFacilitiesBtn.onclick = async () => {
-      const container = document.getElementById('reactions-container');
-      const selects = container.querySelectorAll('.reaction-facility-select');
-
-      try {
-        showLoading('Updating facilities and recalculating reactions...');
-
-        // Get all facility updates
-        const updates = [];
-        for (const select of selects) {
-          const reactionId = select.dataset.reactionId;
-          const facilityId = select.value || null;
-
-          // Get facility snapshot if facility selected
-          let facilitySnapshot = null;
-          if (facilityId) {
-            // Use string comparison to handle type mismatches
-            const facility = facilities.find(f => String(f.id) === String(facilityId));
-            if (facility) {
-              facilitySnapshot = facility;
-              console.log('[Reactions] Saving facility snapshot for reaction:', {
-                reactionId,
-                id: facility.id,
-                name: facility.name,
-                hasRigs: !!facility.rigs,
-                rigCount: facility.rigs?.length || 0,
-                structureTypeId: facility.structureTypeId,
-                snapshotSize: JSON.stringify(facility).length
-              });
-            } else {
-              console.warn('[Reactions] Facility not found for ID:', facilityId, 'Available:', facilities.map(f => f.id));
-            }
-          }
-
-          updates.push({
-            reactionId,
-            facilityId,
-            facilitySnapshot
-          });
-        }
-
-        // Bulk update all reactions in a single transaction (recalculates once at the end)
-        const bulkUpdates = updates.map(update => ({
-          planBlueprintId: update.reactionId,
-          updates: {
-            facilityId: update.facilityId,
-            facilitySnapshot: update.facilitySnapshot
-          }
-        }));
-        await window.electronAPI.plans.bulkUpdateBlueprints(selectedPlanId, bulkUpdates);
-
-        // Clear reaction cache to ensure new facility bonuses are applied
-        await window.electronAPI.reactions.clearCaches();
-
-        // Recalculate once after all updates
-        await window.electronAPI.plans.recalculateMaterials(selectedPlanId, false, activeMarketSet?.id);
-
-        await loadReactions();
-        // Reload overview and plans list to reflect updated reaction costs
-        await loadOverview();
-        await loadPlans();
-        showToast(`Updated ${updates.length} reaction(s) successfully`, 'success');
-      } catch (error) {
-        console.error('Error saving reaction facilities:', error);
-        showToast('Failed to save facilities: ' + error.message, 'error');
-      } finally {
-        hideLoading();
-      }
-    };
-  }
-
-  // Attach event listeners to reaction action buttons
   const container = document.getElementById('reactions-container');
   if (container) {
     container.querySelectorAll('[data-action="mark-built"]').forEach(btn => {

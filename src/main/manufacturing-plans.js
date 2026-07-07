@@ -556,23 +556,38 @@ async function detectAndCreateIntermediates(parentBlueprintId, planId, character
     // Calculate runs per line for parent - ME floor applies per job
     const parentRunsPerLine = Math.ceil(parent.runs / parent.lines);
 
-    // CRITICAL: Call calculateBlueprintMaterials with useIntermediates=FALSE
-    // Calculate materials for runs PER LINE (ME floor applies per job)
-    const calculation = await calculateBlueprintMaterials(
-      parent.blueprint_type_id,
-      parentRunsPerLine,  // Runs per line - ME floor applies here
-      parent.me_level,
-      characterId,
-      facilitySnapshot,
-      false  // CRITICAL: Always false - we manually expand intermediates below
-    );
+    // Reaction parents have no ME floor / lines concept - use runs directly and
+    // pull materials via calculateReactionMaterials instead of calculateBlueprintMaterials.
+    // (Ported from the retired detectAndCreateReactions, manufacturing-plans.js:712-734.)
+    let materials;
+    if (parent.blueprint_type === 'reaction') {
+      const reactionCalculation = await calculateReactionMaterials(
+        parent.blueprint_type_id,  // stores reactionTypeId for reaction rows
+        parent.runs,
+        characterId,
+        facilitySnapshot
+      );
+      materials = reactionCalculation.materials;
+    } else {
+      // CRITICAL: Call calculateBlueprintMaterials with useIntermediates=FALSE
+      // Calculate materials for runs PER LINE (ME floor applies per job)
+      const calculation = await calculateBlueprintMaterials(
+        parent.blueprint_type_id,
+        parentRunsPerLine,  // Runs per line - ME floor applies here
+        parent.me_level,
+        characterId,
+        facilitySnapshot,
+        false  // CRITICAL: Always false - we manually expand intermediates below
+      );
+      materials = calculation.materials;
+    }
 
     const createdIntermediateIds = [];
     const now = Date.now();
 
     // Classify materials using helper function
-    // Note: calculation.materials contains per-line quantities
-    const { intermediates, rawMaterials } = await classifyMaterials(calculation.materials);
+    // Note: for manufacturing parents, materials contains per-line quantities
+    const { intermediates, rawMaterials } = await classifyMaterials(materials);
 
     // Process each intermediate
     for (const intermediate of intermediates) {
@@ -614,11 +629,28 @@ async function detectAndCreateIntermediates(parentBlueprintId, planId, character
         // Create new intermediate blueprint entry
         intermediateBlueprintId = randomUUID();
 
-        // Use parent's facility by default
-        const intermediateFacilityId = parent.facility_id;
+        // Per-type uniformity: ME/TE/Build Plan/facility are edited per item type on the
+        // Build List tab and must be identical across all uses in the plan. If another
+        // instance of this blueprint type already exists, adopt its settings; only fall
+        // back to defaults (owned-blueprint ME, parent facility) for a genuinely new type.
+        const sibling = db.prepare(`
+          SELECT me_level, te_level, use_intermediates, facility_id, facility_snapshot
+          FROM plan_blueprints
+          WHERE plan_id = ? AND blueprint_type = 'manufacturing' AND blueprint_type_id = ?
+          LIMIT 1
+        `).get(planId, intermediateBlueprintTypeId);
 
-        // Get ME level from owned blueprints
-        let intermediateME = getOwnedBlueprintME(characterId, intermediateBlueprintTypeId) || 0;
+        const intermediateME = sibling
+          ? sibling.me_level
+          : (getOwnedBlueprintME(characterId, intermediateBlueprintTypeId) || 0);
+        const intermediateTE = sibling ? sibling.te_level : 0;
+        const intermediateUseIntermediates = sibling
+          ? (sibling.use_intermediates || 'raw_materials')
+          : 'raw_materials';
+        const intermediateFacilityId = sibling ? sibling.facility_id : parent.facility_id;
+        const intermediateFacilitySnapshot = sibling
+          ? sibling.facility_snapshot // already a JSON string (or null)
+          : (facilitySnapshot ? JSON.stringify(facilitySnapshot) : null);
 
         db.prepare(`
           INSERT INTO plan_blueprints (
@@ -637,15 +669,15 @@ async function detectAndCreateIntermediates(parentBlueprintId, planId, character
           runsNeeded,
           1,  // lines always 1 for intermediates
           intermediateME,
-          0,  // te_level
+          intermediateTE,
           intermediateFacilityId,
-          facilitySnapshot ? JSON.stringify(facilitySnapshot) : null,
+          intermediateFacilitySnapshot,
           materialTypeId,
-          'raw_materials',  // CRITICAL: Always expand intermediates by default
+          intermediateUseIntermediates,
           now
         );
 
-        console.log(`[Plans] Created intermediate ${intermediateBlueprintTypeId} (${runsNeeded} runs for ${totalMaterialsNeeded} ${product ? product.typeName : 'units'})`);
+        console.log(`[Plans] Created intermediate ${intermediateBlueprintTypeId} (${runsNeeded} runs for ${totalMaterialsNeeded} ${product ? product.typeName : 'units'})${sibling ? ' - settings adopted from existing instance' : ''}`);
         createdIntermediateIds.push(intermediateBlueprintId);
       }
 
@@ -1255,6 +1287,77 @@ async function updateIntermediateBlueprint(intermediateBlueprintId, updates) {
 }
 
 /**
+ * Set the build-plan sourcing choice (Raw Materials/Buy Components/Buy Intermediate) for a
+ * material consumed as a direct input of a reaction within a plan. Used by the Reactions tab,
+ * where the tree is rendered from a live calculateReactionMaterials() call that has no
+ * plan_blueprint_id to update directly - this looks up (or the child row's identity) the
+ * same way walkReactionNodes/getReactionChildBuildPlanOverrides do:
+ * - If childTypeId is a manufactured-blueprint product (e.g. Fuel Blocks), update its
+ *   per-parent child row (parent_blueprint_id = the reaction's own row).
+ * - If childTypeId is itself a sub-reaction's product, update that sub-reaction's own
+ *   top-level aggregated row (parent_blueprint_id IS NULL).
+ * @param {string} planId
+ * @param {number} reactionTypeId - the parent reaction's type ID
+ * @param {number} childTypeId - the input material's type ID
+ * @param {string} buildPlan - 'raw_materials' | 'components' | 'buy'
+ * @returns {Promise<boolean>} success status
+ */
+async function setReactionChildBuildPlan(planId, reactionTypeId, childTypeId, buildPlan) {
+  try {
+    const db = getCharacterDatabase();
+
+    const reactionRow = db.prepare(`
+      SELECT plan_blueprint_id FROM plan_blueprints
+      WHERE plan_id = ? AND blueprint_type = 'reaction' AND reaction_type_id = ? AND parent_blueprint_id IS NULL
+    `).get(planId, reactionTypeId);
+    if (!reactionRow) {
+      console.warn(`[setReactionChildBuildPlan] No reaction row found for planId=${planId} reactionTypeId=${reactionTypeId}`);
+      return false;
+    }
+
+    // Try a per-parent child row first (manufactured-intermediate input, e.g. Fuel Blocks)
+    const childRow = db.prepare(`
+      SELECT plan_blueprint_id FROM plan_blueprints
+      WHERE parent_blueprint_id = ? AND is_intermediate = 1 AND intermediate_product_type_id = ?
+    `).get(reactionRow.plan_blueprint_id, childTypeId);
+
+    let updatedId = null;
+    if (childRow) {
+      db.prepare('UPDATE plan_blueprints SET use_intermediates = ? WHERE plan_blueprint_id = ?')
+        .run(buildPlan, childRow.plan_blueprint_id);
+      updatedId = childRow.plan_blueprint_id;
+    } else {
+      // Fall back to a sub-reaction's own top-level aggregated row
+      const subReactionTypeId = await getReactionForProduct(childTypeId, null);
+      if (subReactionTypeId) {
+        const subReactionRow = db.prepare(`
+          SELECT plan_blueprint_id FROM plan_blueprints
+          WHERE plan_id = ? AND blueprint_type = 'reaction' AND reaction_type_id = ? AND parent_blueprint_id IS NULL
+        `).get(planId, subReactionTypeId);
+        if (subReactionRow) {
+          db.prepare('UPDATE plan_blueprints SET use_intermediates = ? WHERE plan_blueprint_id = ?')
+            .run(buildPlan, subReactionRow.plan_blueprint_id);
+          updatedId = subReactionRow.plan_blueprint_id;
+        }
+      }
+    }
+
+    if (!updatedId) {
+      console.warn(`[setReactionChildBuildPlan] No matching child/sub-reaction row found for planId=${planId} reactionTypeId=${reactionTypeId} childTypeId=${childTypeId}`);
+      return false;
+    }
+
+    await recalculatePlanMaterials(planId, false);
+    const now = Date.now();
+    db.prepare('UPDATE manufacturing_plans SET updated_at = ? WHERE plan_id = ?').run(now, planId);
+    return true;
+  } catch (error) {
+    console.error('Error setting reaction child build plan:', error);
+    return false;
+  }
+}
+
+/**
  * Mark an intermediate blueprint as built or unbuilt (internal recursive function)
  * @param {string} intermediateBlueprintId - Intermediate blueprint ID
  * @param {boolean} isBuilt - Built status
@@ -1843,6 +1946,247 @@ async function expandIntermediate(
 }
 
 /**
+ * Build a build-plan override map for calculateReactionMaterials from persisted
+ * plan_blueprints rows (sub-reactions or manufactured-intermediate inputs like Fuel Blocks
+ * that the user has set to something other than 'raw_materials' via the Reactions tab).
+ * Keyed by `${reactionProductTypeId}:${childProductTypeId}` to match
+ * calculateReactionMaterials' internal override lookup.
+ *
+ * Manufactured-intermediate inputs are looked up as per-parent child rows
+ * (parent_blueprint_id = reactionBlueprintId). Sub-reaction inputs are aggregated plan-wide
+ * (their own top-level row, parent_blueprint_id IS NULL), so those are looked up by
+ * reaction_type_id instead - same fallback pattern as walkReactionNodes.
+ * @param {number} reactionTypeId
+ * @param {string|null} reactionBlueprintId - plan_blueprint_id of the reaction's own row
+ * @returns {Promise<Map<string,string>|null>} null if there's nothing to look up
+ */
+async function getReactionChildBuildPlanOverrides(reactionTypeId, reactionBlueprintId) {
+  if (!reactionBlueprintId) return null;
+
+  const db = getCharacterDatabase();
+  const reactionRow = db.prepare('SELECT plan_id FROM plan_blueprints WHERE plan_blueprint_id = ?').get(reactionBlueprintId);
+  if (!reactionRow) return null;
+
+  const reactionProduct = await getReactionProduct(reactionTypeId, null);
+  if (!reactionProduct) return null;
+
+  const overrides = new Map();
+
+  const children = db.prepare(`
+    SELECT intermediate_product_type_id, use_intermediates
+    FROM plan_blueprints
+    WHERE parent_blueprint_id = ? AND is_intermediate = 1
+  `).all(reactionBlueprintId);
+  for (const child of children) {
+    if (child.use_intermediates && child.use_intermediates !== 'raw_materials') {
+      overrides.set(`${reactionProduct.typeID}:${child.intermediate_product_type_id}`, child.use_intermediates);
+    }
+  }
+
+  // Sub-reaction inputs aren't per-parent child rows - they're aggregated plan-wide as their
+  // own top-level reaction row. Fall back to that row's use_intermediates (same pattern as
+  // walkReactionNodes) for any direct input not already covered by a per-parent child row above.
+  const directInputs = await getReactionMaterials(reactionTypeId, null);
+  for (const input of directInputs) {
+    const key = `${reactionProduct.typeID}:${input.typeID}`;
+    if (overrides.has(key)) continue;
+    const subReactionTypeId = await getReactionForProduct(input.typeID, null);
+    if (!subReactionTypeId) continue;
+    const subReactionRow = db.prepare(`
+      SELECT use_intermediates FROM plan_blueprints
+      WHERE plan_id = ? AND blueprint_type = 'reaction' AND reaction_type_id = ? AND parent_blueprint_id IS NULL
+    `).get(reactionRow.plan_id, subReactionTypeId);
+    if (subReactionRow?.use_intermediates && subReactionRow.use_intermediates !== 'raw_materials') {
+      overrides.set(key, subReactionRow.use_intermediates);
+    }
+  }
+
+  return overrides.size > 0 ? overrides : null;
+}
+
+/**
+ * Calculate the display tree for a reaction on the Manufacturing Plans Reactions tab,
+ * respecting the reaction's own Build Plan choice (Raw Materials/Buy Components/Buy
+ * Intermediate) and its children's sourcing choices - the same rules recalculatePlanMaterials
+ * already applies when building the persisted plan_material_nodes tree via expandReaction/
+ * walkReactionNodes. Without this, the live tree shown on the Reactions tab (calculated fresh
+ * on each tab load, not read from plan_material_nodes) always showed the fully-expanded tree
+ * regardless of what the user picked.
+ * @param {string} reactionBlueprintId - plan_blueprint_id of the reaction's own row
+ * @param {number} runs - Runs to calculate for
+ * @param {number} characterId
+ * @param {object} facility - Facility snapshot
+ * @param {object} marketSet
+ * @returns {Promise<object>} Same shape as calculateReactionMaterials
+ */
+async function getReactionTreeForPlan(reactionBlueprintId, runs, characterId, facility, marketSet) {
+  const db = getCharacterDatabase();
+  const reactionRow = db.prepare('SELECT reaction_type_id, use_intermediates FROM plan_blueprints WHERE plan_blueprint_id = ?').get(reactionBlueprintId);
+  if (!reactionRow) {
+    return { materials: {}, tree: [], product: null, error: 'Reaction not found in plan' };
+  }
+
+  const ownUseIntermediates = reactionRow.use_intermediates || 'raw_materials';
+  const buildPlanOverrides = ownUseIntermediates === 'raw_materials'
+    ? await getReactionChildBuildPlanOverrides(reactionRow.reaction_type_id, reactionBlueprintId)
+    : null; // 'components'/'buy' short-circuit before children are even considered
+
+  return await calculateReactionMaterials(
+    reactionRow.reaction_type_id,
+    runs,
+    characterId,
+    facility,
+    0,
+    null,
+    marketSet,
+    buildPlanOverrides,
+    ownUseIntermediates
+  );
+}
+
+/**
+ * Restore saved per-child settings (Build Plan, ME/TE, facility) onto a reaction's
+ * just-recreated children. Reaction children are deleted/recreated on every
+ * recalculation, and detectAndCreateIntermediates creates them with defaults
+ * (owned-blueprint ME, 'raw_materials'), so anything the user set via the Build List
+ * tab must be written back from the snapshot taken before the delete.
+ *
+ * @param {object} db - character database
+ * @param {number} reactionTypeId - reaction whose children to restore (snapshot key prefix)
+ * @param {string} reactionBlueprintId - the reaction's (new) plan_blueprint_id
+ * @param {Map} reactionChildSourcingMap - `${reactionTypeId}:${childProductTypeId}` -> saved settings
+ */
+function restoreReactionChildSettings(db, reactionTypeId, reactionBlueprintId, reactionChildSourcingMap) {
+  if (!reactionChildSourcingMap || reactionChildSourcingMap.size === 0) return;
+
+  const children = db.prepare(`
+    SELECT plan_blueprint_id, intermediate_product_type_id
+    FROM plan_blueprints
+    WHERE parent_blueprint_id = ? AND is_intermediate = 1
+  `).all(reactionBlueprintId);
+
+  for (const child of children) {
+    const saved = reactionChildSourcingMap.get(`${reactionTypeId}:${child.intermediate_product_type_id}`);
+    if (saved) {
+      db.prepare(`
+        UPDATE plan_blueprints
+        SET use_intermediates = ?, me_level = ?, te_level = ?, facility_id = ?, facility_snapshot = ?
+        WHERE plan_blueprint_id = ?
+      `).run(
+        saved.useIntermediates || 'raw_materials',
+        saved.meLevel ?? 0,
+        saved.teLevel ?? 0,
+        saved.facilityId,
+        saved.facilitySnapshot,
+        child.plan_blueprint_id
+      );
+    }
+  }
+}
+
+/**
+ * Ensure every reaction directly consumed as an input of another reaction (a chained
+ * reaction, e.g. Fernite Carbide Reaction Formula consuming Fernite Alloy, itself the
+ * output of the Fernite Alloy Reaction Formula) gets its own top-level aggregated
+ * plan_blueprints row, exactly like the top-level reaction that triggered this detection.
+ *
+ * Without this, calculateReactionMaterials/expandReaction's default 'raw_materials'
+ * behavior fully expands sub-reactions before Phase 2.5's aggregation loop ever sees
+ * their product typeId, so no row is ever created for them - meaning users have nothing
+ * to attach a sourcing choice (Raw Materials/Buy Components/Buy Intermediate) to, and
+ * setReactionChildBuildPlan's fallback lookup for a sub-reaction's own row always misses.
+ *
+ * @param {number} reactionTypeId - The reaction whose direct inputs to scan
+ * @param {number} runsNeeded - Runs of reactionTypeId needed (used to size sub-reaction runs)
+ * @param {string} planId
+ * @param {object} facility - Facility to inherit for newly-created sub-reaction rows
+ * @param {number} characterId - Character ID (for owned-blueprint ME lookups on nested manufactured intermediates)
+ * @param {object|null} preservation - { ownSourcingMap, childSourcingMap } snapshots taken by
+ *   recalculatePlanMaterials before reactions were deleted; restores user settings onto the
+ *   sub-reaction rows and their children created here (without this, those settings are
+ *   silently wiped on every recalculation - only Phase 2.5's own loop restored its rows).
+ * @param {Set<number>} seenReactionTypeIds - Guards against reprocessing/cycles within one recalculation pass
+ * @returns {Promise<void>}
+ */
+async function detectAndCreateNestedReactions(reactionTypeId, runsNeeded, planId, facility, characterId, preservation = null, seenReactionTypeIds = new Set()) {
+  if (seenReactionTypeIds.has(reactionTypeId)) return;
+  seenReactionTypeIds.add(reactionTypeId);
+
+  const db = getCharacterDatabase();
+  const directInputs = await getReactionMaterials(reactionTypeId, null);
+
+  for (const input of directInputs) {
+    const subReactionTypeId = await getReactionForProduct(input.typeID, null);
+    if (!subReactionTypeId || seenReactionTypeIds.has(subReactionTypeId)) continue;
+
+    const adjustedQty = calculateReactionMaterialQuantity(input.quantity, runsNeeded, facility, null);
+    const subRunsNeeded = await calculateReactionRuns(adjustedQty, subReactionTypeId);
+
+    // Restore the sub-reaction's own saved Build Plan (it was deleted with everything else)
+    const savedOwnUseIntermediates = preservation?.ownSourcingMap?.get(subReactionTypeId) || null;
+
+    const existing = db.prepare(`
+      SELECT plan_blueprint_id, runs FROM plan_blueprints
+      WHERE plan_id = ? AND blueprint_type = 'reaction' AND reaction_type_id = ? AND parent_blueprint_id IS NULL
+    `).get(planId, subReactionTypeId);
+
+    let subReactionBlueprintId;
+    if (existing) {
+      // All reaction rows are deleted at the start of each recalculation, so an existing
+      // row here was created earlier in THIS pass by a different demand path (another
+      // parent reaction, or the Phase 2.5 loop). Demands are independent - add, don't
+      // overwrite.
+      db.prepare('UPDATE plan_blueprints SET runs = ? WHERE plan_blueprint_id = ?')
+        .run(existing.runs + subRunsNeeded, existing.plan_blueprint_id);
+      subReactionBlueprintId = existing.plan_blueprint_id;
+    } else {
+      subReactionBlueprintId = randomUUID();
+      const now = Date.now();
+      db.prepare(`
+        INSERT INTO plan_blueprints (
+          plan_blueprint_id, plan_id, parent_blueprint_id,
+          blueprint_type_id, runs, lines,
+          me_level, te_level, facility_id, facility_snapshot,
+          is_intermediate, is_built, intermediate_product_type_id,
+          use_intermediates, blueprint_type, reaction_type_id,
+          added_at, built_runs
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0, ?, ?, 'reaction', ?, ?, 0)
+      `).run(
+        subReactionBlueprintId,
+        planId,
+        null, // aggregated, same as any other reaction row
+        subReactionTypeId,
+        subRunsNeeded,
+        1,
+        0,
+        0,
+        facility?.id ?? null,
+        facility ? JSON.stringify(facility) : null,
+        input.typeID, // intermediate_product_type_id
+        savedOwnUseIntermediates || 'raw_materials',
+        subReactionTypeId,
+        now
+      );
+      console.log(`[Plans] Created nested reaction row for ${subReactionTypeId} (product ${input.typeID}, ${subRunsNeeded} runs)`);
+    }
+
+    // A sub-reaction set to buy/components doesn't expand - no children to detect
+    if (savedOwnUseIntermediates && savedOwnUseIntermediates !== 'raw_materials') {
+      continue;
+    }
+
+    // Catch manufactured-intermediate inputs of this sub-reaction (e.g. Fuel Blocks),
+    // then restore any saved settings onto them - detectAndCreateIntermediates creates
+    // them with defaults, which would otherwise wipe Build List edits on every recalc.
+    await detectAndCreateIntermediates(subReactionBlueprintId, planId, characterId, 0);
+    restoreReactionChildSettings(db, subReactionTypeId, subReactionBlueprintId, preservation?.childSourcingMap);
+
+    // Recurse for further-chained reactions
+    await detectAndCreateNestedReactions(subReactionTypeId, subRunsNeeded, planId, facility, characterId, preservation, seenReactionTypeIds);
+  }
+}
+
+/**
  * Expand a reaction to its base materials, recursively expanding nested reactions
  * Similar to expandIntermediate but for reactions (activityID=11)
  * @param {number} reactionTypeId - Reaction formula type ID
@@ -1873,12 +2217,39 @@ async function expandReaction(
 
   // Determine configuration for this reaction
   let facility = reactionConfig?.facilitySnapshot ?? parentFacility;
-  let useIntermediates = reactionConfig?.useIntermediates ?? 'raw_materials';
+  const useIntermediates = reactionConfig?.useIntermediates || 'raw_materials';
 
-  // Convert use_intermediates to boolean
-  const shouldExpandSubReactions = (useIntermediates === 'raw_materials' || useIntermediates === 'build_buy');
+  if (useIntermediates === 'buy') {
+    // This reaction's own Build Plan is "Buy Intermediate" - don't consume any of its
+    // inputs at all; the caller adds its product back to aggregatedMaterials instead of
+    // removing it, so it shows up as a purchasable material like any other.
+    return { materials: {}, intermediateProducts: [], isBuy: true };
+  }
 
-  // Calculate this reaction's materials
+  if (useIntermediates === 'components') {
+    // Craft this reaction from its own direct inputs only, without recursing into any
+    // sub-reactions or manufactured intermediates beneath it. Use the raw SDE inputs
+    // (getReactionMaterials, same helper walkReactionNodes uses for its own 'components'
+    // branch) rather than calculateReactionMaterials, which always auto-expands.
+    const reactionProduct = await getReactionProduct(reactionTypeId, null);
+    const directInputs = await getReactionMaterials(reactionTypeId, null);
+    const aggregatedMaterials = {};
+    for (const input of directInputs) {
+      const adjustedQty = calculateReactionMaterialQuantity(input.quantity, runsNeeded, facility, reactionProduct?.typeID ?? null);
+      aggregatedMaterials[input.typeID] = (aggregatedMaterials[input.typeID] || 0) + adjustedQty;
+    }
+    const intermediateProducts = [];
+    if (reactionProduct) {
+      const baseQty = reactionProduct.quantity || 1;
+      intermediateProducts.push({ typeId: reactionProduct.typeID, quantity: baseQty * runsNeeded, depth });
+    }
+    return { materials: aggregatedMaterials, intermediateProducts };
+  }
+
+  // 'raw_materials' (default): fully expand, respecting per-child sourcing overrides
+  // (children of parentBlueprintId, i.e. sourcing choices the user made on the Reactions tab).
+  const buildPlanOverrides = await getReactionChildBuildPlanOverrides(reactionTypeId, parentBlueprintId);
+
   const calculation = await calculateReactionMaterials(
     reactionTypeId,
     runsNeeded,
@@ -1886,7 +2257,8 @@ async function expandReaction(
     facility,
     0,    // depth
     null, // db
-    marketSet
+    marketSet,
+    buildPlanOverrides
   );
 
   const aggregatedMaterials = { ...calculation.materials };
@@ -2028,6 +2400,13 @@ async function recalculatePlanMaterials(planId, refreshPrices = false, marketSet
     const aggregatedProducts = {};
     const aggregatedIntermediateProducts = []; // Array of {typeId, quantity, depth}
     const blueprintCalculations = new Map(); // Store calculations to identify final products later
+
+    // TypeIds that must be treated as final purchasable materials even if they happen to be
+    // a reaction's own product - set when a parent (blueprint or reaction) with 'components' or
+    // 'buy' sourcing stops expansion at that item. Without this, Phase 2.5's iterative reaction-
+    // detection loop would re-discover and expand these anyway (they're still reaction products
+    // in the SDE), silently ignoring the user's "don't build this further" choice.
+    const lockedMaterialTypeIds = new Set();
 
     // Node collection: built in parallel to aggregation, with parent linkage for tree view.
     // Each entry is a node descriptor object with full tree linkage (nodeId, parentNodeId, etc.).
@@ -2259,6 +2638,10 @@ async function recalculatePlanMaterials(planId, refreshPrices = false, marketSet
      * @param {string|null} reactionPlanBlueprintId - plan_blueprint_id of the reaction row
      * @param {string|null} reactionParentNodeId    - nodeId of the reaction's intermediate node
      * @param {number}      depth
+     * @param {string}      ownUseIntermediates - THIS reaction's own Build Plan choice
+     *   ('raw_materials'/'components'/'buy'). When 'components', every direct input is
+     *   pushed as a leaf regardless of that input's own sourcing choice, and nothing is
+     *   recursed into - matches expandReaction's aggregation-side 'components' behavior.
      */
     async function walkReactionNodes(
       reactionTypeId,
@@ -2267,7 +2650,8 @@ async function recalculatePlanMaterials(planId, refreshPrices = false, marketSet
       rootBlueprintId,
       reactionPlanBlueprintId,
       reactionParentNodeId,
-      depth
+      depth,
+      ownUseIntermediates = 'raw_materials'
     ) {
       if (isMaxDepthExceeded(depth, 10, `walkReactionNodes for ${reactionTypeId}`)) {
         return;
@@ -2278,50 +2662,17 @@ async function recalculatePlanMaterials(planId, refreshPrices = false, marketSet
       const reactionProduct = await getReactionProduct(reactionTypeId);
       const directInputs = await getReactionMaterials(reactionTypeId);
 
-      for (const input of directInputs) {
-        const adjustedQty = calculateReactionMaterialQuantity(
-          input.quantity,
-          runsNeeded,
-          facility,
-          reactionProduct?.typeID ?? null
-        );
-
-        const subReactionTypeId = await getReactionForProduct(input.typeID);
-
-        if (subReactionTypeId) {
-          // This input is itself a reaction product — create intermediate node and recurse
-          const subRunsNeeded = await calculateReactionRuns(adjustedQty, subReactionTypeId);
-          const subReactionProductInfo = await getReactionProduct(subReactionTypeId);
-          const subProductsPerRun = subReactionProductInfo?.quantity ?? 1;
-          const subNodeId = randomUUID();
-          collectedNodes.push({
-            nodeId: subNodeId,
-            planBlueprintId: rootBlueprintId,
-            sourcePlanBlueprintId: null,
-            parentNodeId: reactionParentNodeId,
-            typeId: input.typeID,
-            nodeType: 'intermediate',
-            depth: depth + 1,
-            quantityNeeded: subRunsNeeded * subProductsPerRun,
-            quantityPerRun: subProductsPerRun,
-            runsNeeded: subRunsNeeded,
-            meLevel: null,
-            isReaction: 1,
-            buildPlan: 'raw_materials',
-            price: null,
-            priceFrozenAt: null
-          });
-          await walkReactionNodes(
-            subReactionTypeId,
-            subRunsNeeded,
+      if (ownUseIntermediates === 'components') {
+        // Stop here: push every direct input as a leaf, ignoring each input's own sourcing
+        // choice and without recursing further - this reaction is crafted from its direct
+        // inputs only.
+        for (const input of directInputs) {
+          const adjustedQty = calculateReactionMaterialQuantity(
+            input.quantity,
+            runsNeeded,
             facility,
-            rootBlueprintId,
-            null,
-            subNodeId,
-            depth + 1
+            reactionProduct?.typeID ?? null
           );
-        } else {
-          // Raw material leaf
           collectedNodes.push({
             nodeId: randomUUID(),
             planBlueprintId: rootBlueprintId,
@@ -2339,6 +2690,153 @@ async function recalculatePlanMaterials(planId, refreshPrices = false, marketSet
             price: null,
             priceFrozenAt: null
           });
+        }
+        return;
+      }
+
+      // Look up persisted sourcing choices for this reaction's children (set via the
+      // Reactions tab dropdown), keyed by the child's product typeId.
+      const childRows = reactionPlanBlueprintId
+        ? db.prepare(`
+            SELECT plan_blueprint_id, blueprint_type, blueprint_type_id, intermediate_product_type_id,
+                   me_level, te_level, facility_snapshot, use_intermediates
+            FROM plan_blueprints
+            WHERE parent_blueprint_id = ? AND is_intermediate = 1
+          `).all(reactionPlanBlueprintId)
+        : [];
+      const childRowByTypeId = new Map(childRows.map(r => [r.intermediate_product_type_id, r]));
+
+      for (const input of directInputs) {
+        const adjustedQty = calculateReactionMaterialQuantity(
+          input.quantity,
+          runsNeeded,
+          facility,
+          reactionProduct?.typeID ?? null
+        );
+
+        const subReactionTypeId = await getReactionForProduct(input.typeID);
+        const subBlueprintTypeId = !subReactionTypeId ? getBlueprintForProduct(input.typeID) : null;
+
+        // Sourcing choice lookup: prefer a per-parent child row (manufactured intermediates,
+        // or a sub-reaction that was nested under this specific parent). Sub-reactions are
+        // otherwise aggregated plan-wide (their own top-level plan_blueprints row, like any
+        // other reaction), so fall back to that row's use_intermediates if no child row exists.
+        let childRow = childRowByTypeId.get(input.typeID);
+        if (!childRow && subReactionTypeId) {
+          childRow = db.prepare(`
+            SELECT plan_blueprint_id, use_intermediates, me_level, facility_snapshot
+            FROM plan_blueprints
+            WHERE plan_id = ? AND blueprint_type = 'reaction' AND reaction_type_id = ? AND parent_blueprint_id IS NULL
+          `).get(planId, subReactionTypeId);
+        }
+        const useIntermediates = childRow?.use_intermediates || 'raw_materials';
+
+        if (useIntermediates === 'buy' || (!subReactionTypeId && !subBlueprintTypeId)) {
+          // Buy override (points at its own child row, if one exists, so "Details" on the
+          // Blueprint Tree can still show what it would take to build), or a true raw
+          // material with no producer at all - leaf node.
+          collectedNodes.push({
+            nodeId: randomUUID(),
+            planBlueprintId: rootBlueprintId,
+            sourcePlanBlueprintId: useIntermediates === 'buy' ? (childRow?.plan_blueprint_id ?? null) : reactionPlanBlueprintId,
+            parentNodeId: reactionParentNodeId,
+            typeId: input.typeID,
+            nodeType: 'material',
+            depth: depth + 1,
+            quantityNeeded: adjustedQty,
+            quantityPerRun: null,
+            runsNeeded: null,
+            meLevel: null,
+            isReaction: 0,
+            buildPlan: useIntermediates === 'buy' ? 'buy' : 'raw_materials',
+            price: null,
+            priceFrozenAt: null
+          });
+        } else if (subReactionTypeId) {
+          // This input is itself a reaction product — create intermediate node and recurse
+          const subRunsNeeded = await calculateReactionRuns(adjustedQty, subReactionTypeId);
+          const subReactionProductInfo = await getReactionProduct(subReactionTypeId);
+          const subProductsPerRun = subReactionProductInfo?.quantity ?? 1;
+          const subNodeId = randomUUID();
+          collectedNodes.push({
+            nodeId: subNodeId,
+            planBlueprintId: rootBlueprintId,
+            sourcePlanBlueprintId: childRow?.plan_blueprint_id ?? null,
+            parentNodeId: reactionParentNodeId,
+            typeId: input.typeID,
+            nodeType: 'intermediate',
+            depth: depth + 1,
+            quantityNeeded: subRunsNeeded * subProductsPerRun,
+            quantityPerRun: subProductsPerRun,
+            runsNeeded: subRunsNeeded,
+            meLevel: null,
+            isReaction: 1,
+            buildPlan: useIntermediates,
+            price: null,
+            priceFrozenAt: null
+          });
+
+          if (useIntermediates === 'components') {
+            // Stop recursion here: show this sub-reaction's direct inputs as leaves,
+            // without checking whether those grandchild inputs are themselves buildable.
+            const subDirectInputs = await getReactionMaterials(subReactionTypeId);
+            for (const subInput of subDirectInputs) {
+              const subAdjustedQty = calculateReactionMaterialQuantity(
+                subInput.quantity,
+                subRunsNeeded,
+                facility,
+                subReactionProductInfo?.typeID ?? null
+              );
+              collectedNodes.push({
+                nodeId: randomUUID(),
+                planBlueprintId: rootBlueprintId,
+                sourcePlanBlueprintId: childRow?.plan_blueprint_id ?? null,
+                parentNodeId: subNodeId,
+                typeId: subInput.typeID,
+                nodeType: 'material',
+                depth: depth + 2,
+                quantityNeeded: subAdjustedQty,
+                quantityPerRun: null,
+                runsNeeded: null,
+                meLevel: null,
+                isReaction: 0,
+                buildPlan: 'raw_materials',
+                price: null,
+                priceFrozenAt: null
+              });
+            }
+          } else {
+            // 'raw_materials': keep recursing as deep as possible
+            await walkReactionNodes(
+              subReactionTypeId,
+              subRunsNeeded,
+              facility,
+              rootBlueprintId,
+              childRow?.plan_blueprint_id ?? null,
+              subNodeId,
+              depth + 1
+            );
+          }
+        } else {
+          // Manufactured-blueprint product input (e.g. Fuel Blocks) — create intermediate
+          // node and recurse into walkIntermediateNodes, which has the character/facility
+          // context needed to expand a manufacturing blueprint.
+          const intermediateConfig = childRow ? {
+            meLevel: childRow.me_level,
+            facilitySnapshot: childRow.facility_snapshot ? JSON.parse(childRow.facility_snapshot) : facility,
+            useIntermediates: childRow.use_intermediates
+          } : null;
+
+          await walkIntermediateNodes(
+            subBlueprintTypeId,
+            adjustedQty,
+            intermediateConfig,
+            facility,
+            rootBlueprintId,
+            childRow?.plan_blueprint_id ?? null,
+            reactionParentNodeId,
+            depth + 1
+          );
         }
       }
     }
@@ -2388,13 +2886,66 @@ async function recalculatePlanMaterials(planId, refreshPrices = false, marketSet
     });
     console.log(`[Plans] Saved ${reactionFacilityMap.size} existing reaction facility assignment(s)`);
 
-    // Delete ALL existing reactions (will be recreated in PHASE 2.5)
-    // This includes both old per-parent reactions and aggregated reactions
+    // Save existing per-child settings made by the user before deleting, keyed by
+    // (reactionTypeId, childProductTypeId) since the reaction row's plan_blueprint_id is
+    // regenerated every recalculation. Children of a reaction are any plan_blueprints row
+    // whose parent_blueprint_id points at an aggregated reaction row - this includes both
+    // sub-reactions and manufactured-intermediate inputs (e.g. Fuel Blocks). Preserved
+    // fields: use_intermediates (Build Plan), me_level, te_level, facility - all editable
+    // from the Build List tab, all wiped by the delete/recreate cycle without this.
+    // Also save each reaction's OWN sourcing choice - without this, a user's choice would
+    // silently revert to 'raw_materials' on the very next recalculation.
+    const existingAggregatedReactions = db.prepare(`
+      SELECT plan_blueprint_id, reaction_type_id, use_intermediates
+      FROM plan_blueprints
+      WHERE plan_id = ? AND blueprint_type = 'reaction' AND parent_blueprint_id IS NULL
+    `).all(planId);
+
+    const reactionChildSourcingMap = new Map(); // `${reactionTypeId}:${childProductTypeId}` -> {useIntermediates, meLevel, teLevel, facilityId, facilitySnapshot}
+    const reactionOwnSourcingMap = new Map(); // reactionTypeId -> use_intermediates
+    for (const aggReaction of existingAggregatedReactions) {
+      if (aggReaction.use_intermediates && aggReaction.use_intermediates !== 'raw_materials') {
+        reactionOwnSourcingMap.set(aggReaction.reaction_type_id, aggReaction.use_intermediates);
+      }
+      const children = db.prepare(`
+        SELECT intermediate_product_type_id, use_intermediates, me_level, te_level, facility_id, facility_snapshot
+        FROM plan_blueprints
+        WHERE parent_blueprint_id = ? AND is_intermediate = 1
+      `).all(aggReaction.plan_blueprint_id);
+      for (const child of children) {
+        reactionChildSourcingMap.set(
+          `${aggReaction.reaction_type_id}:${child.intermediate_product_type_id}`,
+          {
+            useIntermediates: child.use_intermediates,
+            meLevel: child.me_level,
+            teLevel: child.te_level,
+            facilityId: child.facility_id,
+            facilitySnapshot: child.facility_snapshot
+          }
+        );
+      }
+    }
+    console.log(`[Plans] Saved ${reactionChildSourcingMap.size} existing reaction-child setting(s), ${reactionOwnSourcingMap.size} top-level reaction sourcing choice(s)`);
+
+    // Delete ALL existing reactions AND their children (will be recreated in PHASE 2.5).
+    // Children include sub-reactions (blueprint_type='reaction') and manufactured-intermediate
+    // inputs (blueprint_type='manufacturing', e.g. Fuel Blocks) nested under an aggregated
+    // reaction row - both must go since their parent row is about to be regenerated with a
+    // new plan_blueprint_id, and plain DELETE ... WHERE blueprint_type='reaction' alone would
+    // leave manufacturing-type children orphaned.
+    const reactionIdsToDelete = db.prepare(`
+      SELECT plan_blueprint_id FROM plan_blueprints
+      WHERE plan_id = ? AND blueprint_type = 'reaction' AND parent_blueprint_id IS NULL
+    `).all(planId).map(r => r.plan_blueprint_id);
+
+    for (const reactionId of reactionIdsToDelete) {
+      db.prepare(`DELETE FROM plan_blueprints WHERE parent_blueprint_id = ?`).run(reactionId);
+    }
     db.prepare(`
       DELETE FROM plan_blueprints
       WHERE plan_id = ? AND blueprint_type = 'reaction'
     `).run(planId);
-    console.log(`[Plans] Cleared all reactions for plan ${planId}`);
+    console.log(`[Plans] Cleared all reactions and reaction-children for plan ${planId}`);
 
     // PHASE 2: Process each top-level blueprint with manual intermediate and reaction expansion
     for (const blueprint of topLevelBlueprints) {
@@ -2610,6 +3161,9 @@ async function recalculatePlanMaterials(planId, refreshPrices = false, marketSet
         for (const [typeId, quantity] of Object.entries(calculation.materials)) {
           const totalQty = quantity * blueprint.lines;
           aggregatedMaterials[typeId] = (aggregatedMaterials[typeId] || 0) + totalQty;
+          // Lock this typeId so Phase 2.5 doesn't expand it further even if it happens to
+          // itself be a reaction product - "Buy Components" means stop here.
+          lockedMaterialTypeIds.add(parseInt(typeId));
 
           // ---- Tree: component material leaf as child of productNodeId ----
           collectedNodes.push({
@@ -2698,8 +3252,11 @@ async function recalculatePlanMaterials(planId, refreshPrices = false, marketSet
       while (foundReactions && iterationCount < maxIterations) {
         iterationCount++;
 
-        // Classify aggregated materials to find reaction products
-        const { reactions: aggregatedReactions } = await classifyMaterials(aggregatedMaterials);
+        // Classify aggregated materials to find reaction products, excluding any typeId
+        // locked by a 'components'-mode parent (see lockedMaterialTypeIds above) - those
+        // must stay as plain purchasable materials, not be expanded as reactions.
+        const { reactions: allAggregatedReactions } = await classifyMaterials(aggregatedMaterials);
+        const aggregatedReactions = allAggregatedReactions.filter(r => !lockedMaterialTypeIds.has(r.typeId));
 
         if (aggregatedReactions.length > 0) {
           console.log(`[Plans] Iteration ${iterationCount}: Found ${aggregatedReactions.length} reaction product(s) in aggregated materials`);
@@ -2768,43 +3325,99 @@ async function recalculatePlanMaterials(planId, refreshPrices = false, marketSet
               });
             }
 
-            // Create aggregated reaction record (parent_blueprint_id = NULL)
-            const reactionBlueprintId = randomUUID();
+            // Create (or reuse) the aggregated reaction record (parent_blueprint_id = NULL).
+            // detectAndCreateNestedReactions may have already created a row for this reaction
+            // type earlier in THIS recalculation (when it's an input of another reaction as
+            // well as a blueprint material) - inserting unconditionally would duplicate the
+            // row. Reuse it and add this loop's aggregated demand to its runs; the two demand
+            // sources (parent reactions vs blueprint materials) are independent.
+            let reactionBlueprintId;
             const now = Date.now();
+            const existingReactionRow = db.prepare(`
+              SELECT plan_blueprint_id, runs FROM plan_blueprints
+              WHERE plan_id = ? AND blueprint_type = 'reaction' AND reaction_type_id = ? AND parent_blueprint_id IS NULL
+            `).get(planId, reactionTypeId);
 
-            db.prepare(`
-              INSERT INTO plan_blueprints (
-                plan_blueprint_id, plan_id, parent_blueprint_id,
-                blueprint_type_id, runs, lines,
-                me_level, te_level, facility_id, facility_snapshot,
-                is_intermediate, is_built, intermediate_product_type_id,
-                use_intermediates, blueprint_type, reaction_type_id,
-                added_at, built_runs
-              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0, ?, ?, 'reaction', ?, ?, 0)
-            `).run(
-              reactionBlueprintId,
-              planId,
-              null,  // CRITICAL: NULL means aggregated (not tied to specific parent)
-              reactionTypeId,
-              runsNeeded,
-              1,  // lines always 1 for reactions
-              0,  // me_level (not applicable)
-              0,  // te_level (not applicable)
-              facilityId,
-              facility ? JSON.stringify(facility) : null,
-              materialTypeId,  // intermediate_product_type_id
-              'raw_materials',  // Always expand reactions
-              reactionTypeId,  // Also store in reaction_type_id
-              now
-            );
+            if (existingReactionRow) {
+              reactionBlueprintId = existingReactionRow.plan_blueprint_id;
+              db.prepare('UPDATE plan_blueprints SET runs = ? WHERE plan_blueprint_id = ?')
+                .run(existingReactionRow.runs + runsNeeded, reactionBlueprintId);
+              console.log(`[Plans] Reusing reaction row for ${reactionTypeId}, combined runs: ${existingReactionRow.runs} + ${runsNeeded}`);
+            } else {
+              reactionBlueprintId = randomUUID();
+              db.prepare(`
+                INSERT INTO plan_blueprints (
+                  plan_blueprint_id, plan_id, parent_blueprint_id,
+                  blueprint_type_id, runs, lines,
+                  me_level, te_level, facility_id, facility_snapshot,
+                  is_intermediate, is_built, intermediate_product_type_id,
+                  use_intermediates, blueprint_type, reaction_type_id,
+                  added_at, built_runs
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0, ?, ?, 'reaction', ?, ?, 0)
+              `).run(
+                reactionBlueprintId,
+                planId,
+                null,  // CRITICAL: NULL means aggregated (not tied to specific parent)
+                reactionTypeId,
+                runsNeeded,
+                1,  // lines always 1 for reactions
+                0,  // me_level (not applicable)
+                0,  // te_level (not applicable)
+                facilityId,
+                facility ? JSON.stringify(facility) : null,
+                materialTypeId,  // intermediate_product_type_id
+                'raw_materials',  // Always expand reactions
+                reactionTypeId,  // Also store in reaction_type_id
+                now
+              );
+            }
 
-            // Expand this reaction to get its input materials
+            // Restore this reaction's own previously saved sourcing choice (top-level Build
+            // Plan dropdown on the Reactions tab) BEFORE detecting children below, so that a
+            // reaction set to 'buy'/'components' correctly skips child detection just like
+            // detectAndCreateIntermediates already does for manufacturing blueprints.
+            const savedOwnUseIntermediates = reactionOwnSourcingMap.get(reactionTypeId);
+            if (savedOwnUseIntermediates) {
+              db.prepare(`UPDATE plan_blueprints SET use_intermediates = ? WHERE plan_blueprint_id = ?`)
+                .run(savedOwnUseIntermediates, reactionBlueprintId);
+            }
+
+            // Detect and persist manufactured-intermediate children of this reaction
+            // (e.g. Fuel Blocks consumed directly by advanced-material reactions), so they
+            // get a real plan_blueprints row with an editable use_intermediates choice,
+            // exactly like manufacturing-blueprint intermediates already do.
+            // detectAndCreateIntermediates already self-guards on parent.use_intermediates
+            // (skips when 'buy'/'components'), reading the row we just restored above.
+            // Then restore saved settings (Build Plan, ME/TE, facility) onto them BEFORE
+            // nested-reaction detection runs, so sub-reaction children created afterwards
+            // see correctly-restored siblings.
+            await detectAndCreateIntermediates(reactionBlueprintId, planId, plan.character_id, 0);
+            restoreReactionChildSettings(db, reactionTypeId, reactionBlueprintId, reactionChildSourcingMap);
+
+            // Detect and persist chained sub-reaction children (e.g. Fernite Alloy Reaction
+            // Formula feeding into Fernite Carbide Reaction Formula), so they also get their
+            // own top-level aggregated row with an editable sourcing choice - without this,
+            // calculateReactionMaterials' default full-expansion behavior means a sub-reaction's
+            // product never survives into aggregatedMaterials for the loop below to detect.
+            // The preservation maps restore user settings onto the sub-reaction rows and
+            // their children created inside.
+            // Skip entirely when this reaction itself is bought/components-only - its inputs
+            // are never expanded in that case, so there's nothing meaningful to detect.
+            if (!savedOwnUseIntermediates || savedOwnUseIntermediates === 'raw_materials') {
+              await detectAndCreateNestedReactions(reactionTypeId, runsNeeded, planId, facility, plan.character_id, {
+                ownSourcingMap: reactionOwnSourcingMap,
+                childSourcingMap: reactionChildSourcingMap
+              });
+            }
+
+            // Expand this reaction to get its input materials, respecting this reaction's own
+            // saved sourcing choice (defaults to 'raw_materials' when nothing was saved)
             const expansion = await expandReaction(
               reactionTypeId,
               runsNeeded,
               {
                 facilitySnapshot: facility,
-                useIntermediates: 'raw_materials'
+                useIntermediates: savedOwnUseIntermediates || 'raw_materials'
               },
               facility,
               plan.character_id,
@@ -2814,13 +3427,30 @@ async function recalculatePlanMaterials(planId, refreshPrices = false, marketSet
               marketSet
             );
 
-            // Remove the reaction product from aggregatedMaterials
-            delete aggregatedMaterials[materialTypeId];
-            console.log(`[Plans] Removed reaction product ${materialTypeId} from materials`);
+            if (expansion.isBuy) {
+              // This reaction is set to "Buy Intermediate" - keep its product as a purchasable
+              // material (aggregatedMaterials already has it from the parent's classification)
+              // rather than removing it and adding expanded inputs (there are none to add).
+              console.log(`[Plans] Reaction ${reactionTypeId} set to 'buy' - keeping product ${materialTypeId} as purchasable material`);
+            } else {
+              // Remove the reaction product from aggregatedMaterials
+              delete aggregatedMaterials[materialTypeId];
+              console.log(`[Plans] Removed reaction product ${materialTypeId} from materials`);
 
-            // Add the reaction's input materials to aggregatedMaterials
-            for (const [inputTypeId, inputQty] of Object.entries(expansion.materials)) {
-              aggregatedMaterials[inputTypeId] = (aggregatedMaterials[inputTypeId] || 0) + inputQty;
+              // Add the reaction's input materials to aggregatedMaterials
+              for (const [inputTypeId, inputQty] of Object.entries(expansion.materials)) {
+                aggregatedMaterials[inputTypeId] = (aggregatedMaterials[inputTypeId] || 0) + inputQty;
+              }
+
+              // 'components' mode stops expansion at this reaction's direct inputs - lock
+              // them so the Phase 2.5 loop below doesn't re-discover and expand any of them
+              // further, even if one happens to itself be a reaction product (e.g. Fernite
+              // Alloy under a 'components'-mode Fernite Carbide Reaction Formula).
+              if (savedOwnUseIntermediates === 'components') {
+                for (const inputTypeId of Object.keys(expansion.materials)) {
+                  lockedMaterialTypeIds.add(parseInt(inputTypeId));
+                }
+              }
             }
 
             // Track reaction products as intermediate products
@@ -2842,6 +3472,7 @@ async function recalculatePlanMaterials(planId, refreshPrices = false, marketSet
               primaryNode.sourcePlanBlueprintId = reactionBlueprintId;
               primaryNode.runsNeeded = runsNeeded;
               primaryNode.quantityNeeded = runsNeeded * (primaryNode.quantityPerRun ?? 1);
+              primaryNode.buildPlan = savedOwnUseIntermediates || 'raw_materials';
 
               // Remove all duplicate per-parent placeholder nodes (keep only the primary).
               // When the same reaction product is required by multiple parent intermediates
@@ -2857,21 +3488,49 @@ async function recalculatePlanMaterials(planId, refreshPrices = false, marketSet
                 }
               }
 
-              // Walk reaction inputs ONCE using the correct reaction facility.
+              // Walk reaction inputs ONCE using the correct reaction facility, unless this
+              // reaction's own Build Plan is 'buy'. In 'buy' mode, push a material leaf (same
+              // typeId, nodeType 'material') as a child of the reaction's intermediate node so
+              // it actually shows up on the Materials tab shopping list - getPlanMaterials only
+              // reads node_type='material' rows, so leaving the intermediate node childless
+              // would silently omit it, exactly like walkIntermediateNodes' own 'buy' case does
+              // for manufactured intermediates.
               // Pass the primary node's actual depth so sub-components appear one level
               // below the reaction node (not at the same level as the reaction itself).
-              await walkReactionNodes(
-                reactionTypeId,
-                runsNeeded,
-                facility,
-                primaryNode.planBlueprintId,
-                reactionBlueprintId,
-                primaryNode.nodeId,
-                primaryNode.depth
-              );
+              if (primaryNode.buildPlan === 'buy') {
+                collectedNodes.push({
+                  nodeId: randomUUID(),
+                  planBlueprintId: primaryNode.planBlueprintId,
+                  sourcePlanBlueprintId: reactionBlueprintId,
+                  parentNodeId: primaryNode.nodeId,
+                  typeId: primaryNode.typeId,
+                  nodeType: 'material',
+                  depth: primaryNode.depth + 1,
+                  quantityNeeded: primaryNode.quantityNeeded,
+                  quantityPerRun: null,
+                  runsNeeded: null,
+                  meLevel: null,
+                  isReaction: 0,
+                  buildPlan: 'buy',
+                  price: null,
+                  priceFrozenAt: null
+                });
+              } else {
+                await walkReactionNodes(
+                  reactionTypeId,
+                  runsNeeded,
+                  facility,
+                  primaryNode.planBlueprintId,
+                  reactionBlueprintId,
+                  primaryNode.nodeId,
+                  primaryNode.depth,
+                  primaryNode.buildPlan
+                );
+              }
             } else {
               // No pre-expanded node found: this reaction only appeared in aggregatedMaterials
               // via paths we didn't tree-walk (shouldn't normally happen, but handle gracefully).
+              const ownBuildPlan = savedOwnUseIntermediates || 'raw_materials';
               const newReactionNodeId = randomUUID();
               collectedNodes.push({
                 nodeId: newReactionNodeId,
@@ -2886,19 +3545,40 @@ async function recalculatePlanMaterials(planId, refreshPrices = false, marketSet
                 runsNeeded: runsNeeded,
                 meLevel: null,
                 isReaction: 1,
-                buildPlan: 'raw_materials',
+                buildPlan: ownBuildPlan,
                 price: null,
                 priceFrozenAt: null
               });
-              await walkReactionNodes(
-                reactionTypeId,
-                runsNeeded,
-                facility,
-                rootBlueprintId,
-                reactionBlueprintId,
-                newReactionNodeId,
-                0
-              );
+              if (ownBuildPlan === 'buy') {
+                collectedNodes.push({
+                  nodeId: randomUUID(),
+                  planBlueprintId: rootBlueprintId,
+                  sourcePlanBlueprintId: reactionBlueprintId,
+                  parentNodeId: newReactionNodeId,
+                  typeId: materialTypeId,
+                  nodeType: 'material',
+                  depth: 2,
+                  quantityNeeded: totalUnitsNeeded,
+                  quantityPerRun: null,
+                  runsNeeded: null,
+                  meLevel: null,
+                  isReaction: 0,
+                  buildPlan: 'buy',
+                  price: null,
+                  priceFrozenAt: null
+                });
+              } else {
+                await walkReactionNodes(
+                  reactionTypeId,
+                  runsNeeded,
+                  facility,
+                  rootBlueprintId,
+                  reactionBlueprintId,
+                  newReactionNodeId,
+                  0,
+                  ownBuildPlan
+                );
+              }
             }
             // ---- End reaction tree wiring ----
           }
@@ -3490,6 +4170,80 @@ function getPlanProducts(planId) {
  * @param {string} planId - Plan ID
  * @returns {Promise<Object>} Summary with materialCost, productValue, estimatedProfit
  */
+/**
+ * Calculate the total job installation cost for a plan by summing the EIV-based
+ * job cost of every plan_blueprints row that actually installs a job (rows sourced
+ * from the market via Build Plan = 'buy' install nothing and are skipped;
+ * 'components' rows still run their own job, so they count).
+ *
+ * Manufacturing rows use the standard manufacturing job cost formula; job cost is
+ * linear in runs, so line splits don't change the total and row.runs is passed as-is.
+ * Reaction rows compute EIV from the formula's DIRECT inputs (facility-adjusted),
+ * matching how the Reactions/Blueprint Tree detail panels report per-job cost.
+ *
+ * Rows without a facility snapshot (no system ID) contribute 0 - there's no system
+ * cost index to price the job against.
+ *
+ * @param {string} planId - Plan ID
+ * @returns {Promise<{total: number, jobCount: number}>} Total ISK and count of costed jobs
+ */
+async function calculatePlanJobInstallationCost(planId) {
+  const result = { total: 0, jobCount: 0 };
+
+  try {
+    const db = getCharacterDatabase();
+    const rows = db.prepare(`
+      SELECT plan_blueprint_id, blueprint_type, blueprint_type_id, runs,
+             intermediate_product_type_id, use_intermediates, facility_snapshot
+      FROM plan_blueprints
+      WHERE plan_id = ?
+    `).all(planId);
+
+    const { calculateManufacturingJobCost } = require('./blueprint-pricing');
+    const { getReactionMaterials, calculateReactionMaterialQuantity, calculateReactionJobCost } = require('./reaction-calculator');
+
+    for (const row of rows) {
+      if (row.use_intermediates === 'buy') continue;
+
+      let facility = null;
+      try {
+        facility = row.facility_snapshot ? JSON.parse(row.facility_snapshot) : null;
+      } catch (parseError) {
+        facility = null;
+      }
+
+      if (!facility || !facility.systemId) continue;
+
+      try {
+        let jobCost;
+        if (row.blueprint_type === 'reaction') {
+          const baseMaterials = await getReactionMaterials(row.blueprint_type_id);
+          const materials = {};
+          for (const mat of baseMaterials) {
+            materials[mat.typeID] = calculateReactionMaterialQuantity(
+              mat.quantity, row.runs, facility, row.intermediate_product_type_id || null
+            );
+          }
+          jobCost = await calculateReactionJobCost(row.blueprint_type_id, row.runs, materials, facility);
+        } else {
+          jobCost = await calculateManufacturingJobCost(row.blueprint_type_id, row.runs, facility.systemId, facility);
+        }
+
+        if (jobCost && jobCost.totalJobCost > 0) {
+          result.total += jobCost.totalJobCost;
+          result.jobCount++;
+        }
+      } catch (rowError) {
+        console.error(`[Plans] Error calculating job cost for plan blueprint ${row.plan_blueprint_id}:`, rowError);
+      }
+    }
+  } catch (error) {
+    console.error('[Plans] Error calculating plan job installation cost:', error);
+  }
+
+  return result;
+}
+
 async function getPlanSummary(planId) {
   try {
     const materials = await getPlanMaterials(planId, false);
@@ -3534,13 +4288,19 @@ async function getPlanSummary(planId) {
       }
     }
 
-    const estimatedProfit = productValue - materialCost;
-    const roi = materialCost > 0 ? (estimatedProfit / materialCost) * 100 : 0;
+    const jobInstallation = await calculatePlanJobInstallationCost(planId);
+    const jobInstallationCost = jobInstallation.total;
+
+    const totalCost = materialCost + jobInstallationCost;
+    const estimatedProfit = productValue - totalCost;
+    const roi = totalCost > 0 ? (estimatedProfit / totalCost) * 100 : 0;
 
     return {
       materialCost,
       materialsWithPrice,
       totalMaterials: materials.length,
+      jobInstallationCost,
+      jobCount: jobInstallation.jobCount,
       productValue,
       productsWithPrice,
       totalProducts: products.length,
@@ -3553,6 +4313,8 @@ async function getPlanSummary(planId) {
       materialCost: 0,
       materialsWithPrice: 0,
       totalMaterials: 0,
+      jobInstallationCost: 0,
+      jobCount: 0,
       productValue: 0,
       productsWithPrice: 0,
       totalProducts: 0,
@@ -4480,16 +5242,126 @@ async function getMaterialTree(planId, planBlueprintId = null) {
   }
 }
 
+/**
+ * Get lazy per-node detail (ME/TE, direct material inputs, manufacturing/reaction time,
+ * job cost) for a single Blueprint Tree node, for the expandable detail panel on the
+ * Blueprint Tree tab. Only meaningful for nodes with a sourcePlanBlueprintId (product/
+ * intermediate/reaction nodes) - raw material leaves have no producer to look up.
+ * @param {string} planBlueprintId - sourcePlanBlueprintId from a getMaterialTree() node
+ * @returns {Promise<object|null>} { meLevel, teLevel, runs, materials: [{typeId,typeName,quantity,priceEach}], time, jobCost } or null
+ */
+async function getMaterialTreeNodeDetail(planBlueprintId) {
+  if (!planBlueprintId) return null;
+
+  try {
+    const db = getCharacterDatabase();
+    const row = db.prepare('SELECT * FROM plan_blueprints WHERE plan_blueprint_id = ?').get(planBlueprintId);
+    if (!row) return null;
+
+    const plan = db.prepare('SELECT character_id FROM manufacturing_plans WHERE plan_id = ?').get(row.plan_id);
+    const facilitySnapshot = row.facility_snapshot ? JSON.parse(row.facility_snapshot) : null;
+
+    const { resolveMarketSetForTool } = require('./settings-manager');
+    const marketSet = resolveMarketSetForTool('manufacturingPlansMarketSetId');
+
+    let materials, time, jobCost;
+
+    if (row.blueprint_type === 'reaction') {
+      // 'components' mode: materials come back as this reaction's DIRECT inputs only
+      // (facility-bonus adjusted), not fully expanded to raws - the detail panel's
+      // "Direct Material Inputs" list must show what THIS reaction's job consumes
+      // (e.g. Fullerides shows Carbon Polymers + Platinum Technite + Fuel Blocks,
+      // not the moon materials underneath them).
+      const calculation = await calculateReactionMaterials(
+        row.blueprint_type_id,
+        row.runs,
+        plan?.character_id,
+        facilitySnapshot,
+        0,
+        null,
+        marketSet,
+        null,
+        'components'
+      );
+      materials = calculation.materials;
+      time = calculation.time?.totalTime ?? null;
+      jobCost = calculation.pricing?.jobCostBreakdown?.totalJobCost ?? null;
+    } else {
+      const runsPerLine = Math.ceil(row.runs / Math.max(row.lines, 1));
+      const calculation = await calculateBlueprintMaterials(
+        row.blueprint_type_id,
+        runsPerLine,
+        row.me_level,
+        plan?.character_id,
+        facilitySnapshot,
+        false,
+        0,
+        null,
+        marketSet
+      );
+      materials = calculation.materials;
+      const { calculateManufacturingTime } = require('./blueprint-calculator');
+      const timeResult = calculateManufacturingTime(row.blueprint_type_id, row.te_level || 0, row.runs, facilitySnapshot);
+      time = timeResult?.adjustedTime ?? null;
+      jobCost = calculation.pricing?.jobCost ?? null;
+    }
+
+    // Batch fetch type names for the direct materials
+    const typeIds = Object.keys(materials).map(id => parseInt(id));
+    const typeNames = {};
+    if (typeIds.length > 0) {
+      const sdePath = getSdePath();
+      const sdeDb = new Database(sdePath, { readonly: true });
+      try {
+        const placeholders = typeIds.map(() => '?').join(',');
+        const types = sdeDb.prepare(`SELECT typeID, typeName FROM invTypes WHERE typeID IN (${placeholders})`).all(...typeIds);
+        for (const t of types) typeNames[t.typeID] = t.typeName;
+      } finally {
+        sdeDb.close();
+      }
+    }
+
+    return {
+      meLevel: row.me_level,
+      teLevel: row.te_level,
+      runs: row.runs,
+      blueprintType: row.blueprint_type,
+      materials: Object.entries(materials).map(([typeId, quantity]) => ({
+        typeId: parseInt(typeId),
+        typeName: typeNames[typeId] || `Type ${typeId}`,
+        quantity
+      })),
+      time,
+      jobCost
+    };
+  } catch (error) {
+    console.error('[Plans] Error getting material tree node detail:', error);
+    return null;
+  }
+}
+
 // ============================================================================
 // REACTION CRUD OPERATIONS
 // ============================================================================
 
 /**
  * Get all reactions for a manufacturing plan
+ *
+ * Every reaction (top-level or chained sub-reaction, e.g. Fernite Alloy Reaction Formula
+ * feeding into Fernite Carbide Reaction Formula) gets its own aggregated plan_blueprints
+ * row (see detectAndCreateNestedReactions), so this returns ALL of them - callers that
+ * need only the reactions a user should see as separate cards (the Reactions tab) should
+ * filter on `isTopLevel`. Nested reactions are still returned (with isTopLevel: false) since
+ * things like the "Mark Built" modal need to look up any reaction by planBlueprintId,
+ * including ones nested inside another reaction's tree.
+ *
+ * A reaction is considered "nested" if its product is consumed as a direct input by any
+ * OTHER reaction present in this same plan.
+ *
  * @param {string} planId - Plan ID
- * @returns {Array} Array of reactions with details
+ * @returns {Promise<Array>} Array of reactions with details, including isTopLevel
  */
-function getReactions(planId) {
+async function getReactions(planId) {
   try {
     const db = getCharacterDatabase();
 
@@ -4515,15 +5387,232 @@ function getReactions(planId) {
       ORDER BY runs DESC, added_at ASC
     `).all(planId);
 
-    return reactions.map(r => ({
+    const mapped = reactions.map(r => ({
       ...r,
       facilitySnapshot: r.facilitySnapshot ? JSON.parse(r.facilitySnapshot) : null,
       isIntermediate: Boolean(r.isIntermediate),
       isBuilt: Boolean(r.isBuilt)
     }));
+
+    if (mapped.length === 0) {
+      return mapped;
+    }
+
+    // Collect every other reaction's direct input typeIds, then flag any reaction whose
+    // own product typeId shows up in that set as nested (consumed by a sibling reaction).
+    const directInputsByReactionTypeId = new Map();
+    for (const r of mapped) {
+      if (!directInputsByReactionTypeId.has(r.reactionTypeId)) {
+        const inputs = await getReactionMaterials(r.reactionTypeId, null);
+        directInputsByReactionTypeId.set(r.reactionTypeId, new Set(inputs.map(i => i.typeID)));
+      }
+    }
+
+    const allDirectInputTypeIds = new Set();
+    for (const [reactionTypeId, inputSet] of directInputsByReactionTypeId) {
+      for (const typeId of inputSet) allDirectInputTypeIds.add(typeId);
+    }
+
+    for (const r of mapped) {
+      const product = await getReactionProduct(r.reactionTypeId, null);
+      r.isTopLevel = !product || !allDirectInputTypeIds.has(product.typeID);
+    }
+
+    return mapped;
   } catch (error) {
     console.error('Error getting reactions:', error);
     throw error;
+  }
+}
+
+/**
+ * Get the aggregated Build List for a plan: one row per unique item type
+ * (blueprint_type + blueprint_type_id) across every plan_blueprints instance -
+ * top-level blueprints, nested intermediates (including reaction-parented ones like
+ * Fuel Blocks, which appear in no other editing surface), and reactions.
+ *
+ * Per-field values collapse to the shared value when uniform across instances, or
+ * `{ mixed: true }` when instances differ - the Build List tab renders those as "Mixed"
+ * and editing overwrites all instances.
+ *
+ * @param {string} planId - Plan ID
+ * @returns {Promise<Array>} Build items, grouped/sorted by role
+ */
+async function getPlanBuildItems(planId) {
+  try {
+    const db = getCharacterDatabase();
+
+    const rows = db.prepare(`
+      SELECT plan_blueprint_id, blueprint_type, blueprint_type_id,
+             parent_blueprint_id, is_intermediate, runs, lines, me_level, te_level,
+             facility_id, facility_snapshot, use_intermediates, intermediate_product_type_id
+      FROM plan_blueprints
+      WHERE plan_id = ?
+    `).all(planId);
+
+    if (rows.length === 0) return [];
+
+    // Group by (blueprint_type, blueprint_type_id)
+    const groups = new Map();
+    for (const r of rows) {
+      const itemType = r.blueprint_type === 'reaction' ? 'reaction' : 'manufacturing';
+      const key = `${itemType}:${r.blueprint_type_id}`;
+      if (!groups.has(key)) groups.set(key, { itemType, blueprintTypeId: r.blueprint_type_id, instances: [] });
+      groups.get(key).instances.push(r);
+    }
+
+    // Reuse getReactions' top-level classification (a reaction is nested when its product
+    // is consumed as a direct input by another reaction in this plan)
+    const reactions = await getReactions(planId);
+    const reactionTopLevel = new Map(reactions.map(r => [r.reactionTypeId, r.isTopLevel]));
+
+    // Batch fetch type names (blueprint/formula names + product names) from SDE
+    const nameIds = new Set();
+    for (const group of groups.values()) {
+      nameIds.add(group.blueprintTypeId);
+      for (const inst of group.instances) {
+        if (inst.intermediate_product_type_id) nameIds.add(inst.intermediate_product_type_id);
+      }
+    }
+    const typeNames = {};
+    try {
+      const sdeDb = new Database(getSdePath(), { readonly: true });
+      try {
+        const ids = [...nameIds];
+        const placeholders = ids.map(() => '?').join(',');
+        const types = sdeDb.prepare(`SELECT typeID, typeName FROM invTypes WHERE typeID IN (${placeholders})`).all(...ids);
+        for (const t of types) typeNames[t.typeID] = t.typeName;
+      } finally {
+        sdeDb.close();
+      }
+    } catch (error) {
+      console.error('[Plans] Error fetching type names for build items:', error);
+    }
+
+    // Collapse a field across instances: shared value, or { mixed: true }.
+    // use_intermediates normalizes null -> 'raw_materials' (same meaning: null is
+    // just a pre-migration default) so it doesn't falsely read as Mixed.
+    const collapse = (instances, field) => {
+      const normalize = (v) => field === 'use_intermediates' ? (v ?? 'raw_materials') : (v ?? null);
+      const vals = new Set(instances.map(i => normalize(i[field])));
+      return vals.size === 1 ? normalize(instances[0][field]) : { mixed: true };
+    };
+
+    const items = [];
+    for (const group of groups.values()) {
+      const { itemType, blueprintTypeId, instances } = group;
+      const isReaction = itemType === 'reaction';
+      const topLevelInstances = instances.filter(i => i.is_intermediate === 0);
+
+      let role;
+      if (isReaction) {
+        role = reactionTopLevel.get(blueprintTypeId) === false ? 'sub-reaction' : 'reaction';
+      } else {
+        role = topLevelInstances.length > 0 ? 'blueprint' : 'intermediate';
+      }
+
+      // Runs/Lines are only user-editable when the type maps to exactly one top-level
+      // manufacturing row - otherwise they're derived values shown read-only.
+      const runsEditable = !isReaction && topLevelInstances.length === 1;
+
+      const productTypeId = instances.find(i => i.intermediate_product_type_id)?.intermediate_product_type_id ?? null;
+
+      items.push({
+        itemType,
+        blueprintTypeId,
+        typeName: typeNames[blueprintTypeId] || `Type ${blueprintTypeId}`,
+        productTypeId,
+        productName: productTypeId ? (typeNames[productTypeId] || `Type ${productTypeId}`) : null,
+        role,
+        instanceCount: instances.length,
+        totalRuns: instances.reduce((sum, i) => sum + (i.runs || 0), 0),
+        runs: runsEditable ? topLevelInstances[0].runs : null,
+        lines: runsEditable ? topLevelInstances[0].lines : null,
+        runsEditable,
+        topLevelPlanBlueprintId: runsEditable ? topLevelInstances[0].plan_blueprint_id : null,
+        meLevel: isReaction ? null : collapse(instances, 'me_level'),
+        teLevel: isReaction ? null : collapse(instances, 'te_level'),
+        useIntermediates: collapse(instances, 'use_intermediates'),
+        facilityId: collapse(instances, 'facility_id')
+      });
+    }
+
+    // Sort: blueprints, then intermediates, then reactions, then sub-reactions; runs desc within
+    const roleOrder = { blueprint: 0, intermediate: 1, reaction: 2, 'sub-reaction': 3 };
+    items.sort((a, b) => (roleOrder[a.role] - roleOrder[b.role]) || (b.totalRuns - a.totalRuns));
+
+    return items;
+  } catch (error) {
+    console.error('Error getting plan build items:', error);
+    throw error;
+  }
+}
+
+/**
+ * Apply Build List edits to every instance of an item type in a plan.
+ * ME/TE/Build Plan/facility apply to ALL plan_blueprints rows matching
+ * (blueprint_type, blueprint_type_id). Runs/Lines only apply when exactly one
+ * top-level manufacturing instance exists (otherwise they're derived, not user-set).
+ * One recalculation at the end.
+ *
+ * @param {string} planId
+ * @param {string} itemType - 'manufacturing' | 'reaction'
+ * @param {number} blueprintTypeId
+ * @param {object} updates - { meLevel, teLevel, useIntermediates, facilityId, facilitySnapshot, runs, lines }
+ * @returns {Promise<boolean>} success
+ */
+async function updateBuildItemsByType(planId, itemType, blueprintTypeId, updates) {
+  try {
+    const db = getCharacterDatabase();
+    const blueprintType = itemType === 'reaction' ? 'reaction' : 'manufacturing';
+
+    const fields = [];
+    const values = [];
+    if (updates.meLevel !== undefined) { fields.push('me_level = ?'); values.push(updates.meLevel); }
+    if (updates.teLevel !== undefined) { fields.push('te_level = ?'); values.push(updates.teLevel); }
+    if (updates.useIntermediates !== undefined) { fields.push('use_intermediates = ?'); values.push(updates.useIntermediates); }
+    if (updates.facilityId !== undefined) {
+      fields.push('facility_id = ?');
+      values.push(updates.facilityId);
+      fields.push('facility_snapshot = ?');
+      values.push(updates.facilitySnapshot ? JSON.stringify(updates.facilitySnapshot) : null);
+    }
+
+    let changed = 0;
+    if (fields.length > 0) {
+      const result = db.prepare(`
+        UPDATE plan_blueprints SET ${fields.join(', ')}
+        WHERE plan_id = ? AND blueprint_type = ? AND blueprint_type_id = ?
+      `).run(...values, planId, blueprintType, blueprintTypeId);
+      changed += result.changes;
+    }
+
+    if (updates.runs !== undefined || updates.lines !== undefined) {
+      const topLevels = db.prepare(`
+        SELECT plan_blueprint_id FROM plan_blueprints
+        WHERE plan_id = ? AND blueprint_type = ? AND blueprint_type_id = ? AND is_intermediate = 0
+      `).all(planId, blueprintType, blueprintTypeId);
+      if (topLevels.length === 1) {
+        const f = [];
+        const v = [];
+        if (updates.runs !== undefined) { f.push('runs = ?'); v.push(updates.runs); }
+        if (updates.lines !== undefined) { f.push('lines = ?'); v.push(updates.lines); }
+        const result = db.prepare(`UPDATE plan_blueprints SET ${f.join(', ')} WHERE plan_blueprint_id = ?`)
+          .run(...v, topLevels[0].plan_blueprint_id);
+        changed += result.changes;
+      } else {
+        console.warn(`[Plans] Ignoring runs/lines update for type ${blueprintTypeId}: ${topLevels.length} top-level instance(s), need exactly 1`);
+      }
+    }
+
+    if (changed === 0) return false;
+
+    await recalculatePlanMaterials(planId, false);
+    db.prepare('UPDATE manufacturing_plans SET updated_at = ? WHERE plan_id = ?').run(Date.now(), planId);
+    return true;
+  } catch (error) {
+    console.error('Error updating build items by type:', error);
+    return false;
   }
 }
 
@@ -4707,6 +5796,10 @@ module.exports = {
   getIntermediateBlueprints,
   getAllPlanIntermediates,
   updateIntermediateBlueprint,
+  setReactionChildBuildPlan,
+  getReactionTreeForPlan,
+  getPlanBuildItems,
+  updateBuildItemsByType,
   markIntermediateBuilt,
   deleteOrphanedIntermediates,
   recalculatePlanMaterials,
@@ -4729,4 +5822,5 @@ module.exports = {
   markReactionBuilt,
   getProductOwnedAssets,
   getMaterialTree,
+  getMaterialTreeNodeDetail,
 };

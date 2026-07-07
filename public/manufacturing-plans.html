@@ -74,7 +74,9 @@
           <div class="tabs">
             <button class="tab-button active" data-tab="overview">Overview</button>
             <button class="tab-button" data-tab="blueprints">Blueprints</button>
+            <button class="tab-button" data-tab="build-list">Build List</button>
             <button class="tab-button" data-tab="reactions" id="reactions-tab-button" style="display: none;">Reactions</button>
+            <button class="tab-button" data-tab="blueprint-tree">Blueprint Tree</button>
             <button class="tab-button" data-tab="materials">Materials</button>
             <button class="tab-button" data-tab="products">Products</button>
             <button class="tab-button" data-tab="jobs">Jobs</button>
@@ -92,6 +94,7 @@
                   <h3>Material Cost</h3>
                   <div class="stat-value" id="overview-material-cost">0 ISK</div>
                   <div class="stat-meta" id="overview-material-meta">0/0 priced</div>
+                  <div class="stat-meta stat-meta-job-cost" id="overview-job-cost" title="Estimated job installation fees (system cost index, facility tax, SCC surcharge) across all manufacturing and reaction jobs in this plan. Deducted from Estimated Profit.">+ 0 ISK job installation</div>
                 </div>
                 <div class="stat-card">
                   <h3>Product Value</h3>
@@ -150,6 +153,18 @@
               </div>
             </div>
 
+            <!-- Build List Tab -->
+            <div id="build-list-tab" class="tab-panel">
+              <div class="tab-header">
+                <h3>Build List</h3>
+                <p class="section-description">Every blueprint and reaction used by this plan, one row per item type. Edit ME/TE, Build Plan, Facility, and Runs/Lines (where applicable) here — changes apply to all uses of that item in the plan.</p>
+              </div>
+
+              <div id="build-list-container" class="blueprints-table-container">
+                <!-- Build list table will be loaded here -->
+              </div>
+            </div>
+
             <!-- Materials Tab -->
             <div id="materials-tab" class="tab-panel">
               <div class="tab-header">
@@ -192,17 +207,7 @@
             <div id="reactions-tab" class="tab-panel">
               <div class="tab-header">
                 <h3>Reactions</h3>
-                <div class="tab-actions">
-                  <button class="primary-button tooltip" id="save-reaction-facilities-btn" style="display: none;">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                      <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
-                      <polyline points="17 21 17 13 7 13 7 21"></polyline>
-                      <polyline points="7 3 7 8 15 8"></polyline>
-                    </svg>
-                    Save Facilities
-                    <span class="tooltip-text">Save all facility changes for reactions</span>
-                  </button>
-                </div>
+                <p class="section-description">Reaction chains used by this plan. To change Build Plan, facility, or other settings, use the Build List tab.</p>
               </div>
 
               <div id="reactions-container">
@@ -214,6 +219,18 @@
                   <p>No reactions detected in this plan</p>
                   <p class="empty-state-hint">Reactions will appear here when blueprints require reaction products and 'Calculate Reactions as Intermediates' is enabled in Settings.</p>
                 </div>
+              </div>
+            </div>
+
+            <!-- Blueprint Tree Tab -->
+            <div id="blueprint-tree-tab" class="tab-panel">
+              <div class="tab-header">
+                <h3>Blueprint Tree</h3>
+                <p class="section-description">The full manufacturing and reaction dependency tree for this plan. Expand a node for its ME/TE, material inputs, time, and job cost. To change ME/TE, Build Plan, or Facility, use the Build List tab.</p>
+              </div>
+
+              <div id="blueprint-tree-container">
+                <!-- Blueprint tree will be loaded here -->
               </div>
             </div>
 

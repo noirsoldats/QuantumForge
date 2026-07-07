@@ -525,16 +525,25 @@ function calculateReactionTime(baseTime, runs, facility = null) {
 
 /**
  * Calculate reaction materials with recursive tree expansion
- * ALWAYS expands to raw materials - no toggle
+ * By default ALWAYS expands to raw materials (no toggle) - this is what the standalone
+ * Reactions Calculator page and Manufacturing Summary want.
+ * Manufacturing Plans callers may pass `buildPlanOverrides` to stop expansion early at
+ * specific nodes (mirrors the Blueprints tab's per-intermediate use_intermediates choice).
  * @param {number} reactionTypeId - Reaction formula type ID
  * @param {number} runs - Number of reaction runs
  * @param {number} characterId - Character ID (for future skill bonuses)
  * @param {Object} facility - Refinery facility configuration
  * @param {number} depth - Recursion depth (internal)
  * @param {object} db - Optional database connection
+ * @param {object} marketSet - Market set for pricing
+ * @param {Map<string,string>} buildPlanOverrides - Optional map of `${parentTypeId}:${materialTypeId}` -> 'raw_materials'|'components'|'buy'. Absent entries default to 'raw_materials' (old behavior).
+ * @param {string} ownUseIntermediates - Only applied at depth 0: this reaction's OWN Build Plan
+ *   choice. 'components' forces every direct input to render/aggregate as a leaf (no further
+ *   expansion), matching expandReaction's equivalent top-level short-circuit. 'buy' returns an
+ *   empty tree/materials (nothing to display - the caller shows the product as purchased).
  * @returns {Promise<Object>} {materials: {typeId: qty}, tree: [...], product: {...}, pricing: {...}}
  */
-async function calculateReactionMaterials(reactionTypeId, runs = 1, characterId = null, facility = null, depth = 0, db = null, marketSet = null) {
+async function calculateReactionMaterials(reactionTypeId, runs = 1, characterId = null, facility = null, depth = 0, db = null, marketSet = null, buildPlanOverrides = null, ownUseIntermediates = null) {
   // Prevent infinite recursion
   if (depth > MAX_RECURSION_DEPTH) {
     console.warn(`Max recursion depth ${MAX_RECURSION_DEPTH} reached for reaction ${reactionTypeId}`);
@@ -546,9 +555,11 @@ async function calculateReactionMaterials(reactionTypeId, runs = 1, characterId 
     };
   }
 
+  
+
   // Check cache at depth 0 only
   if (depth === 0) {
-    const cacheKey = getReactionCacheKey(reactionTypeId, runs, facility, characterId, marketSet);
+    const cacheKey = getReactionCacheKey(reactionTypeId, runs, facility, characterId, marketSet, buildPlanOverrides, ownUseIntermediates);
     if (reactionTreeCache.has(cacheKey)) {
       return structuredClone(reactionTreeCache.get(cacheKey));
     }
@@ -580,6 +591,28 @@ async function calculateReactionMaterials(reactionTypeId, runs = 1, characterId 
     const aggregatedMaterials = {};
     const treeNodes = [];
 
+    // 'buy' at the top level: nothing to show underneath - the reaction's product itself
+    // is being purchased directly, matching expandReaction's isBuy early return.
+    if (depth === 0 && ownUseIntermediates === 'buy') {
+      const result = {
+        materials: {},
+        tree: [],
+        product: {
+          typeID: product.typeID,
+          typeName: product.typeName,
+          quantity: product.quantity * runs,
+          baseQuantity: product.quantity
+        },
+        pricing: null
+      };
+      return result;
+    }
+
+    // This reaction's own top-level Build Plan choice ('components') forces every direct
+    // input to stay a leaf regardless of that input's own override, matching expandReaction's
+    // equivalent short-circuit for the aggregation path.
+    const forceLeafAtThisLevel = depth === 0 && ownUseIntermediates === 'components';
+
     // Process each material
     for (const material of baseMaterials) {
       // Apply facility bonuses to calculate adjusted quantity
@@ -590,11 +623,33 @@ async function calculateReactionMaterials(reactionTypeId, runs = 1, characterId 
         product.typeID
       );
 
-      // Check if this material is itself a reaction product
-      const subReactionId = await getReactionForProduct(material.typeID, db);
+      // Look up this node's build plan override (if any). Absent = 'raw_materials' (old behavior).
+      const overrideKey = `${product.typeID}:${material.typeID}`;
+      const buildPlan = forceLeafAtThisLevel ? 'raw_materials' : (buildPlanOverrides?.get(overrideKey) || 'raw_materials');
 
-      if (subReactionId) {
-        // ALWAYS EXPAND - this is an intermediate reaction product
+      // Check if this material is itself a reaction product, or a manufactured-blueprint
+      // product (e.g. Fuel Blocks consumed directly by advanced-material reactions).
+      const subReactionId = await getReactionForProduct(material.typeID, db);
+      const subBlueprintId = !subReactionId
+        ? require('./blueprint-calculator').getBlueprintForProduct(material.typeID, null)
+        : null;
+
+      if (forceLeafAtThisLevel || buildPlan === 'buy' || (!subReactionId && !subBlueprintId)) {
+        // Buy override, or a true raw material (moon material) with no producer - leaf node.
+        aggregatedMaterials[material.typeID] = (aggregatedMaterials[material.typeID] || 0) + adjustedQty;
+
+        treeNodes.push({
+          typeID: material.typeID,
+          typeName: material.typeName,
+          quantity: adjustedQty,
+          depth: depth,
+          isIntermediate: false,
+          isManufactured: !subReactionId && !!subBlueprintId,
+          hasProducer: !!(subReactionId || subBlueprintId), // true even at 'buy' - lets the UI still offer switching sourcing back
+          buildPlan,
+          children: []
+        });
+      } else if (subReactionId) {
         console.log(`[Reaction Tree] Expanding intermediate: ${material.typeName} (depth ${depth + 1})`);
 
         // Get the product info for the sub-reaction to know how much it produces per run
@@ -607,6 +662,8 @@ async function calculateReactionMaterials(reactionTypeId, runs = 1, characterId 
 
         console.log(`[Reaction Tree] Need ${adjustedQty} ${material.typeName}, produces ${subReactionOutputPerRun} per run, requires ${subReactionRuns} runs`);
 
+        // 'components' mode: expand exactly one level (this sub-reaction's direct inputs),
+        // without passing overrides further down, so nothing past it recurses.
         const subCalc = await calculateReactionMaterials(
           subReactionId,
           subReactionRuns,
@@ -614,7 +671,8 @@ async function calculateReactionMaterials(reactionTypeId, runs = 1, characterId 
           facility,
           depth + 1,
           db,
-          marketSet  // Pass marketSet through recursion
+          marketSet,
+          buildPlan === 'components' ? null : buildPlanOverrides
         );
 
         // Aggregate raw materials from sub-reaction
@@ -634,10 +692,16 @@ async function calculateReactionMaterials(reactionTypeId, runs = 1, characterId 
           reactionName: reactionName,
           depth: depth,
           isIntermediate: true,
+          hasProducer: true,
+          buildPlan,
           children: subCalc.tree
         });
       } else {
-        // Raw material (moon material) - leaf node
+        // Manufactured-blueprint product (e.g. Fuel Blocks) consumed directly by this reaction.
+        // Leave it as a leaf here — Manufacturing Plans expands these via walkIntermediateNodes
+        // (manufacturing-plans.js) since blueprint expansion needs character/facility context
+        // this pure SDE calculator doesn't have. The standalone Reactions Calculator page and
+        // Manufacturing Summary (no overrides passed) also stop here, matching prior behavior.
         aggregatedMaterials[material.typeID] = (aggregatedMaterials[material.typeID] || 0) + adjustedQty;
 
         treeNodes.push({
@@ -646,6 +710,9 @@ async function calculateReactionMaterials(reactionTypeId, runs = 1, characterId 
           quantity: adjustedQty,
           depth: depth,
           isIntermediate: false,
+          isManufactured: true,
+          hasProducer: true,
+          buildPlan,
           children: []
         });
       }
@@ -818,7 +885,7 @@ async function calculateReactionMaterials(reactionTypeId, runs = 1, characterId 
 
     // Cache at depth 0
     if (depth === 0) {
-      const cacheKey = getReactionCacheKey(reactionTypeId, runs, facility, characterId, marketSet);
+      const cacheKey = getReactionCacheKey(reactionTypeId, runs, facility, characterId, marketSet, buildPlanOverrides, ownUseIntermediates);
       reactionTreeCache.set(cacheKey, structuredClone(result));
 
       // Limit cache size
@@ -847,9 +914,12 @@ async function calculateReactionMaterials(reactionTypeId, runs = 1, characterId 
  * @param {number} runs - Number of runs
  * @param {Object} facility - Facility configuration
  * @param {number} characterId - Character ID
+ * @param {object} marketSet - Market set
+ * @param {Map<string,string>} buildPlanOverrides - Per-child sourcing overrides (affects the result shape)
+ * @param {string|null} ownUseIntermediates - Top-level expansion mode (affects the result shape)
  * @returns {string} Cache key
  */
-function getReactionCacheKey(reactionTypeId, runs, facility, characterId, marketSet = null) {
+function getReactionCacheKey(reactionTypeId, runs, facility, characterId, marketSet = null, buildPlanOverrides = null, ownUseIntermediates = null) {
   // Include rigs in cache key to differentiate facility configurations
   let facilityKey = 'none';
   if (facility) {
@@ -860,7 +930,13 @@ function getReactionCacheKey(reactionTypeId, runs, facility, characterId, market
   }
   const charKey      = characterId || 'none';
   const marketSetKey = marketSet?.id || 'none';
-  return `${reactionTypeId}_${runs}_${facilityKey}_${charKey}_${marketSetKey}`;
+  // Both sourcing inputs change what the calculation returns - two calls for the same
+  // reaction/runs/facility must not share a cache slot when these differ.
+  const modeKey = ownUseIntermediates || 'raw';
+  const overridesKey = buildPlanOverrides && buildPlanOverrides.size > 0
+    ? [...buildPlanOverrides.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([k, v]) => `${k}=${v}`).join(',')
+    : 'none';
+  return `${reactionTypeId}_${runs}_${facilityKey}_${charKey}_${marketSetKey}_${modeKey}_${overridesKey}`;
 }
 
 /**
@@ -880,6 +956,7 @@ module.exports = {
   getReactionForProduct,
   calculateReactionMaterials,
   calculateReactionMaterialQuantity,
+  calculateReactionJobCost,
   getTypeName,
   clearReactionCache
 };
