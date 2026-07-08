@@ -133,6 +133,9 @@ const migrations = [
   },
 
   {
+    // LEGACY / INERT ON FRESH DBs: operates on plan_materials, a table that
+    // migration 008 later drops. No-op on any DB created after 008. Retained
+    // (not removed) so its id stays recorded on DBs that predate 008.
     id: '002_plan_materials_manual_acquisition',
     description: 'Add columns for manual material acquisition and custom pricing',
     up: (db) => {
@@ -222,8 +225,17 @@ const migrations = [
           return;
         }
 
-        // Add new column - default to 1 (TRUE) for existing blueprints to maintain current behavior
-        db.exec('ALTER TABLE plan_blueprints ADD COLUMN use_intermediates INTEGER DEFAULT 1');
+        // Add new column as TEXT with the canonical default 'raw_materials'.
+        // NOTE: this migration originally created the column as `INTEGER DEFAULT 1`.
+        // The canonical type is TEXT ('raw_materials' | 'components' | 'buy') — the UI
+        // and calculation code use the string form. Historically the untracked ad-hoc
+        // block in character-database.js created the column as TEXT *before* this
+        // migration ran, so this INTEGER add was a no-op on real DBs. Now that the
+        // ad-hoc block is folded into migration 010, this migration must itself create
+        // the correct TEXT column on fresh DBs. Live DBs already have this migration
+        // recorded (it never re-runs); any legacy INTEGER *values* are normalized to
+        // canonical TEXT by migration 010.
+        db.exec(`ALTER TABLE plan_blueprints ADD COLUMN use_intermediates TEXT DEFAULT 'raw_materials'`);
 
         db.exec('COMMIT');
         console.log('[Migration 003] Successfully added use_intermediates column');
@@ -239,6 +251,8 @@ const migrations = [
   },
 
   {
+    // LEGACY / INERT ON FRESH DBs: operates on plan_materials, dropped by
+    // migration 008. See note on migration 002.
     id: '004_plan_materials_partial_acquisition',
     description: 'Add manually_acquired_quantity column to support partial acquisitions',
     up: (db) => {
@@ -368,7 +382,7 @@ const migrations = [
       }
     },
     down: (db) => {
-      console.log('[Migration 004] Rollback not implemented (would require table recreation)');
+      console.log('[Migration 005] Rollback not implemented (would require table recreation)');
     }
   },
   {
@@ -402,12 +416,23 @@ const migrations = [
         // Add new column
         db.exec('ALTER TABLE plan_blueprints ADD COLUMN built_runs INTEGER DEFAULT 0');
 
-        // Migrate existing data: if is_built=1, set built_runs to runs (fully built)
-        db.exec(`
-          UPDATE plan_blueprints
-          SET built_runs = runs
-          WHERE is_built = 1 AND is_intermediate = 1
-        `);
+        // Migrate existing data: if is_built=1, set built_runs to runs (fully built).
+        // The is_built / is_intermediate columns are added by migration 011, which runs
+        // AFTER this one. Historically these columns existed by the time 006 ran (the
+        // untracked ad-hoc block created them during initializeCharacterDatabase before
+        // the numbered system ran). Now that those blocks are folded into numbered
+        // migrations 011/012, guard the backfill on column existence; the authoritative
+        // backfill (once all columns exist) lives at the end of migration 012.
+        const hasBuiltFlags =
+          pragma.some(col => col.name === 'is_built') &&
+          pragma.some(col => col.name === 'is_intermediate');
+        if (hasBuiltFlags) {
+          db.exec(`
+            UPDATE plan_blueprints
+            SET built_runs = runs
+            WHERE is_built = 1 AND is_intermediate = 1
+          `);
+        }
 
         db.exec('COMMIT');
         console.log('[Migration 006] Successfully added built_runs column');
@@ -422,6 +447,9 @@ const migrations = [
     }
   },
   {
+    // LEGACY / INERT ON FRESH DBs: creates plan_material_manual_acquisitions /
+    // plan_material_acquisition_log, both dropped by migration 008. Retained so
+    // its id stays recorded on DBs that predate 008.
     id: '007_separate_manual_acquisitions_table',
     description: 'Create separate tables for manual acquisitions and acquisition log',
     up: (db) => {
@@ -842,6 +870,461 @@ const migrations = [
     },
     down: (db) => {
       console.log('[Migration 009] Rollback not implemented (recalculation is not reversible)');
+    }
+  },
+  // ---------------------------------------------------------------------------
+  // Migrations 010-018: folded from the previously-untracked ad-hoc "// Migration:"
+  // blocks in character-database.js initializeCharacterDatabase(). Each preserves
+  // its original pragma/sqlite_master guard so it is a safe no-op on live DBs that
+  // already applied the ad-hoc version. See plan "Migration System Cleanup".
+  // ---------------------------------------------------------------------------
+  {
+    id: '010_plan_blueprints_use_intermediates_text',
+    description: 'Add use_intermediates (TEXT) column to plan_blueprints and normalize legacy INTEGER values',
+    up: (db) => {
+      console.log('[Migration 010] Ensuring use_intermediates column on plan_blueprints...');
+
+      const tableExists = db.prepare(`
+        SELECT name FROM sqlite_master WHERE type='table' AND name='plan_blueprints'
+      `).get();
+      if (!tableExists) {
+        console.log('[Migration 010] plan_blueprints table does not exist, skipping');
+        return;
+      }
+
+      db.exec('BEGIN TRANSACTION');
+      try {
+        const columns = db.pragma('table_info(plan_blueprints)');
+        const hasUseIntermediates = columns.some(col => col.name === 'use_intermediates');
+
+        if (!hasUseIntermediates) {
+          console.log('[Migration 010] Adding use_intermediates column (TEXT DEFAULT raw_materials)');
+          db.exec(`ALTER TABLE plan_blueprints ADD COLUMN use_intermediates TEXT DEFAULT 'raw_materials'`);
+        }
+
+        // Normalize legacy INTEGER values (from the retired numbered migration 003,
+        // which added this column as INTEGER DEFAULT 1) to canonical TEXT.
+        //   1 / '1'  -> 'raw_materials'  (expand intermediates)
+        //   0 / '0'  -> 'components'     (don't expand; buy the components)
+        //   NULL and existing canonical TEXT values are left untouched.
+        const rawResult = db.prepare(
+          `UPDATE plan_blueprints SET use_intermediates = 'raw_materials'
+           WHERE use_intermediates IN ('1', 1)`
+        ).run();
+        const compResult = db.prepare(
+          `UPDATE plan_blueprints SET use_intermediates = 'components'
+           WHERE use_intermediates IN ('0', 0)`
+        ).run();
+        if (rawResult.changes || compResult.changes) {
+          console.log(`[Migration 010] Normalized use_intermediates: ${rawResult.changes} -> raw_materials, ${compResult.changes} -> components`);
+        }
+
+        db.exec('COMMIT');
+        console.log('[Migration 010] Completed successfully');
+      } catch (error) {
+        db.exec('ROLLBACK');
+        console.error('[Migration 010] Migration failed:', error);
+        throw error;
+      }
+    },
+    down: (db) => {
+      console.log('[Migration 010] Rollback not implemented (would require table recreation)');
+    }
+  },
+  {
+    id: '011_plan_blueprints_intermediate_support',
+    description: 'Add intermediate blueprint columns (parent_blueprint_id, is_intermediate, is_built, intermediate_product_type_id) to plan_blueprints',
+    up: (db) => {
+      console.log('[Migration 011] Ensuring intermediate blueprint columns on plan_blueprints...');
+
+      const tableExists = db.prepare(`
+        SELECT name FROM sqlite_master WHERE type='table' AND name='plan_blueprints'
+      `).get();
+      if (!tableExists) {
+        console.log('[Migration 011] plan_blueprints table does not exist, skipping');
+        return;
+      }
+
+      db.exec('BEGIN TRANSACTION');
+      try {
+        const columns = db.pragma('table_info(plan_blueprints)');
+        const hasParentBlueprintId = columns.some(col => col.name === 'parent_blueprint_id');
+        const hasIsIntermediate = columns.some(col => col.name === 'is_intermediate');
+        const hasIsBuilt = columns.some(col => col.name === 'is_built');
+        const hasIntermediateProductTypeId = columns.some(col => col.name === 'intermediate_product_type_id');
+
+        if (!hasParentBlueprintId) {
+          db.exec(`ALTER TABLE plan_blueprints ADD COLUMN parent_blueprint_id TEXT`);
+        }
+        if (!hasIsIntermediate) {
+          db.exec(`ALTER TABLE plan_blueprints ADD COLUMN is_intermediate INTEGER DEFAULT 0`);
+        }
+        if (!hasIsBuilt) {
+          db.exec(`ALTER TABLE plan_blueprints ADD COLUMN is_built INTEGER DEFAULT 0`);
+        }
+        if (!hasIntermediateProductTypeId) {
+          db.exec(`ALTER TABLE plan_blueprints ADD COLUMN intermediate_product_type_id INTEGER`);
+        }
+
+        db.exec(`
+          CREATE INDEX IF NOT EXISTS idx_plan_blueprints_parent ON plan_blueprints(parent_blueprint_id);
+          CREATE INDEX IF NOT EXISTS idx_plan_blueprints_intermediate ON plan_blueprints(is_intermediate);
+        `);
+
+        db.exec('COMMIT');
+        console.log('[Migration 011] Completed successfully');
+      } catch (error) {
+        db.exec('ROLLBACK');
+        console.error('[Migration 011] Migration failed:', error);
+        throw error;
+      }
+    },
+    down: (db) => {
+      console.log('[Migration 011] Rollback not implemented (would require table recreation)');
+    }
+  },
+  {
+    id: '012_plan_blueprints_reaction_support',
+    description: 'Add reaction columns (blueprint_type, reaction_type_id, built_runs) to plan_blueprints',
+    up: (db) => {
+      console.log('[Migration 012] Ensuring reaction columns on plan_blueprints...');
+
+      const tableExists = db.prepare(`
+        SELECT name FROM sqlite_master WHERE type='table' AND name='plan_blueprints'
+      `).get();
+      if (!tableExists) {
+        console.log('[Migration 012] plan_blueprints table does not exist, skipping');
+        return;
+      }
+
+      db.exec('BEGIN TRANSACTION');
+      try {
+        const columns = db.pragma('table_info(plan_blueprints)');
+        const hasBlueprintType = columns.some(col => col.name === 'blueprint_type');
+        const hasReactionTypeId = columns.some(col => col.name === 'reaction_type_id');
+        const hasBuiltRuns = columns.some(col => col.name === 'built_runs');
+
+        if (!hasBlueprintType) {
+          db.exec(`ALTER TABLE plan_blueprints ADD COLUMN blueprint_type TEXT NOT NULL DEFAULT 'manufacturing'`);
+        }
+        if (!hasReactionTypeId) {
+          db.exec(`ALTER TABLE plan_blueprints ADD COLUMN reaction_type_id INTEGER`);
+        }
+        if (!hasBuiltRuns) {
+          db.exec(`ALTER TABLE plan_blueprints ADD COLUMN built_runs INTEGER DEFAULT 0`);
+        }
+
+        db.exec(`
+          CREATE INDEX IF NOT EXISTS idx_plan_blueprints_type ON plan_blueprints(blueprint_type);
+        `);
+
+        // Authoritative built_runs backfill: now that built_runs (this migration /
+        // migration 006) and is_built / is_intermediate (migration 011) are all
+        // guaranteed present, apply the "fully built => built_runs = runs" backfill
+        // that migration 006 had to skip due to column-ordering. Idempotent: only
+        // touches rows flagged fully built. On a fresh DB there are no rows, so no-op.
+        const afterCols = db.pragma('table_info(plan_blueprints)');
+        const canBackfill =
+          afterCols.some(col => col.name === 'built_runs') &&
+          afterCols.some(col => col.name === 'is_built') &&
+          afterCols.some(col => col.name === 'is_intermediate');
+        if (canBackfill) {
+          db.exec(`
+            UPDATE plan_blueprints
+            SET built_runs = runs
+            WHERE is_built = 1 AND is_intermediate = 1 AND (built_runs IS NULL OR built_runs = 0)
+          `);
+        }
+
+        db.exec('COMMIT');
+        console.log('[Migration 012] Completed successfully');
+      } catch (error) {
+        db.exec('ROLLBACK');
+        console.error('[Migration 012] Migration failed:', error);
+        throw error;
+      }
+    },
+    down: (db) => {
+      console.log('[Migration 012] Rollback not implemented (would require table recreation)');
+    }
+  },
+  {
+    id: '013_character_settings_table',
+    description: 'Create character_settings table for per-character settings',
+    up: (db) => {
+      console.log('[Migration 013] Ensuring character_settings table...');
+
+      db.exec('BEGIN TRANSACTION');
+      try {
+        db.exec(`
+          CREATE TABLE IF NOT EXISTS character_settings (
+            character_id INTEGER PRIMARY KEY,
+            enabled_divisions TEXT NOT NULL DEFAULT '[]',
+            division_names TEXT,
+            division_names_fetched_at INTEGER,
+            division_names_cache_expires_at INTEGER,
+            FOREIGN KEY (character_id) REFERENCES characters(character_id) ON DELETE CASCADE
+          )
+        `);
+        db.exec(`
+          CREATE INDEX IF NOT EXISTS idx_character_settings_character
+            ON character_settings(character_id)
+        `);
+        db.exec('COMMIT');
+        console.log('[Migration 013] Completed successfully');
+      } catch (error) {
+        db.exec('ROLLBACK');
+        console.error('[Migration 013] Migration failed:', error);
+        throw error;
+      }
+    },
+    down: (db) => {
+      console.log('[Migration 013] Rollback not implemented');
+    }
+  },
+  {
+    id: '014_plan_industry_settings_table',
+    description: 'Create plan_industry_settings table for per-plan industry overrides',
+    up: (db) => {
+      console.log('[Migration 014] Ensuring plan_industry_settings table...');
+
+      db.exec('BEGIN TRANSACTION');
+      try {
+        db.exec(`
+          CREATE TABLE IF NOT EXISTS plan_industry_settings (
+            plan_id TEXT PRIMARY KEY,
+            enabled_divisions_json TEXT NOT NULL DEFAULT '{}',
+            default_characters_json TEXT NOT NULL DEFAULT '[]',
+            reactions_as_intermediates INTEGER DEFAULT 0,
+            last_updated INTEGER NOT NULL,
+            FOREIGN KEY (plan_id) REFERENCES manufacturing_plans(plan_id) ON DELETE CASCADE
+          )
+        `);
+        db.exec(`
+          CREATE INDEX IF NOT EXISTS idx_plan_industry_settings_plan
+            ON plan_industry_settings(plan_id)
+        `);
+        db.exec('COMMIT');
+        console.log('[Migration 014] Completed successfully');
+      } catch (error) {
+        db.exec('ROLLBACK');
+        console.error('[Migration 014] Migration failed:', error);
+        throw error;
+      }
+    },
+    down: (db) => {
+      console.log('[Migration 014] Rollback not implemented');
+    }
+  },
+  {
+    id: '015_plan_price_overrides_table',
+    description: 'Create plan_price_overrides table for plan-scoped price overrides',
+    up: (db) => {
+      console.log('[Migration 015] Ensuring plan_price_overrides table...');
+
+      db.exec('BEGIN TRANSACTION');
+      try {
+        db.exec(`
+          CREATE TABLE IF NOT EXISTS plan_price_overrides (
+            plan_id TEXT NOT NULL,
+            type_id INTEGER NOT NULL,
+            price REAL NOT NULL,
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL,
+            PRIMARY KEY (plan_id, type_id),
+            FOREIGN KEY (plan_id) REFERENCES manufacturing_plans(plan_id) ON DELETE CASCADE
+          )
+        `);
+        db.exec(`
+          CREATE INDEX IF NOT EXISTS idx_plan_price_overrides_plan
+            ON plan_price_overrides(plan_id)
+        `);
+        db.exec('COMMIT');
+        console.log('[Migration 015] Completed successfully');
+      } catch (error) {
+        db.exec('ROLLBACK');
+        console.error('[Migration 015] Migration failed:', error);
+        throw error;
+      }
+    },
+    down: (db) => {
+      console.log('[Migration 015] Rollback not implemented');
+    }
+  },
+  {
+    id: '016_plan_price_overrides_last_market_price',
+    description: 'Add last_market_price snapshot column to plan_price_overrides',
+    up: (db) => {
+      console.log('[Migration 016] Ensuring last_market_price column on plan_price_overrides...');
+
+      const tableExists = db.prepare(`
+        SELECT name FROM sqlite_master WHERE type='table' AND name='plan_price_overrides'
+      `).get();
+      if (!tableExists) {
+        console.log('[Migration 016] plan_price_overrides table does not exist, skipping');
+        return;
+      }
+
+      db.exec('BEGIN TRANSACTION');
+      try {
+        const columns = db.pragma('table_info(plan_price_overrides)');
+        const hasLastMarketPrice = columns.some(col => col.name === 'last_market_price');
+        if (!hasLastMarketPrice) {
+          db.exec(`ALTER TABLE plan_price_overrides ADD COLUMN last_market_price REAL`);
+        }
+        db.exec('COMMIT');
+        console.log('[Migration 016] Completed successfully');
+      } catch (error) {
+        db.exec('ROLLBACK');
+        console.error('[Migration 016] Migration failed:', error);
+        throw error;
+      }
+    },
+    down: (db) => {
+      console.log('[Migration 016] Rollback not implemented (would require table recreation)');
+    }
+  },
+  {
+    id: '017_industry_jobs_corporation_support',
+    description: 'Add corporation columns (is_corporation, corporation_id) to esi_industry_jobs',
+    up: (db) => {
+      console.log('[Migration 017] Ensuring corporation columns on esi_industry_jobs...');
+
+      const tableExists = db.prepare(`
+        SELECT name FROM sqlite_master WHERE type='table' AND name='esi_industry_jobs'
+      `).get();
+      if (!tableExists) {
+        console.log('[Migration 017] esi_industry_jobs table does not exist, skipping');
+        return;
+      }
+
+      db.exec('BEGIN TRANSACTION');
+      try {
+        const columns = db.pragma('table_info(esi_industry_jobs)');
+        const hasIsCorporation = columns.some(col => col.name === 'is_corporation');
+        const hasCorporationId = columns.some(col => col.name === 'corporation_id');
+
+        if (!hasIsCorporation) {
+          db.exec(`ALTER TABLE esi_industry_jobs ADD COLUMN is_corporation INTEGER DEFAULT 0`);
+        }
+        if (!hasCorporationId) {
+          db.exec(`ALTER TABLE esi_industry_jobs ADD COLUMN corporation_id INTEGER`);
+        }
+
+        db.exec(`
+          CREATE INDEX IF NOT EXISTS idx_industry_jobs_corporation ON esi_industry_jobs(corporation_id);
+          CREATE INDEX IF NOT EXISTS idx_industry_jobs_is_corp ON esi_industry_jobs(is_corporation);
+        `);
+
+        db.exec('COMMIT');
+        console.log('[Migration 017] Completed successfully');
+      } catch (error) {
+        db.exec('ROLLBACK');
+        console.error('[Migration 017] Migration failed:', error);
+        throw error;
+      }
+    },
+    down: (db) => {
+      console.log('[Migration 017] Rollback not implemented (would require table recreation)');
+    }
+  },
+  {
+    id: '018_blueprints_composite_primary_key',
+    description: 'Migrate blueprints and blueprint_overrides to composite primary key (character_id, item_id)',
+    up: (db) => {
+      // Self-guarded: no-op if the composite PK already exists. Manages its own
+      // foreign_keys pragma and transaction (table rebuild pattern). Folded from
+      // migrateBlueprints_v2() in character-database.js.
+      console.log('[Migration 018] Ensuring blueprints composite primary key...');
+
+      const blueprintsExists = db.prepare(`
+        SELECT name FROM sqlite_master WHERE type='table' AND name='blueprints'
+      `).get();
+      if (!blueprintsExists) {
+        console.log('[Migration 018] blueprints table does not exist, skipping');
+        return;
+      }
+
+      const tableInfo = db.prepare('PRAGMA table_info(blueprints)').all();
+      const pkColumns = tableInfo.filter(col => col.pk > 0).map(col => col.name);
+      if (pkColumns.length === 2 && pkColumns.includes('character_id') && pkColumns.includes('item_id')) {
+        console.log('[Migration 018] Blueprints table already has composite primary key, skipping');
+        return;
+      }
+
+      // Disable foreign keys BEFORE transaction (SQLite requirement for table swap).
+      db.pragma('foreign_keys = OFF');
+      try {
+        db.exec(`
+          BEGIN TRANSACTION;
+
+          CREATE TEMP TABLE temp_overrides_backup AS
+          SELECT b.character_id, bo.item_id, bo.field, bo.value
+          FROM blueprint_overrides bo
+          JOIN blueprints b ON b.item_id = bo.item_id;
+
+          DROP TABLE blueprint_overrides;
+
+          CREATE TABLE blueprints_new (
+            character_id INTEGER NOT NULL,
+            item_id TEXT NOT NULL,
+            type_id INTEGER NOT NULL,
+            corporation_id INTEGER,
+            location_id INTEGER,
+            location_flag TEXT,
+            quantity INTEGER NOT NULL,
+            time_efficiency INTEGER,
+            material_efficiency INTEGER,
+            runs INTEGER,
+            is_copy INTEGER DEFAULT 0,
+            is_corporation INTEGER DEFAULT 0,
+            source TEXT NOT NULL,
+            manually_added INTEGER DEFAULT 0,
+            fetched_at INTEGER,
+            last_updated INTEGER NOT NULL,
+            cache_expires_at INTEGER,
+            PRIMARY KEY (character_id, item_id),
+            FOREIGN KEY (character_id) REFERENCES characters(character_id) ON DELETE CASCADE
+          );
+
+          INSERT INTO blueprints_new
+          SELECT * FROM blueprints;
+
+          DROP TABLE blueprints;
+          ALTER TABLE blueprints_new RENAME TO blueprints;
+
+          CREATE INDEX idx_blueprints_character ON blueprints(character_id);
+          CREATE INDEX idx_blueprints_type ON blueprints(type_id);
+          CREATE INDEX idx_blueprints_source ON blueprints(character_id, source);
+
+          CREATE TABLE blueprint_overrides (
+            character_id INTEGER NOT NULL,
+            item_id TEXT NOT NULL,
+            field TEXT NOT NULL,
+            value TEXT NOT NULL,
+            PRIMARY KEY (character_id, item_id, field),
+            FOREIGN KEY (character_id, item_id) REFERENCES blueprints(character_id, item_id) ON DELETE CASCADE
+          );
+
+          INSERT INTO blueprint_overrides (character_id, item_id, field, value)
+          SELECT character_id, item_id, field, value
+          FROM temp_overrides_backup;
+
+          DROP TABLE temp_overrides_backup;
+
+          COMMIT;
+        `);
+        db.pragma('foreign_keys = ON');
+        console.log('[Migration 018] Completed successfully');
+      } catch (error) {
+        db.exec('ROLLBACK');
+        db.pragma('foreign_keys = ON');
+        console.error('[Migration 018] Migration failed:', error);
+        throw error;
+      }
+    },
+    down: (db) => {
+      console.log('[Migration 018] Rollback not implemented (would require table recreation)');
     }
   }
   // Add future migrations here
