@@ -222,6 +222,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getAcquisitionLog: (planId, typeId) => ipcRenderer.invoke('plans:getAcquisitionLog', planId, typeId),
     getMaterialTree: (planId, planBlueprintId) => ipcRenderer.invoke('plans:getMaterialTree', planId, planBlueprintId),
     getMaterialTreeNodeDetail: (planBlueprintId) => ipcRenderer.invoke('plans:getMaterialTreeNodeDetail', planBlueprintId),
+    // Ledger
+    getLedger: (planId) => ipcRenderer.invoke('plans:getLedger', planId),
+    addLedgerCost: (planId, options) => ipcRenderer.invoke('plans:addLedgerCost', planId, options),
+    updateLedgerEntry: (ledgerId, updates) => ipcRenderer.invoke('plans:updateLedgerEntry', ledgerId, updates),
+    deleteLedgerEntry: (ledgerId) => ipcRenderer.invoke('plans:deleteLedgerEntry', ledgerId),
+    getTransactionDetail: (transactionId, isCorp) => ipcRenderer.invoke('plans:getTransactionDetail', transactionId, isCorp),
+    getJournalDetail: (journalId, isCorp) => ipcRenderer.invoke('plans:getJournalDetail', journalId, isCorp),
   },
 
   // Location API

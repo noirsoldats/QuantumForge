@@ -31,6 +31,7 @@ const mockCharacter = {
     'esi-assets.read_corporation_assets.v1',
     'esi-skills.read_skills.v1',
     'esi-corporations.read_divisions.v1',
+    'esi-wallet.read_corporation_wallets.v1',
   ],
 };
 
@@ -289,6 +290,70 @@ describe('esi-wallet — auth error tagging', () => {
     global.fetch.mockResolvedValue(makeOkResponse([]));
 
     await expectNoThrow(() => fetchCharacterWalletTransactions(CHARACTER_ID));
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// esi-wallet.js — journal + corp fetchers (Ledger overhaul)
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('esi-wallet — journal + corp auth error tagging', () => {
+  let fetchCharacterWalletJournal, fetchCorporationWalletTransactions, fetchCorporationWalletJournal;
+  let refreshAccessToken;
+  let isTokenExpired;
+  let getCharacter;
+
+  beforeEach(() => {
+    jest.resetModules();
+    jest.clearAllMocks();
+
+    ({ refreshAccessToken, isTokenExpired } = require('../../src/main/esi-auth'));
+    ({ getCharacter } = require('../../src/main/settings-manager'));
+    ({ fetchCharacterWalletJournal, fetchCorporationWalletTransactions, fetchCorporationWalletJournal } =
+      require('../../src/main/esi-wallet'));
+
+    isTokenExpired.mockReturnValue(true);
+    getCharacter.mockReturnValue({ ...mockCharacter });
+
+    global.fetch = jest.fn();
+  });
+
+  afterEach(() => {
+    delete global.fetch;
+  });
+
+  test('character journal tags ESI_TOKEN_REFRESH_FAILED when refresh fails', async () => {
+    refreshAccessToken.mockRejectedValue(new Error('Token refresh failed: {"error":"invalid_grant"}'));
+    const err = await expectErrorCode(() => fetchCharacterWalletJournal(CHARACTER_ID), 'ESI_TOKEN_REFRESH_FAILED');
+    expect(err.characterId).toBe(CHARACTER_ID);
+  });
+
+  test('corp transactions tag ESI_SCOPE_ERROR on scope-403', async () => {
+    isTokenExpired.mockReturnValue(false);
+    getCharacter.mockReturnValue({ ...mockCharacter });
+    global.fetch.mockResolvedValue(make403Response('{"error":"token not valid for scope"}'));
+    const err = await expectErrorCode(
+      () => fetchCorporationWalletTransactions(CHARACTER_ID, CORPORATION_ID, 1),
+      'ESI_SCOPE_ERROR'
+    );
+    expect(err.characterId).toBe(CHARACTER_ID);
+  });
+
+  test('corp journal returns empty silently on role-403', async () => {
+    isTokenExpired.mockReturnValue(false);
+    getCharacter.mockReturnValue({ ...mockCharacter });
+    global.fetch.mockResolvedValue(make403Response('{"error":"Character does not have required role"}'));
+    const result = await fetchCorporationWalletJournal(CHARACTER_ID, CORPORATION_ID, 1);
+    expect(result.entries).toEqual([]);
+  });
+
+  test('corp transactions skip (no fetch) when character lacks the corp wallet scope', async () => {
+    isTokenExpired.mockReturnValue(false);
+    const noScope = { ...mockCharacter, scopes: mockCharacter.scopes.filter(s => s !== 'esi-wallet.read_corporation_wallets.v1') };
+    getCharacter.mockReturnValue(noScope);
+    const result = await fetchCorporationWalletTransactions(CHARACTER_ID, CORPORATION_ID, 1);
+    expect(result.transactions).toEqual([]);
+    expect(global.fetch).not.toHaveBeenCalled();
   });
 });
 

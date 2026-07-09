@@ -9,6 +9,7 @@
 jest.mock('../../src/main/settings-manager', () => ({
   getCharacters: jest.fn(),
   getCharacter: jest.fn(),
+  getCharacterDivisionSettings: jest.fn(() => ({ enabledDivisions: [] })),
 }));
 
 jest.mock('../../src/main/esi-industry-jobs', () => ({
@@ -19,13 +20,18 @@ jest.mock('../../src/main/esi-industry-jobs', () => ({
 
 jest.mock('../../src/main/esi-wallet', () => ({
   fetchCharacterWalletTransactions: jest.fn(),
+  fetchCorporationWalletTransactions: jest.fn(),
+  fetchCharacterWalletJournal: jest.fn(),
+  fetchCorporationWalletJournal: jest.fn(),
   saveWalletTransactions: jest.fn(),
+  saveWalletJournal: jest.fn(),
 }));
 
 let refresh;
 let getCharacters;
 let fetchCharacterIndustryJobs, fetchCorporationIndustryJobs, saveIndustryJobs;
 let fetchCharacterWalletTransactions, saveWalletTransactions;
+let fetchCorporationWalletTransactions, fetchCharacterWalletJournal, fetchCorporationWalletJournal, saveWalletJournal;
 
 beforeEach(() => {
   jest.resetModules();
@@ -34,13 +40,18 @@ beforeEach(() => {
   ({ getCharacters } = require('../../src/main/settings-manager'));
   ({ fetchCharacterIndustryJobs, fetchCorporationIndustryJobs, saveIndustryJobs } =
     require('../../src/main/esi-industry-jobs'));
-  ({ fetchCharacterWalletTransactions, saveWalletTransactions } = require('../../src/main/esi-wallet'));
+  ({ fetchCharacterWalletTransactions, saveWalletTransactions,
+     fetchCorporationWalletTransactions, fetchCharacterWalletJournal,
+     fetchCorporationWalletJournal, saveWalletJournal } = require('../../src/main/esi-wallet'));
   refresh = require('../../src/main/esi-background-refresh');
 
   // Sensible default happy-path fetcher responses.
   fetchCharacterIndustryJobs.mockResolvedValue({ jobs: [], lastUpdated: 1, cacheExpiresAt: null });
   fetchCorporationIndustryJobs.mockResolvedValue({ jobs: [], lastUpdated: 1, cacheExpiresAt: null });
   fetchCharacterWalletTransactions.mockResolvedValue({ transactions: [], lastUpdated: 1 });
+  fetchCharacterWalletJournal.mockResolvedValue({ entries: [], lastUpdated: 1 });
+  fetchCorporationWalletTransactions.mockResolvedValue({ transactions: [], lastUpdated: 1 });
+  fetchCorporationWalletJournal.mockResolvedValue({ entries: [], lastUpdated: 1 });
 });
 
 describe('buildCorporationCharacterMap', () => {
@@ -138,6 +149,44 @@ describe('runRefreshCycle', () => {
     const summary = await refresh.runRefreshCycle();
     expect(summary.errors.some(e => e.code === 'ESI_SCOPE_ERROR')).toBe(true);
     expect(summary.characterCount).toBe(2);
+  });
+
+  test('fetches character journal for each character', async () => {
+    getCharacters.mockReturnValue([{ characterId: 1, corporationId: null }]);
+    fetchCharacterWalletJournal.mockResolvedValue({ entries: [{ id: 1 }], lastUpdated: 1 });
+
+    await refresh.runRefreshCycle();
+
+    expect(fetchCharacterWalletJournal).toHaveBeenCalledWith(1);
+    expect(saveWalletJournal).toHaveBeenCalled();
+  });
+
+  test('fetches corp wallet transactions + journal per enabled division (deduped)', async () => {
+    const { getCharacterDivisionSettings } = require('../../src/main/settings-manager');
+    getCharacterDivisionSettings.mockReturnValue({ enabledDivisions: [1, 3] });
+    getCharacters.mockReturnValue([
+      { characterId: 1, corporationId: 100 },
+      { characterId: 2, corporationId: 100 },
+    ]);
+
+    await refresh.runRefreshCycle();
+
+    // Deduped to one auth char (1) per corp, iterated over 2 divisions.
+    expect(fetchCorporationWalletTransactions).toHaveBeenCalledTimes(2);
+    expect(fetchCorporationWalletTransactions).toHaveBeenCalledWith(1, 100, 1);
+    expect(fetchCorporationWalletTransactions).toHaveBeenCalledWith(1, 100, 3);
+    expect(fetchCorporationWalletJournal).toHaveBeenCalledTimes(2);
+  });
+
+  test('defaults to division 1 when no divisions configured', async () => {
+    const { getCharacterDivisionSettings } = require('../../src/main/settings-manager');
+    getCharacterDivisionSettings.mockReturnValue({ enabledDivisions: [] });
+    getCharacters.mockReturnValue([{ characterId: 1, corporationId: 100 }]);
+
+    await refresh.runRefreshCycle();
+
+    expect(fetchCorporationWalletTransactions).toHaveBeenCalledTimes(1);
+    expect(fetchCorporationWalletTransactions).toHaveBeenCalledWith(1, 100, 1);
   });
 });
 

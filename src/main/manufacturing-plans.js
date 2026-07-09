@@ -4333,10 +4333,20 @@ async function getPlanSummary(planId) {
 async function refreshPlanESIData(planId) {
   try {
     const { fetchCharacterIndustryJobs, fetchCorporationIndustryJobs, saveIndustryJobs } = require('./esi-industry-jobs');
-    const { fetchCharacterWalletTransactions, saveWalletTransactions } = require('./esi-wallet');
-    const { matchJobsToPlan, matchTransactionsToPlan } = require('./plan-matching');
-    const { getCharacter } = require('./settings-manager');
+    const {
+      fetchCharacterWalletTransactions, saveWalletTransactions,
+      fetchCharacterWalletJournal, saveWalletJournal,
+      fetchCorporationWalletTransactions, fetchCorporationWalletJournal,
+    } = require('./esi-wallet');
+    const { matchJobsToPlan, matchTransactionsToPlan, attributeJournalFeesToPlan } = require('./plan-matching');
+    const { getCharacter, getCharacterDivisionSettings } = require('./settings-manager');
     const db = getCharacterDatabase();
+
+    // Corp wallets are per-division; fall back to the master wallet (1) if unset.
+    const enabledDivisionsFor = (characterId) => {
+      const { enabledDivisions } = getCharacterDivisionSettings(characterId) || {};
+      return (enabledDivisions && enabledDivisions.length > 0) ? enabledDivisions : [1];
+    };
 
     // Get plan industry settings to find all characters
     const planSettings = getPlanIndustrySettings(planId);
@@ -4396,6 +4406,12 @@ async function refreshPlanESIData(planId) {
           saveWalletTransactions({ characterId, transactions: txData.transactions, lastUpdated: txData.lastUpdated });
         }
 
+        // Fetch wallet journal (fees live here, not in transactions)
+        const journalData = await fetchCharacterWalletJournal(characterId);
+        if (journalData.entries) {
+          saveWalletJournal({ characterId, entries: journalData.entries, lastUpdated: journalData.lastUpdated });
+        }
+
         results.charactersRefreshed.push(characterId);
       } catch (error) {
         console.error(`[Plans] Error refreshing personal data for character ${characterId}:`, error);
@@ -4428,21 +4444,46 @@ async function refreshPlanESIData(planId) {
           console.log(`[Plans] Saved ${corpJobsData.jobs.length} corporation jobs for corp ${corporationId}`);
         }
 
+        // Corp wallet transactions + journal, per enabled division.
+        for (const division of enabledDivisionsFor(authCharacterId)) {
+          const corpTxData = await fetchCorporationWalletTransactions(authCharacterId, corporationId, division);
+          if (corpTxData.transactions && corpTxData.transactions.length > 0) {
+            saveWalletTransactions({
+              characterId: authCharacterId, corporationId, division, isCorporation: true,
+              transactions: corpTxData.transactions, lastUpdated: corpTxData.lastUpdated,
+              cacheExpiresAt: corpTxData.cacheExpiresAt,
+            });
+          }
+          const corpJournalData = await fetchCorporationWalletJournal(authCharacterId, corporationId, division);
+          if (corpJournalData.entries && corpJournalData.entries.length > 0) {
+            saveWalletJournal({
+              characterId: authCharacterId, corporationId, division, isCorporation: true,
+              entries: corpJournalData.entries, lastUpdated: corpJournalData.lastUpdated,
+              cacheExpiresAt: corpJournalData.cacheExpiresAt,
+            });
+          }
+        }
+
         corporationsFetched.add(corporationId);
         results.corporationsFetched.push(corporationId);
       } catch (error) {
-        console.error(`[Plans] Error fetching corporation ${corporationId} jobs:`, error);
+        console.error(`[Plans] Error fetching corporation ${corporationId} data:`, error);
         results.errors.push({ corporationId, error: error.message, type: 'corporation' });
       }
     }
 
-    // Run matching after fetching all data (include corporation IDs for job matching)
+    // Run matching after fetching all data (include corporation IDs for both).
     try {
       matchJobsToPlan(planId, {
         characterIds: results.charactersRefreshed,
         corporationIds: results.corporationsFetched
       });
-      matchTransactionsToPlan(planId, { characterIds: results.charactersRefreshed });
+      matchTransactionsToPlan(planId, {
+        characterIds: results.charactersRefreshed,
+        corporationIds: results.corporationsFetched
+      });
+      // After matches settle, attribute journal fees to already-confirmed tx/jobs.
+      attributeJournalFeesToPlan(planId);
     } catch (error) {
       console.error('[Plans] Error running matches:', error);
     }
@@ -5779,6 +5820,318 @@ function getProductOwnedAssets(planId, typeId) {
   }
 }
 
+// ─── Ledger read model & manual cost CRUD ────────────────────────────────────
+
+/**
+ * Batch-resolve type names from the SDE.
+ * @param {number[]} typeIds
+ * @returns {Object} { [typeId]: typeName }
+ */
+function resolveTypeNames(typeIds) {
+  const names = {};
+  const ids = [...new Set(typeIds.filter(id => id != null && id !== 0))];
+  if (ids.length === 0) return names;
+  try {
+    const sdeDb = new Database(getSdePath(), { readonly: true });
+    try {
+      const placeholders = ids.map(() => '?').join(',');
+      const rows = sdeDb.prepare(`SELECT typeID, typeName FROM invTypes WHERE typeID IN (${placeholders})`).all(...ids);
+      for (const r of rows) names[r.typeID] = r.typeName;
+    } finally {
+      sdeDb.close();
+    }
+  } catch (error) {
+    console.error('[Plans] Error resolving type names:', error);
+  }
+  return names;
+}
+
+/**
+ * Get the consolidated spend ledger for a plan, grouped by category.
+ * Reads the single spend store (plan_material_ledger) rather than joining
+ * matches at read-time. Cost rows (event_type='cost', quantity=0) hold ISK in
+ * unit_price; quantity rows (purchased/manual material) hold acquired qty.
+ *
+ * Categories:
+ *   materialPurchases — acquired rows with method purchased/manual
+ *   jobInstallation   — cost rows cost_category='job_install' (actual), plus an
+ *                       estimated total when no actual job cost rows exist
+ *   marketFees        — cost rows broker_fee/sales_tax/job_tax (journal-sourced)
+ *   other             — manual misc cost rows (cost_category shipping/other)
+ *
+ * @param {string} planId
+ * @returns {Promise<Object>} structured spend breakdown + totals + reconciliation
+ */
+async function getPlanLedger(planId) {
+  const db = getCharacterDatabase();
+
+  try {
+    const rows = db.prepare(`
+      SELECT ledger_id, type_id, event_type, quantity, method, unit_price, note,
+             source_type, source_id, character_id, corporation_id, cost_category, created_at
+      FROM plan_material_ledger
+      WHERE plan_id = ?
+      ORDER BY created_at DESC
+    `).all(planId);
+
+    const typeNames = resolveTypeNames(rows.map(r => r.type_id));
+
+    const materialPurchases = [];
+    const jobInstallation = [];
+    const marketFees = [];
+    const other = [];
+
+    // Net acquired quantity per type (for material purchase aggregation).
+    for (const r of rows) {
+      const base = {
+        ledgerId: r.ledger_id,
+        typeId: r.type_id,
+        typeName: typeNames[r.type_id] || (r.type_id ? `Type ${r.type_id}` : null),
+        note: r.note,
+        sourceType: r.source_type,
+        sourceId: r.source_id,
+        characterId: r.character_id,
+        corporationId: r.corporation_id,
+        createdAt: r.created_at,
+        editable: r.source_type == null || r.source_type === 'manual',
+      };
+
+      if (r.event_type === 'cost') {
+        const amount = r.unit_price || 0;
+        if (r.cost_category === 'job_install') {
+          jobInstallation.push({ ...base, amount, category: 'job_install', estimated: false });
+        } else if (r.cost_category === 'broker_fee' || r.cost_category === 'sales_tax' || r.cost_category === 'job_tax') {
+          marketFees.push({ ...base, amount, category: r.cost_category });
+        } else {
+          other.push({ ...base, amount, category: r.cost_category || 'other' });
+        }
+      } else if (r.method === 'purchased' || r.method === 'manual') {
+        // Material acquisition rows: quantity * unit_price is the spend.
+        const qty = r.quantity || 0;
+        const unitPrice = r.unit_price || 0;
+        materialPurchases.push({
+          ...base,
+          quantity: qty,
+          unitPrice,
+          amount: qty * unitPrice,
+          method: r.method,
+          source: r.source_type === 'wallet_transaction' ? 'esi' : 'manual',
+        });
+      }
+      // manufactured/allocated/adjusted rows are quantity bookkeeping, not spend.
+    }
+
+    // If there are no ACTUAL job-install cost rows, surface the estimate so the
+    // user sees a not-yet-actual figure rather than nothing.
+    let jobEstimated = false;
+    if (jobInstallation.length === 0) {
+      try {
+        const est = await calculatePlanJobInstallationCost(planId);
+        if (est && est.total > 0) {
+          jobInstallation.push({
+            ledgerId: null, typeId: null, typeName: null, amount: est.total,
+            category: 'job_install', estimated: true, editable: false,
+            note: `Estimated (${est.jobCount} job${est.jobCount === 1 ? '' : 's'})`,
+          });
+          jobEstimated = true;
+        }
+      } catch (e) {
+        console.error('[Plans] Error computing job install estimate for ledger:', e);
+      }
+    }
+
+    const sum = (arr) => arr.reduce((t, x) => t + (x.amount || 0), 0);
+    const materialPurchasesTotal = sum(materialPurchases);
+    const jobInstallationTotal = sum(jobInstallation);
+    const marketFeesTotal = sum(marketFees);
+    const otherTotal = sum(other);
+    const totalSpend = materialPurchasesTotal + jobInstallationTotal + marketFeesTotal + otherTotal;
+
+    // Reconciliation vs the plan's *planned* cost.
+    let plannedCost = null;
+    try {
+      const summary = await getPlanSummary(planId);
+      plannedCost = (summary.materialCost || 0) + (summary.jobInstallationCost || 0);
+    } catch (e) {
+      console.error('[Plans] Error getting planned cost for reconciliation:', e);
+    }
+
+    return {
+      planId,
+      categories: {
+        materialPurchases: { items: materialPurchases, total: materialPurchasesTotal },
+        jobInstallation: { items: jobInstallation, total: jobInstallationTotal, estimated: jobEstimated },
+        marketFees: { items: marketFees, total: marketFeesTotal },
+        other: { items: other, total: otherTotal },
+      },
+      totals: {
+        materialPurchases: materialPurchasesTotal,
+        jobInstallation: jobInstallationTotal,
+        marketFees: marketFeesTotal,
+        other: otherTotal,
+        totalSpend,
+      },
+      reconciliation: {
+        plannedCost,
+        actualSpend: totalSpend,
+        delta: plannedCost != null ? totalSpend - plannedCost : null,
+      },
+    };
+  } catch (error) {
+    console.error('[Plans] Error getting plan ledger:', error);
+    throw error;
+  }
+}
+
+/**
+ * Add a manual cost line-item to the ledger (shipping, misc, or a manual fee).
+ * @param {string} planId
+ * @param {Object} opts - { category, amount, note }
+ * @returns {Object} { success, ledgerId }
+ */
+function addManualLedgerCost(planId, opts = {}) {
+  const db = getCharacterDatabase();
+  const { category = 'other', amount, note = null } = opts;
+
+  if (amount == null || isNaN(amount)) {
+    throw new Error('A numeric amount is required');
+  }
+
+  try {
+    const ledgerId = randomUUID();
+    db.prepare(`
+      INSERT INTO plan_material_ledger
+        (ledger_id, plan_id, type_id, event_type, quantity, method, unit_price, note,
+         source_type, source_id, cost_category, created_at)
+      VALUES (?, ?, 0, 'cost', 0, 'cost', ?, ?, 'manual', NULL, ?, ?)
+    `).run(ledgerId, planId, Math.abs(amount), note, category, Date.now());
+
+    return { success: true, ledgerId };
+  } catch (error) {
+    console.error('[Plans] Error adding manual ledger cost:', error);
+    throw error;
+  }
+}
+
+/**
+ * Edit a ledger entry's price/quantity/note. For quantity edits on a material
+ * row we append an 'adjusted' row (preserving the append-only net); unit_price
+ * and note are updated in place (as updateMaterialCustomPrice already does).
+ * @param {string} ledgerId
+ * @param {Object} updates - { unitPrice, quantity, note }
+ * @returns {Object} { success }
+ */
+function updateLedgerEntry(ledgerId, updates = {}) {
+  const db = getCharacterDatabase();
+
+  try {
+    const row = db.prepare('SELECT * FROM plan_material_ledger WHERE ledger_id = ?').get(ledgerId);
+    if (!row) {
+      throw new Error('Ledger entry not found');
+    }
+
+    const now = Date.now();
+
+    if (updates.unitPrice != null && !isNaN(updates.unitPrice)) {
+      db.prepare('UPDATE plan_material_ledger SET unit_price = ? WHERE ledger_id = ?')
+        .run(updates.unitPrice, ledgerId);
+    }
+    if (updates.note !== undefined) {
+      db.prepare('UPDATE plan_material_ledger SET note = ? WHERE ledger_id = ?')
+        .run(updates.note, ledgerId);
+    }
+    // Quantity edit (only meaningful for material quantity rows): append an
+    // adjustment row so the net changes without mutating history.
+    if (updates.quantity != null && !isNaN(updates.quantity) && row.event_type !== 'cost') {
+      const delta = updates.quantity - row.quantity;
+      if (delta !== 0) {
+        db.prepare(`
+          INSERT INTO plan_material_ledger
+            (ledger_id, plan_id, type_id, event_type, quantity, method, unit_price, note, source_type, created_at)
+          VALUES (?, ?, ?, 'adjusted', ?, ?, ?, ?, 'manual', ?)
+        `).run(randomUUID(), row.plan_id, row.type_id, delta, row.method, row.unit_price, updates.note ?? row.note, now);
+      }
+    }
+
+    return { success: true };
+  } catch (error) {
+    console.error('[Plans] Error updating ledger entry:', error);
+    throw error;
+  }
+}
+
+/**
+ * Delete a MANUAL ledger entry (ESI-sourced rows are managed by match confirm/
+ * reject and must not be deleted here).
+ * @param {string} ledgerId
+ * @returns {Object} { success }
+ */
+function deleteLedgerEntry(ledgerId) {
+  const db = getCharacterDatabase();
+
+  try {
+    const row = db.prepare('SELECT source_type FROM plan_material_ledger WHERE ledger_id = ?').get(ledgerId);
+    if (!row) {
+      throw new Error('Ledger entry not found');
+    }
+    if (row.source_type && row.source_type !== 'manual') {
+      throw new Error('Only manual ledger entries can be deleted');
+    }
+    db.prepare('DELETE FROM plan_material_ledger WHERE ledger_id = ?').run(ledgerId);
+    return { success: true };
+  } catch (error) {
+    console.error('[Plans] Error deleting ledger entry:', error);
+    throw error;
+  }
+}
+
+/**
+ * Get the full wallet-transaction row for the detail modal.
+ * @param {number} transactionId
+ * @param {boolean} isCorp
+ * @returns {Object|null}
+ */
+function getTransactionDetail(transactionId, isCorp = false) {
+  const db = getCharacterDatabase();
+  try {
+    const row = db.prepare(`
+      SELECT wt.*, c.character_name
+      FROM esi_wallet_transactions wt
+      LEFT JOIN characters c ON wt.character_id = c.character_id
+      WHERE wt.transaction_id = ? AND wt.is_corporation = ?
+      LIMIT 1
+    `).get(transactionId, isCorp ? 1 : 0);
+    if (!row) return null;
+    const [typeName] = Object.values(resolveTypeNames([row.type_id]));
+    return { ...row, typeName: typeName || `Type ${row.type_id}` };
+  } catch (error) {
+    console.error('[Plans] Error getting transaction detail:', error);
+    return null;
+  }
+}
+
+/**
+ * Get the full wallet-journal row for the fee detail modal.
+ * @param {number} journalId
+ * @param {boolean} isCorp
+ * @returns {Object|null}
+ */
+function getJournalDetail(journalId, isCorp = false) {
+  const db = getCharacterDatabase();
+  try {
+    return db.prepare(`
+      SELECT j.*, c.character_name
+      FROM esi_wallet_journal j
+      LEFT JOIN characters c ON j.character_id = c.character_id
+      WHERE j.id = ? AND j.is_corporation = ?
+      LIMIT 1
+    `).get(journalId, isCorp ? 1 : 0) || null;
+  } catch (error) {
+    console.error('[Plans] Error getting journal detail:', error);
+    return null;
+  }
+}
+
 module.exports = {
   createManufacturingPlan,
   getManufacturingPlan,
@@ -5823,4 +6176,10 @@ module.exports = {
   getProductOwnedAssets,
   getMaterialTree,
   getMaterialTreeNodeDetail,
+  getPlanLedger,
+  addManualLedgerCost,
+  updateLedgerEntry,
+  deleteLedgerEntry,
+  getTransactionDetail,
+  getJournalDetail,
 };

@@ -13,13 +13,27 @@
  * cycle logic.
  */
 
-const { getCharacters, getCharacter } = require('./settings-manager');
+const { getCharacters, getCharacter, getCharacterDivisionSettings } = require('./settings-manager');
 const {
   fetchCharacterIndustryJobs,
   fetchCorporationIndustryJobs,
   saveIndustryJobs,
 } = require('./esi-industry-jobs');
-const { fetchCharacterWalletTransactions, saveWalletTransactions } = require('./esi-wallet');
+const {
+  fetchCharacterWalletTransactions,
+  fetchCorporationWalletTransactions,
+  fetchCharacterWalletJournal,
+  fetchCorporationWalletJournal,
+  saveWalletTransactions,
+  saveWalletJournal,
+} = require('./esi-wallet');
+
+// Corp wallets are per-division. When a character has no divisions configured,
+// fall back to the master wallet (division 1) so the cycle still fetches something.
+function enabledDivisionsFor(characterId) {
+  const { enabledDivisions } = getCharacterDivisionSettings(characterId) || {};
+  return (enabledDivisions && enabledDivisions.length > 0) ? enabledDivisions : [1];
+}
 
 const TICK_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
 
@@ -67,6 +81,21 @@ const CHARACTER_TASKS = [
       return `${txData.transactions ? txData.transactions.length : 0} tx`;
     },
   },
+  {
+    name: 'wallet_journal',
+    run: async (characterId) => {
+      const jData = await fetchCharacterWalletJournal(characterId);
+      if (jData.skipped) return 'gated';
+      if (jData.entries) {
+        saveWalletJournal({
+          characterId,
+          entries: jData.entries,
+          lastUpdated: jData.lastUpdated,
+        });
+      }
+      return `${jData.entries ? jData.entries.length : 0} journal`;
+    },
+  },
 ];
 
 /**
@@ -89,6 +118,52 @@ const CORPORATION_TASKS = [
         });
       }
       return `${corpJobsData.jobs ? corpJobsData.jobs.length : 0} corp jobs`;
+    },
+  },
+  {
+    name: 'corporation_wallet_transactions',
+    run: async (authCharacterId, corporationId) => {
+      let total = 0;
+      for (const division of enabledDivisionsFor(authCharacterId)) {
+        const txData = await fetchCorporationWalletTransactions(authCharacterId, corporationId, division);
+        if (txData.skipped) continue;
+        if (txData.transactions && txData.transactions.length > 0) {
+          saveWalletTransactions({
+            characterId: authCharacterId,
+            corporationId,
+            division,
+            isCorporation: true,
+            transactions: txData.transactions,
+            lastUpdated: txData.lastUpdated,
+            cacheExpiresAt: txData.cacheExpiresAt,
+          });
+          total += txData.transactions.length;
+        }
+      }
+      return `${total} corp tx`;
+    },
+  },
+  {
+    name: 'corporation_wallet_journal',
+    run: async (authCharacterId, corporationId) => {
+      let total = 0;
+      for (const division of enabledDivisionsFor(authCharacterId)) {
+        const jData = await fetchCorporationWalletJournal(authCharacterId, corporationId, division);
+        if (jData.skipped) continue;
+        if (jData.entries && jData.entries.length > 0) {
+          saveWalletJournal({
+            characterId: authCharacterId,
+            corporationId,
+            division,
+            isCorporation: true,
+            entries: jData.entries,
+            lastUpdated: jData.lastUpdated,
+            cacheExpiresAt: jData.cacheExpiresAt,
+          });
+          total += jData.entries.length;
+        }
+      }
+      return `${total} corp journal`;
     },
   },
 ];

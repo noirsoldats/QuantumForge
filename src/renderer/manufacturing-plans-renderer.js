@@ -178,6 +178,25 @@ function setupEventListeners() {
   // Transactions tab
   document.getElementById('match-transactions-btn').addEventListener('click', matchTransactions);
 
+  // Ledger tab
+  document.getElementById('ledger-add-cost-btn').addEventListener('click', showAddCostModal);
+  document.getElementById('ledger-refresh-btn').addEventListener('click', loadLedger);
+  document.getElementById('close-ledger-add-cost-btn').addEventListener('click', hideAddCostModal);
+  document.getElementById('cancel-ledger-cost-btn').addEventListener('click', hideAddCostModal);
+  document.getElementById('confirm-ledger-cost-btn').addEventListener('click', submitAddCost);
+  document.getElementById('close-transaction-detail-btn').addEventListener('click', () => {
+    document.getElementById('transaction-detail-modal').style.display = 'none';
+  });
+  document.getElementById('close-transaction-detail-footer-btn').addEventListener('click', () => {
+    document.getElementById('transaction-detail-modal').style.display = 'none';
+  });
+  document.getElementById('close-journal-detail-btn').addEventListener('click', () => {
+    document.getElementById('journal-detail-modal').style.display = 'none';
+  });
+  document.getElementById('close-journal-detail-footer-btn').addEventListener('click', () => {
+    document.getElementById('journal-detail-modal').style.display = 'none';
+  });
+
   // Analytics tab
   document.getElementById('refresh-esi-data-btn').addEventListener('click', refreshESIData);
 
@@ -356,6 +375,9 @@ async function loadTabContent(tabName) {
       break;
     case 'transactions':
       await loadTransactions();
+      break;
+    case 'ledger':
+      await loadLedger();
       break;
     case 'analytics':
       await loadAnalytics();
@@ -3945,6 +3967,249 @@ window.unlinkTransactionMatch = async function(matchId) {
     showToast('Transaction unlinked successfully', 'info');
   } catch (error) {
     showToast('Failed to unlink transaction: ' + error.message, 'error');
+  }
+};
+
+// ─── Ledger tab ───────────────────────────────────────────────────────────────
+
+function showAddCostModal() {
+  if (!selectedPlanId) return;
+  document.getElementById('ledger-cost-category').value = 'other';
+  document.getElementById('ledger-cost-amount').value = '';
+  document.getElementById('ledger-cost-note').value = '';
+  document.getElementById('ledger-add-cost-modal').style.display = 'flex';
+}
+
+function hideAddCostModal() {
+  document.getElementById('ledger-add-cost-modal').style.display = 'none';
+}
+
+async function submitAddCost() {
+  const category = document.getElementById('ledger-cost-category').value;
+  const amount = parseFloat(document.getElementById('ledger-cost-amount').value);
+  const note = document.getElementById('ledger-cost-note').value.trim() || null;
+
+  if (isNaN(amount) || amount <= 0) {
+    showToast('Please enter a valid amount', 'warning');
+    return;
+  }
+
+  try {
+    await window.electronAPI.plans.addLedgerCost(selectedPlanId, { category, amount, note });
+    hideAddCostModal();
+    await loadLedger();
+    showToast('Cost added to ledger', 'success');
+  } catch (error) {
+    showToast('Failed to add cost: ' + error.message, 'error');
+  }
+}
+
+async function loadLedger() {
+  if (!selectedPlanId) return;
+
+  const container = document.getElementById('ledger-content');
+  if (!container) return;
+
+  try {
+    const ledger = await window.electronAPI.plans.getLedger(selectedPlanId);
+    renderLedger(ledger);
+  } catch (error) {
+    console.error('Error loading ledger:', error);
+    container.innerHTML = renderEmptyState(
+      'Could not load ledger',
+      error.message || 'An error occurred while loading the ledger.'
+    );
+  }
+}
+
+function renderLedger(ledger) {
+  const container = document.getElementById('ledger-content');
+  const { categories, totals, reconciliation } = ledger;
+
+  const anyRows =
+    categories.materialPurchases.items.length +
+    categories.jobInstallation.items.length +
+    categories.marketFees.items.length +
+    categories.other.items.length;
+
+  if (anyRows === 0) {
+    container.innerHTML = renderEmptyState(
+      'No spend recorded yet',
+      'Confirm purchase/job matches or add a manual cost to start tracking spend.'
+    );
+    return;
+  }
+
+  // Summary cards.
+  const summary = `
+    <div class="ledger-summary">
+      ${ledgerStatCard('Material Purchases', totals.materialPurchases)}
+      ${ledgerStatCard('Job Installation', totals.jobInstallation, categories.jobInstallation.estimated ? 'estimated' : null)}
+      ${ledgerStatCard('Market Fees', totals.marketFees)}
+      ${ledgerStatCard('Other', totals.other)}
+      ${ledgerStatCard('Total Spend', totals.totalSpend, null, true)}
+    </div>
+    ${reconciliation.plannedCost != null ? `
+      <div class="ledger-reconciliation">
+        <span>Planned cost: <strong>${formatISK(reconciliation.plannedCost)}</strong></span>
+        <span>Actual spend: <strong>${formatISK(reconciliation.actualSpend)}</strong></span>
+        <span class="${reconciliation.delta > 0 ? 'delta-negative' : 'delta-positive'}">
+          Delta: <strong>${reconciliation.delta > 0 ? '+' : ''}${formatISK(reconciliation.delta)}</strong>
+        </span>
+      </div>` : ''}
+  `;
+
+  container.innerHTML = summary +
+    renderLedgerSection('Material Purchases', categories.materialPurchases.items, 'material') +
+    renderLedgerSection('Job Installation', categories.jobInstallation.items, 'job') +
+    renderLedgerSection('Market Fees', categories.marketFees.items, 'fee') +
+    renderLedgerSection('Other', categories.other.items, 'other');
+}
+
+function ledgerStatCard(label, amount, tag = null, emphasize = false) {
+  return `
+    <div class="ledger-stat-card${emphasize ? ' emphasize' : ''}">
+      <div class="ledger-stat-label">${escapeHtml(label)}${tag ? ` <span class="ledger-tag">${escapeHtml(tag)}</span>` : ''}</div>
+      <div class="ledger-stat-value">${formatISK(amount)}</div>
+    </div>`;
+}
+
+function renderLedgerSection(title, items, kind) {
+  if (!items || items.length === 0) return '';
+
+  const rows = items.map(item => {
+    const name = item.typeName
+      ? escapeHtml(item.typeName)
+      : (item.category ? escapeHtml(item.category.replace(/_/g, ' ')) : '—');
+
+    // Amount cell: material rows show qty × price; cost rows show a single amount.
+    let detailCell;
+    if (kind === 'material') {
+      detailCell = `${formatNumber(item.quantity)} × ${formatISK(item.unitPrice)}`;
+    } else {
+      detailCell = item.estimated ? `<em>estimated</em>` : '';
+    }
+
+    // Source / detail affordance.
+    let sourceCell = '—';
+    if (item.sourceType === 'wallet_transaction') {
+      sourceCell = `<button class="link-button" onclick="openTransactionDetail(${item.sourceId}, ${item.corporationId ? 'true' : 'false'})">ESI tx #${item.sourceId}</button>`;
+    } else if (item.sourceType === 'wallet_journal') {
+      sourceCell = `<button class="link-button" onclick="openJournalDetail(${item.sourceId}, ${item.corporationId ? 'true' : 'false'})">Fee #${item.sourceId}</button>`;
+    } else if (item.sourceType === 'industry_job') {
+      sourceCell = `Job #${item.sourceId}`;
+    } else if (item.sourceType === 'manual' || item.editable) {
+      sourceCell = 'Manual';
+    }
+
+    // Actions: editable rows get edit; manual rows get delete.
+    const actions = [];
+    if (item.editable && item.ledgerId) {
+      actions.push(`<button class="link-button" onclick="editLedgerEntry('${item.ledgerId}', ${item.unitPrice ?? item.amount ?? 0})">Edit</button>`);
+      actions.push(`<button class="link-button danger" onclick="deleteLedgerEntry('${item.ledgerId}')">Delete</button>`);
+    }
+
+    return `
+      <tr>
+        <td>${name}</td>
+        <td>${detailCell}</td>
+        <td>${formatISK(item.amount)}</td>
+        <td>${item.note ? escapeHtml(item.note) : ''}</td>
+        <td>${sourceCell}</td>
+        <td>${actions.join(' ')}</td>
+      </tr>`;
+  }).join('');
+
+  return `
+    <div class="ledger-section">
+      <h4>${escapeHtml(title)}</h4>
+      <div class="ledger-table-container">
+        <table class="ledger-table">
+          <thead>
+            <tr><th>Item</th><th>Detail</th><th>Amount</th><th>Note</th><th>Source</th><th>Actions</th></tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+    </div>`;
+}
+
+// ── Ledger detail modals + CRUD (window-scoped for inline onclick) ─────────────
+
+window.openTransactionDetail = async function(transactionId, isCorp) {
+  try {
+    const tx = await window.electronAPI.plans.getTransactionDetail(transactionId, isCorp);
+    const body = document.getElementById('transaction-detail-body');
+    if (!tx) {
+      body.innerHTML = renderEmptyState('Transaction not found', 'This transaction is no longer in local ESI data.');
+    } else {
+      body.innerHTML = `
+        <dl class="detail-list">
+          <dt>Transaction ID</dt><dd>${tx.transaction_id}</dd>
+          <dt>Item</dt><dd>${escapeHtml(tx.typeName || ('Type ' + tx.type_id))}</dd>
+          <dt>Quantity</dt><dd>${formatNumber(tx.quantity)}</dd>
+          <dt>Unit Price</dt><dd>${formatISK(tx.unit_price)}</dd>
+          <dt>Total</dt><dd>${formatISK(tx.quantity * tx.unit_price)}</dd>
+          <dt>Direction</dt><dd>${tx.is_buy ? 'Buy' : 'Sell'}</dd>
+          <dt>Date</dt><dd>${tx.date ? new Date(tx.date).toLocaleString() : 'Unknown'}</dd>
+          <dt>Character</dt><dd>${escapeHtml(tx.character_name || String(tx.character_id))}</dd>
+          <dt>Wallet</dt><dd>${tx.is_corporation ? 'Corporation' : 'Personal'}</dd>
+        </dl>`;
+    }
+    document.getElementById('transaction-detail-modal').style.display = 'flex';
+  } catch (error) {
+    showToast('Failed to load transaction detail: ' + error.message, 'error');
+  }
+};
+
+window.openJournalDetail = async function(journalId, isCorp) {
+  try {
+    const j = await window.electronAPI.plans.getJournalDetail(journalId, isCorp);
+    const body = document.getElementById('journal-detail-body');
+    if (!j) {
+      body.innerHTML = renderEmptyState('Fee entry not found', 'This journal entry is no longer in local ESI data.');
+    } else {
+      body.innerHTML = `
+        <dl class="detail-list">
+          <dt>Journal ID</dt><dd>${j.id}</dd>
+          <dt>Type</dt><dd>${escapeHtml((j.ref_type || '').replace(/_/g, ' '))}</dd>
+          <dt>Amount</dt><dd>${formatISK(j.amount)}</dd>
+          <dt>Date</dt><dd>${j.date ? new Date(j.date).toLocaleString() : 'Unknown'}</dd>
+          <dt>Linked Context</dt><dd>${j.context_id || '—'} ${j.context_id_type ? '(' + escapeHtml(j.context_id_type.replace(/_/g, ' ')) + ')' : ''}</dd>
+          <dt>Reason</dt><dd>${escapeHtml(j.reason || '—')}</dd>
+          <dt>Wallet</dt><dd>${j.is_corporation ? 'Corporation' : 'Personal'}</dd>
+        </dl>`;
+    }
+    document.getElementById('journal-detail-modal').style.display = 'flex';
+  } catch (error) {
+    showToast('Failed to load fee detail: ' + error.message, 'error');
+  }
+};
+
+window.editLedgerEntry = async function(ledgerId, currentAmount) {
+  const input = prompt('New amount (ISK):', currentAmount);
+  if (input === null) return;
+  const amount = parseFloat(input);
+  if (isNaN(amount)) {
+    showToast('Please enter a valid number', 'warning');
+    return;
+  }
+  try {
+    await window.electronAPI.plans.updateLedgerEntry(ledgerId, { unitPrice: amount });
+    await loadLedger();
+    showToast('Ledger entry updated', 'success');
+  } catch (error) {
+    showToast('Failed to update entry: ' + error.message, 'error');
+  }
+};
+
+window.deleteLedgerEntry = async function(ledgerId) {
+  try {
+    await window.electronAPI.plans.deleteLedgerEntry(ledgerId);
+    await loadLedger();
+    showToast('Cost removed', 'info');
+  } catch (error) {
+    showToast('Failed to remove cost: ' + error.message, 'error');
   }
 };
 

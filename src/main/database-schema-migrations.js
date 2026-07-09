@@ -1326,6 +1326,298 @@ const migrations = [
     down: (db) => {
       console.log('[Migration 018] Rollback not implemented (would require table recreation)');
     }
+  },
+  {
+    id: '019_ledger_source_and_cost_columns',
+    description: 'Rebuild plan_material_ledger: add source-link + cost columns, widen event_type CHECK to include \'cost\', add unique source index',
+    up: (db) => {
+      // Table rebuild (SQLite can't ALTER a CHECK constraint). Adds:
+      //   source_type, source_id, character_id, corporation_id, cost_category
+      // and widens event_type to include 'cost' (a pure spend row: quantity=0,
+      // unit_price = ISK amount). Idempotent: skips if event_type already allows 'cost'.
+      console.log('[Migration 019] Ensuring plan_material_ledger source/cost columns...');
+
+      const tableExists = db.prepare(`
+        SELECT name FROM sqlite_master WHERE type='table' AND name='plan_material_ledger'
+      `).get();
+      if (!tableExists) {
+        console.log('[Migration 019] plan_material_ledger table does not exist, skipping');
+        return;
+      }
+
+      // Guard: if the table already has the new cost_category column, assume migrated.
+      const cols = db.prepare('PRAGMA table_info(plan_material_ledger)').all();
+      if (cols.some(c => c.name === 'cost_category')) {
+        console.log('[Migration 019] plan_material_ledger already migrated, skipping');
+        return;
+      }
+
+      db.pragma('foreign_keys = OFF');
+      try {
+        db.exec(`
+          BEGIN TRANSACTION;
+
+          CREATE TABLE plan_material_ledger_new (
+            ledger_id      TEXT    PRIMARY KEY,
+            plan_id        TEXT    NOT NULL,
+            type_id        INTEGER NOT NULL,
+            event_type     TEXT    NOT NULL CHECK(event_type IN ('acquired','deducted','adjusted','cost')),
+            quantity       REAL    NOT NULL,
+            method         TEXT    NOT NULL CHECK(method IN ('manual','purchased','manufactured','allocated','cost')),
+            unit_price     REAL,
+            note           TEXT,
+            source_ref     TEXT,
+            source_type    TEXT,
+            source_id      INTEGER,
+            character_id   INTEGER,
+            corporation_id INTEGER,
+            cost_category  TEXT,
+            created_at     INTEGER NOT NULL,
+            FOREIGN KEY (plan_id) REFERENCES manufacturing_plans(plan_id) ON DELETE CASCADE
+          );
+
+          INSERT INTO plan_material_ledger_new
+            (ledger_id, plan_id, type_id, event_type, quantity, method, unit_price, note, source_ref, created_at)
+          SELECT ledger_id, plan_id, type_id, event_type, quantity, method, unit_price, note, source_ref, created_at
+          FROM plan_material_ledger;
+
+          DROP TABLE plan_material_ledger;
+          ALTER TABLE plan_material_ledger_new RENAME TO plan_material_ledger;
+
+          CREATE INDEX idx_pml_plan    ON plan_material_ledger(plan_id);
+          CREATE INDEX idx_pml_type    ON plan_material_ledger(plan_id, type_id);
+          CREATE INDEX idx_pml_created ON plan_material_ledger(created_at);
+          CREATE UNIQUE INDEX idx_pml_source
+            ON plan_material_ledger(plan_id, source_type, source_id)
+            WHERE source_id IS NOT NULL;
+
+          COMMIT;
+        `);
+        db.pragma('foreign_keys = ON');
+        console.log('[Migration 019] Completed successfully');
+      } catch (error) {
+        db.exec('ROLLBACK');
+        db.pragma('foreign_keys = ON');
+        console.error('[Migration 019] Migration failed:', error);
+        throw error;
+      }
+    },
+    down: (db) => {
+      console.log('[Migration 019] Rollback not implemented (would require table recreation)');
+    }
+  },
+  {
+    id: '020_industry_jobs_cost_and_product',
+    description: 'Add cost REAL and product_type_id INTEGER to esi_industry_jobs',
+    up: (db) => {
+      console.log('[Migration 020] Ensuring cost/product_type_id columns on esi_industry_jobs...');
+
+      const tableExists = db.prepare(`
+        SELECT name FROM sqlite_master WHERE type='table' AND name='esi_industry_jobs'
+      `).get();
+      if (!tableExists) {
+        console.log('[Migration 020] esi_industry_jobs table does not exist, skipping');
+        return;
+      }
+
+      const cols = db.prepare('PRAGMA table_info(esi_industry_jobs)').all().map(c => c.name);
+      db.exec('BEGIN TRANSACTION');
+      try {
+        if (!cols.includes('cost')) {
+          db.exec('ALTER TABLE esi_industry_jobs ADD COLUMN cost REAL');
+          console.log('[Migration 020] Added esi_industry_jobs.cost');
+        }
+        if (!cols.includes('product_type_id')) {
+          db.exec('ALTER TABLE esi_industry_jobs ADD COLUMN product_type_id INTEGER');
+          console.log('[Migration 020] Added esi_industry_jobs.product_type_id');
+        }
+        db.exec('COMMIT');
+        console.log('[Migration 020] Completed successfully');
+      } catch (error) {
+        db.exec('ROLLBACK');
+        console.error('[Migration 020] Migration failed:', error);
+        throw error;
+      }
+    },
+    down: (db) => {
+      console.log('[Migration 020] Rollback not implemented (ALTER DROP COLUMN unsupported on older SQLite)');
+    }
+  },
+  {
+    id: '021_wallet_corporation_support',
+    description: 'Rebuild esi_wallet_transactions with composite PK + corp/division + client_id/journal_ref_id columns',
+    up: (db) => {
+      // Rebuild to a composite PK (transaction_id, character_id, is_corporation) —
+      // corp and character transaction_ids can collide, so the bare PK is unsafe as
+      // the durable-log upsert conflict target. Also add corp columns + the two
+      // previously-dropped ESI fields (client_id, journal_ref_id).
+      console.log('[Migration 021] Ensuring esi_wallet_transactions corp support...');
+
+      const tableExists = db.prepare(`
+        SELECT name FROM sqlite_master WHERE type='table' AND name='esi_wallet_transactions'
+      `).get();
+      if (!tableExists) {
+        console.log('[Migration 021] esi_wallet_transactions table does not exist, skipping');
+        return;
+      }
+
+      // Guard: composite PK present AND new columns present → already migrated.
+      const info = db.prepare('PRAGMA table_info(esi_wallet_transactions)').all();
+      const pkCols = info.filter(c => c.pk > 0).map(c => c.name);
+      const colNames = info.map(c => c.name);
+      const alreadyMigrated = pkCols.length === 3
+        && pkCols.includes('transaction_id') && pkCols.includes('character_id') && pkCols.includes('is_corporation')
+        && colNames.includes('client_id') && colNames.includes('journal_ref_id');
+      if (alreadyMigrated) {
+        console.log('[Migration 021] esi_wallet_transactions already migrated, skipping');
+        return;
+      }
+
+      db.pragma('foreign_keys = OFF');
+      try {
+        db.exec(`
+          BEGIN TRANSACTION;
+
+          CREATE TABLE esi_wallet_transactions_new (
+            transaction_id INTEGER NOT NULL,
+            character_id INTEGER NOT NULL,
+            is_corporation INTEGER NOT NULL DEFAULT 0,
+            corporation_id INTEGER,
+            division INTEGER,
+            date INTEGER NOT NULL,
+            type_id INTEGER NOT NULL,
+            quantity INTEGER NOT NULL,
+            unit_price REAL NOT NULL,
+            location_id INTEGER NOT NULL,
+            is_buy INTEGER NOT NULL,
+            is_personal INTEGER,
+            client_id INTEGER,
+            journal_ref_id INTEGER,
+            last_updated INTEGER NOT NULL,
+            cache_expires_at INTEGER,
+            PRIMARY KEY (transaction_id, character_id, is_corporation)
+          );
+
+          INSERT INTO esi_wallet_transactions_new
+            (transaction_id, character_id, is_corporation, date, type_id, quantity,
+             unit_price, location_id, is_buy, is_personal, last_updated, cache_expires_at)
+          SELECT transaction_id, character_id, 0, date, type_id, quantity,
+                 unit_price, location_id, is_buy, is_personal, last_updated, cache_expires_at
+          FROM esi_wallet_transactions;
+
+          DROP TABLE esi_wallet_transactions;
+          ALTER TABLE esi_wallet_transactions_new RENAME TO esi_wallet_transactions;
+
+          CREATE INDEX idx_wallet_transactions_character ON esi_wallet_transactions(character_id);
+          CREATE INDEX idx_wallet_transactions_type ON esi_wallet_transactions(type_id);
+          CREATE INDEX idx_wallet_transactions_corp ON esi_wallet_transactions(corporation_id, is_corporation);
+          CREATE INDEX idx_wallet_transactions_journal_ref ON esi_wallet_transactions(journal_ref_id);
+
+          COMMIT;
+        `);
+        db.pragma('foreign_keys = ON');
+        console.log('[Migration 021] Completed successfully');
+      } catch (error) {
+        db.exec('ROLLBACK');
+        db.pragma('foreign_keys = ON');
+        console.error('[Migration 021] Migration failed:', error);
+        throw error;
+      }
+    },
+    down: (db) => {
+      console.log('[Migration 021] Rollback not implemented (would require table recreation)');
+    }
+  },
+  {
+    id: '022_wallet_journal_table',
+    description: 'Create esi_wallet_journal table (character + corp ISK-movement log, source of truth for fees)',
+    up: (db) => {
+      console.log('[Migration 022] Ensuring esi_wallet_journal table...');
+
+      const tableExists = db.prepare(`
+        SELECT name FROM sqlite_master WHERE type='table' AND name='esi_wallet_journal'
+      `).get();
+      if (tableExists) {
+        console.log('[Migration 022] esi_wallet_journal already exists, skipping');
+        return;
+      }
+
+      db.exec('BEGIN TRANSACTION');
+      try {
+        db.exec(`
+          CREATE TABLE esi_wallet_journal (
+            id INTEGER NOT NULL,
+            character_id INTEGER NOT NULL,
+            is_corporation INTEGER NOT NULL DEFAULT 0,
+            corporation_id INTEGER,
+            division INTEGER,
+            date INTEGER NOT NULL,
+            ref_type TEXT NOT NULL,
+            amount REAL,
+            balance REAL,
+            context_id INTEGER,
+            context_id_type TEXT,
+            first_party_id INTEGER,
+            second_party_id INTEGER,
+            reason TEXT,
+            tax REAL,
+            tax_receiver_id INTEGER,
+            last_updated INTEGER NOT NULL,
+            cache_expires_at INTEGER,
+            PRIMARY KEY (id, character_id, is_corporation)
+          );
+
+          CREATE INDEX idx_wallet_journal_ref_type ON esi_wallet_journal(ref_type);
+          CREATE INDEX idx_wallet_journal_context ON esi_wallet_journal(context_id);
+          CREATE INDEX idx_wallet_journal_owner ON esi_wallet_journal(character_id, is_corporation, corporation_id);
+        `);
+        db.exec('COMMIT');
+        console.log('[Migration 022] Completed successfully');
+      } catch (error) {
+        db.exec('ROLLBACK');
+        console.error('[Migration 022] Migration failed:', error);
+        throw error;
+      }
+    },
+    down: (db) => {
+      console.log('[Migration 022] Rollback: DROP TABLE esi_wallet_journal');
+      db.exec('DROP TABLE IF EXISTS esi_wallet_journal');
+    }
+  },
+  {
+    id: '023_transaction_matches_is_corporation',
+    description: 'Add is_corporation to plan_transaction_matches so matches disambiguate char vs corp wallet rows (composite wallet PK)',
+    up: (db) => {
+      console.log('[Migration 023] Ensuring is_corporation on plan_transaction_matches...');
+
+      const tableExists = db.prepare(`
+        SELECT name FROM sqlite_master WHERE type='table' AND name='plan_transaction_matches'
+      `).get();
+      if (!tableExists) {
+        console.log('[Migration 023] plan_transaction_matches table does not exist, skipping');
+        return;
+      }
+
+      const cols = db.prepare('PRAGMA table_info(plan_transaction_matches)').all().map(c => c.name);
+      if (cols.includes('is_corporation')) {
+        console.log('[Migration 023] is_corporation already present, skipping');
+        return;
+      }
+
+      db.exec('BEGIN TRANSACTION');
+      try {
+        db.exec('ALTER TABLE plan_transaction_matches ADD COLUMN is_corporation INTEGER DEFAULT 0');
+        db.exec('COMMIT');
+        console.log('[Migration 023] Completed successfully');
+      } catch (error) {
+        db.exec('ROLLBACK');
+        console.error('[Migration 023] Migration failed:', error);
+        throw error;
+      }
+    },
+    down: (db) => {
+      console.log('[Migration 023] Rollback not implemented (ALTER DROP COLUMN unsupported on older SQLite)');
+    }
   }
   // Add future migrations here
 ];

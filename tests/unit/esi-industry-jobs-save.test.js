@@ -40,7 +40,9 @@ function makeJobsDb() {
       last_updated INTEGER NOT NULL,
       cache_expires_at INTEGER,
       is_corporation INTEGER DEFAULT 0,
-      corporation_id INTEGER
+      corporation_id INTEGER,
+      cost REAL,
+      product_type_id INTEGER
     );
   `);
   return db;
@@ -135,5 +137,29 @@ describe('saveIndustryJobs durable upsert', () => {
     expect(getRow(100).is_corporation).toBe(0);
     expect(getRow(200).is_corporation).toBe(1);
     expect(getRow(200).corporation_id).toBe(555);
+  });
+
+  test('persists ESI cost and product_type_id', () => {
+    saveIndustryJobs({
+      characterId: 1, isCorporation: false, lastUpdated: 1000, cacheExpiresAt: null,
+      jobs: [job({ job_id: 300, cost: 123456.78, product_type_id: 9999 })],
+    });
+    const row = getRow(300);
+    expect(row.cost).toBeCloseTo(123456.78);
+    expect(row.product_type_id).toBe(9999);
+  });
+
+  test('cost/product refresh in place on re-save (upsert updates them)', () => {
+    saveIndustryJobs({
+      characterId: 1, isCorporation: false, lastUpdated: 1000, cacheExpiresAt: null,
+      jobs: [job({ job_id: 301, status: 'active', cost: null, product_type_id: null })],
+    });
+    saveIndustryJobs({
+      characterId: 1, isCorporation: false, lastUpdated: 2000, cacheExpiresAt: null,
+      jobs: [job({ job_id: 301, status: 'delivered', cost: 500, product_type_id: 42 })],
+    });
+    expect(rowCount()).toBe(1);
+    expect(getRow(301).cost).toBe(500);
+    expect(getRow(301).product_type_id).toBe(42);
   });
 });

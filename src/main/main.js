@@ -1457,6 +1457,37 @@ function setupIPCHandlers() {
     return getMaterialTreeNodeDetail(planBlueprintId);
   });
 
+  // ── Ledger ──────────────────────────────────────────────────────────────────
+  ipcMain.handle('plans:getLedger', async (event, planId) => {
+    const { getPlanLedger } = require('./manufacturing-plans');
+    return getPlanLedger(planId);
+  });
+
+  ipcMain.handle('plans:addLedgerCost', (event, planId, options) => {
+    const { addManualLedgerCost } = require('./manufacturing-plans');
+    return addManualLedgerCost(planId, options);
+  });
+
+  ipcMain.handle('plans:updateLedgerEntry', (event, ledgerId, updates) => {
+    const { updateLedgerEntry } = require('./manufacturing-plans');
+    return updateLedgerEntry(ledgerId, updates);
+  });
+
+  ipcMain.handle('plans:deleteLedgerEntry', (event, ledgerId) => {
+    const { deleteLedgerEntry } = require('./manufacturing-plans');
+    return deleteLedgerEntry(ledgerId);
+  });
+
+  ipcMain.handle('plans:getTransactionDetail', (event, transactionId, isCorp) => {
+    const { getTransactionDetail } = require('./manufacturing-plans');
+    return getTransactionDetail(transactionId, isCorp);
+  });
+
+  ipcMain.handle('plans:getJournalDetail', (event, journalId, isCorp) => {
+    const { getJournalDetail } = require('./manufacturing-plans');
+    return getJournalDetail(journalId, isCorp);
+  });
+
   // Manufacturing Summary Window
   ipcMain.handle('manufacturingSummary:openWindow', () => {
     const { createManufacturingSummaryWindow } = require('./manufacturing-summary-window');

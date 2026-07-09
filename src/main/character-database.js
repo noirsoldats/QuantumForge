@@ -220,6 +220,9 @@ function initializeCharacterDatabase() {
       FOREIGN KEY (plan_id) REFERENCES manufacturing_plans(plan_id) ON DELETE CASCADE
     )
   `);
+  // NOTE: source/cost columns + widened event_type CHECK + unique source index are
+  // added by migration 019 (table rebuild). Base stays at the original shape;
+  // migrations run on fresh DBs too and converge both paths (see 017's precedent).
 
   database.exec(`
     CREATE TABLE IF NOT EXISTS plan_asset_allocations (
@@ -251,6 +254,8 @@ function initializeCharacterDatabase() {
       FOREIGN KEY (character_id) REFERENCES characters(character_id) ON DELETE CASCADE
     )
   `);
+  // NOTE: is_corporation/corporation_id added by migration 017; cost/product_type_id
+  // by migration 020. Base stays original; migrations converge fresh + legacy paths.
 
   database.exec(`
     CREATE TABLE IF NOT EXISTS esi_wallet_transactions (

@@ -133,14 +133,17 @@ function saveIndustryJobs(jobsData) {
         INSERT INTO esi_industry_jobs (
           job_id, character_id, installer_id, facility_id, activity_id,
           blueprint_type_id, runs, status, start_date, end_date,
-          completed_date, last_updated, cache_expires_at, is_corporation, corporation_id
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          completed_date, last_updated, cache_expires_at, is_corporation, corporation_id,
+          cost, product_type_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(job_id) DO UPDATE SET
           status = excluded.status,
           completed_date = excluded.completed_date,
           end_date = excluded.end_date,
           last_updated = excluded.last_updated,
-          cache_expires_at = excluded.cache_expires_at
+          cache_expires_at = excluded.cache_expires_at,
+          cost = excluded.cost,
+          product_type_id = excluded.product_type_id
       `);
 
       const isCorporation = jobsData.isCorporation ? 1 : 0;
@@ -167,7 +170,9 @@ function saveIndustryJobs(jobsData) {
           jobsData.lastUpdated,
           jobsData.cacheExpiresAt || null,
           isCorporation,
-          corporationId
+          corporationId,
+          job.cost != null ? job.cost : null,
+          job.product_type_id != null ? job.product_type_id : null
         );
       }
 
@@ -257,6 +262,8 @@ function getIndustryJobs(characterId, filters = {}) {
       cacheExpiresAt: row.cache_expires_at,
       isCorporation: row.is_corporation === 1,
       corporationId: row.corporation_id,
+      cost: row.cost,
+      productTypeId: row.product_type_id,
     }));
   } catch (error) {
     console.error('Error getting industry jobs from database:', error);

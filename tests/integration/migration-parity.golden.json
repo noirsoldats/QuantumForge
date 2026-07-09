@@ -472,6 +472,13 @@
         "pk": 0
       },
       {
+        "name": "cost",
+        "type": "REAL",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0
+      },
+      {
         "name": "end_date",
         "type": "INTEGER",
         "notnull": 0,
@@ -510,6 +517,13 @@
         "name": "last_updated",
         "type": "INTEGER",
         "notnull": 1,
+        "dflt_value": null,
+        "pk": 0
+      },
+      {
+        "name": "product_type_id",
+        "type": "INTEGER",
+        "notnull": 0,
         "dflt_value": null,
         "pk": 0
       },
@@ -566,6 +580,161 @@
       }
     ]
   },
+  "esi_wallet_journal": {
+    "columns": [
+      {
+        "name": "amount",
+        "type": "REAL",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0
+      },
+      {
+        "name": "balance",
+        "type": "REAL",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0
+      },
+      {
+        "name": "cache_expires_at",
+        "type": "INTEGER",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0
+      },
+      {
+        "name": "character_id",
+        "type": "INTEGER",
+        "notnull": 1,
+        "dflt_value": null,
+        "pk": 2
+      },
+      {
+        "name": "context_id",
+        "type": "INTEGER",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0
+      },
+      {
+        "name": "context_id_type",
+        "type": "TEXT",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0
+      },
+      {
+        "name": "corporation_id",
+        "type": "INTEGER",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0
+      },
+      {
+        "name": "date",
+        "type": "INTEGER",
+        "notnull": 1,
+        "dflt_value": null,
+        "pk": 0
+      },
+      {
+        "name": "division",
+        "type": "INTEGER",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0
+      },
+      {
+        "name": "first_party_id",
+        "type": "INTEGER",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0
+      },
+      {
+        "name": "id",
+        "type": "INTEGER",
+        "notnull": 1,
+        "dflt_value": null,
+        "pk": 1
+      },
+      {
+        "name": "is_corporation",
+        "type": "INTEGER",
+        "notnull": 1,
+        "dflt_value": "0",
+        "pk": 3
+      },
+      {
+        "name": "last_updated",
+        "type": "INTEGER",
+        "notnull": 1,
+        "dflt_value": null,
+        "pk": 0
+      },
+      {
+        "name": "reason",
+        "type": "TEXT",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0
+      },
+      {
+        "name": "ref_type",
+        "type": "TEXT",
+        "notnull": 1,
+        "dflt_value": null,
+        "pk": 0
+      },
+      {
+        "name": "second_party_id",
+        "type": "INTEGER",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0
+      },
+      {
+        "name": "tax",
+        "type": "REAL",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0
+      },
+      {
+        "name": "tax_receiver_id",
+        "type": "INTEGER",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0
+      }
+    ],
+    "indexes": [
+      {
+        "name": "idx_wallet_journal_context",
+        "unique": 0,
+        "columns": [
+          "context_id"
+        ]
+      },
+      {
+        "name": "idx_wallet_journal_owner",
+        "unique": 0,
+        "columns": [
+          "character_id",
+          "is_corporation",
+          "corporation_id"
+        ]
+      },
+      {
+        "name": "idx_wallet_journal_ref_type",
+        "unique": 0,
+        "columns": [
+          "ref_type"
+        ]
+      }
+    ]
+  },
   "esi_wallet_transactions": {
     "columns": [
       {
@@ -580,12 +749,33 @@
         "type": "INTEGER",
         "notnull": 1,
         "dflt_value": null,
+        "pk": 2
+      },
+      {
+        "name": "client_id",
+        "type": "INTEGER",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0
+      },
+      {
+        "name": "corporation_id",
+        "type": "INTEGER",
+        "notnull": 0,
+        "dflt_value": null,
         "pk": 0
       },
       {
         "name": "date",
         "type": "INTEGER",
         "notnull": 1,
+        "dflt_value": null,
+        "pk": 0
+      },
+      {
+        "name": "division",
+        "type": "INTEGER",
+        "notnull": 0,
         "dflt_value": null,
         "pk": 0
       },
@@ -597,9 +787,23 @@
         "pk": 0
       },
       {
-        "name": "is_personal",
+        "name": "is_corporation",
         "type": "INTEGER",
         "notnull": 1,
+        "dflt_value": "0",
+        "pk": 3
+      },
+      {
+        "name": "is_personal",
+        "type": "INTEGER",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0
+      },
+      {
+        "name": "journal_ref_id",
+        "type": "INTEGER",
+        "notnull": 0,
         "dflt_value": null,
         "pk": 0
       },
@@ -627,7 +831,7 @@
       {
         "name": "transaction_id",
         "type": "INTEGER",
-        "notnull": 0,
+        "notnull": 1,
         "dflt_value": null,
         "pk": 1
       },
@@ -652,6 +856,21 @@
         "unique": 0,
         "columns": [
           "character_id"
+        ]
+      },
+      {
+        "name": "idx_wallet_transactions_corp",
+        "unique": 0,
+        "columns": [
+          "corporation_id",
+          "is_corporation"
+        ]
+      },
+      {
+        "name": "idx_wallet_transactions_journal_ref",
+        "unique": 0,
+        "columns": [
+          "journal_ref_id"
         ]
       },
       {
@@ -1080,6 +1299,27 @@
   "plan_material_ledger": {
     "columns": [
       {
+        "name": "character_id",
+        "type": "INTEGER",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0
+      },
+      {
+        "name": "corporation_id",
+        "type": "INTEGER",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0
+      },
+      {
+        "name": "cost_category",
+        "type": "TEXT",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0
+      },
+      {
         "name": "created_at",
         "type": "INTEGER",
         "notnull": 1,
@@ -1129,7 +1369,21 @@
         "pk": 0
       },
       {
+        "name": "source_id",
+        "type": "INTEGER",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0
+      },
+      {
         "name": "source_ref",
+        "type": "TEXT",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0
+      },
+      {
+        "name": "source_type",
         "type": "TEXT",
         "notnull": 0,
         "dflt_value": null,
@@ -1163,6 +1417,15 @@
         "unique": 0,
         "columns": [
           "plan_id"
+        ]
+      },
+      {
+        "name": "idx_pml_source",
+        "unique": 1,
+        "columns": [
+          "plan_id",
+          "source_type",
+          "source_id"
         ]
       },
       {
@@ -1417,6 +1680,13 @@
       },
       {
         "name": "confirmed_by_user",
+        "type": "INTEGER",
+        "notnull": 0,
+        "dflt_value": "0",
+        "pk": 0
+      },
+      {
+        "name": "is_corporation",
         "type": "INTEGER",
         "notnull": 0,
         "dflt_value": "0",

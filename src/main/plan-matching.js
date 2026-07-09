@@ -78,7 +78,7 @@ function matchJobsToPlan(planId, options = {}) {
           AND activity_id IN (1, 9)
           AND start_date >= ?
         ORDER BY start_date DESC
-      `).all(...charIds, ...corpIds, Math.floor(timeWindow / 1000));
+      `).all(...charIds, ...corpIds, timeWindow);
     } else if (charIds.length > 0) {
       // Query only personal jobs
       const charPlaceholders = charIds.map(() => '?').join(',');
@@ -89,7 +89,7 @@ function matchJobsToPlan(planId, options = {}) {
           AND activity_id IN (1, 9)
           AND start_date >= ?
         ORDER BY start_date DESC
-      `).all(...charIds, Math.floor(timeWindow / 1000));
+      `).all(...charIds, timeWindow);
     } else if (corpIds.length > 0) {
       // Query only corporate jobs
       const corpPlaceholders = corpIds.map(() => '?').join(',');
@@ -100,7 +100,7 @@ function matchJobsToPlan(planId, options = {}) {
           AND activity_id IN (1, 9)
           AND start_date >= ?
         ORDER BY start_date DESC
-      `).all(...corpIds, Math.floor(timeWindow / 1000));
+      `).all(...corpIds, timeWindow);
     }
 
     if (jobs.length === 0) {
@@ -265,7 +265,7 @@ function saveJobMatches(matches) {
  * - Price within 20% of frozen price
  */
 function matchTransactionsToPlan(planId, options = {}) {
-  const { characterId, characterIds, maxDaysAgo = 30, minConfidence = 0.5 } = options;
+  const { characterId, characterIds, corporationIds, maxDaysAgo = 30, minConfidence = 0.5 } = options;
 
   const db = getCharacterDatabase();
 
@@ -304,19 +304,47 @@ function matchTransactionsToPlan(planId, options = {}) {
       charIds = characterId ? [characterId] : [];
     }
 
-    if (charIds.length === 0) {
+    // Corporation IDs (if provided) — mirrors matchJobsToPlan.
+    const corpIds = corporationIds || [];
+
+    if (charIds.length === 0 && corpIds.length === 0) {
       return [];
     }
 
-    // Get wallet transactions for ALL characters within time window
+    // Get wallet transactions for ALL characters + corps within time window.
+    // date is stored in ms (same as timeWindow) — bind directly (ms/seconds fix).
     const timeWindow = Date.now() - (maxDaysAgo * 24 * 60 * 60 * 1000);
-    const placeholders = charIds.map(() => '?').join(',');
-    const transactions = db.prepare(`
-      SELECT * FROM esi_wallet_transactions
-      WHERE character_id IN (${placeholders})
-        AND date >= ?
-      ORDER BY date DESC
-    `).all(...charIds, Math.floor(timeWindow / 1000));
+    let transactions = [];
+
+    if (charIds.length > 0 && corpIds.length > 0) {
+      const charPlaceholders = charIds.map(() => '?').join(',');
+      const corpPlaceholders = corpIds.map(() => '?').join(',');
+      transactions = db.prepare(`
+        SELECT * FROM esi_wallet_transactions
+        WHERE (
+          (character_id IN (${charPlaceholders}) AND is_corporation = 0)
+          OR (corporation_id IN (${corpPlaceholders}) AND is_corporation = 1)
+        )
+          AND date >= ?
+        ORDER BY date DESC
+      `).all(...charIds, ...corpIds, timeWindow);
+    } else if (charIds.length > 0) {
+      const charPlaceholders = charIds.map(() => '?').join(',');
+      transactions = db.prepare(`
+        SELECT * FROM esi_wallet_transactions
+        WHERE character_id IN (${charPlaceholders}) AND is_corporation = 0
+          AND date >= ?
+        ORDER BY date DESC
+      `).all(...charIds, timeWindow);
+    } else if (corpIds.length > 0) {
+      const corpPlaceholders = corpIds.map(() => '?').join(',');
+      transactions = db.prepare(`
+        SELECT * FROM esi_wallet_transactions
+        WHERE corporation_id IN (${corpPlaceholders}) AND is_corporation = 1
+          AND date >= ?
+        ORDER BY date DESC
+      `).all(...corpIds, timeWindow);
+    }
 
     if (transactions.length === 0) {
       return [];
@@ -472,8 +500,8 @@ function saveTransactionMatches(planId, matches) {
   const insert = db.prepare(`
     INSERT INTO plan_transaction_matches (
       match_id, plan_id, transaction_id, type_id, match_type,
-      quantity, match_confidence, match_reason, status
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending')
+      quantity, match_confidence, match_reason, status, is_corporation
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)
   `);
 
   const saveMany = db.transaction((matchArray) => {
@@ -487,7 +515,8 @@ function saveTransactionMatches(planId, matches) {
         match.matchType,
         match.transaction.quantity,
         match.confidence,
-        match.matchReason
+        match.matchReason,
+        match.transaction.is_corporation ? 1 : 0
       );
     }
   });
@@ -508,15 +537,23 @@ function confirmJobMatch(matchId) {
   const db = getCharacterDatabase();
 
   try {
-    const stmt = db.prepare(`
+    const match = db.prepare('SELECT * FROM plan_job_matches WHERE match_id = ?').get(matchId);
+    if (!match) {
+      return { success: false };
+    }
+
+    const result = db.prepare(`
       UPDATE plan_job_matches
       SET status = 'confirmed',
           confirmed_at = ?,
           confirmed_by_user = 1
       WHERE match_id = ?
-    `);
+    `).run(Math.floor(Date.now() / 1000), matchId);
 
-    const result = stmt.run(Math.floor(Date.now() / 1000), matchId);
+    // Write the job-installation cost ledger row (real ESI cost).
+    const job = db.prepare('SELECT * FROM esi_industry_jobs WHERE job_id = ?').get(match.job_id);
+    writeJobLedgerRow(db, match, job);
+
     return { success: result.changes > 0 };
   } catch (error) {
     console.error('Error confirming job match:', error);
@@ -531,18 +568,198 @@ function rejectJobMatch(matchId) {
   const db = getCharacterDatabase();
 
   try {
-    const stmt = db.prepare(`
+    const match = db.prepare('SELECT * FROM plan_job_matches WHERE match_id = ?').get(matchId);
+
+    const result = db.prepare(`
       UPDATE plan_job_matches
       SET status = 'rejected',
           confirmed_at = ?
       WHERE match_id = ?
-    `);
+    `).run(Math.floor(Date.now() / 1000), matchId);
 
-    const result = stmt.run(Math.floor(Date.now() / 1000), matchId);
+    // Remove any ledger cost row written when this job was confirmed.
+    if (match) {
+      removeLedgerRowsForSource(db, match.plan_id, 'industry_job', match.job_id);
+    }
+
     return { success: result.changes > 0 };
   } catch (error) {
     console.error('Error rejecting job match:', error);
     throw error;
+  }
+}
+
+// ─── Ledger write-through (confirmed matches become ledger rows) ──────────────
+
+/**
+ * Write (or refresh) a purchased-material ledger row from a confirmed transaction
+ * match. Idempotent via the UNIQUE(plan_id, source_type, source_id) index — a
+ * given transaction produces at most one ledger row. Only material BUYS create a
+ * quantity row (product sells are revenue, not spend).
+ * @param {Object} db - character DB
+ * @param {Object} match - plan_transaction_matches row
+ * @param {Object} tx - esi_wallet_transactions row
+ */
+function writeTransactionLedgerRow(db, match, tx) {
+  if (!tx || match.match_type !== 'material_buy' || tx.is_buy !== 1) {
+    return; // only material purchases contribute acquired quantity/spend
+  }
+  const now = Date.now();
+  db.prepare(`
+    INSERT INTO plan_material_ledger
+      (ledger_id, plan_id, type_id, event_type, quantity, method, unit_price, note,
+       source_type, source_id, character_id, corporation_id, created_at)
+    VALUES (?, ?, ?, 'acquired', ?, 'purchased', ?, NULL,
+            'wallet_transaction', ?, ?, ?, ?)
+    ON CONFLICT(plan_id, source_type, source_id) WHERE source_id IS NOT NULL DO UPDATE SET
+      quantity = excluded.quantity,
+      unit_price = excluded.unit_price,
+      character_id = excluded.character_id,
+      corporation_id = excluded.corporation_id
+  `).run(
+    uuidv4(), match.plan_id, tx.type_id, tx.quantity, tx.unit_price,
+    tx.transaction_id, tx.character_id, tx.corporation_id || null, now
+  );
+}
+
+/**
+ * Write (or refresh) a job-installation cost ledger row from a confirmed job
+ * match, using the real ESI-reported cost. Idempotent via the source index.
+ * @param {Object} db - character DB
+ * @param {Object} match - plan_job_matches row
+ * @param {Object} job - esi_industry_jobs row
+ */
+function writeJobLedgerRow(db, match, job) {
+  if (!job || job.cost == null) {
+    return; // no real ESI cost captured — read model surfaces an estimate instead
+  }
+  const now = Date.now();
+  db.prepare(`
+    INSERT INTO plan_material_ledger
+      (ledger_id, plan_id, type_id, event_type, quantity, method, unit_price, note,
+       source_type, source_id, character_id, corporation_id, cost_category, created_at)
+    VALUES (?, ?, 0, 'cost', 0, 'cost', ?, NULL,
+            'industry_job', ?, ?, ?, 'job_install', ?)
+    ON CONFLICT(plan_id, source_type, source_id) WHERE source_id IS NOT NULL DO UPDATE SET
+      unit_price = excluded.unit_price,
+      character_id = excluded.character_id,
+      corporation_id = excluded.corporation_id
+  `).run(
+    uuidv4(), match.plan_id, job.cost, job.job_id,
+    job.character_id, job.corporation_id || null, now
+  );
+}
+
+/**
+ * Remove any ledger rows sourced from a given match's source (transaction or job).
+ * Called on reject/unlink so ledger totals revert. Also removes dependent journal
+ * fee rows whose parent was this transaction/job (fees follow their parent).
+ * @param {Object} db - character DB
+ * @param {string} planId
+ * @param {string} sourceType - 'wallet_transaction' | 'industry_job'
+ * @param {number} sourceId - transaction_id or job_id
+ */
+function removeLedgerRowsForSource(db, planId, sourceType, sourceId) {
+  db.prepare(`
+    DELETE FROM plan_material_ledger
+    WHERE plan_id = ? AND source_type = ? AND source_id = ?
+  `).run(planId, sourceType, sourceId);
+
+  // Remove dependent journal-fee rows tied to this transaction/job via context_id.
+  db.prepare(`
+    DELETE FROM plan_material_ledger
+    WHERE plan_id = ? AND source_type = 'wallet_journal'
+      AND source_id IN (
+        SELECT id FROM esi_wallet_journal WHERE context_id = ?
+      )
+  `).run(planId, sourceId);
+}
+
+/**
+ * Attribute wallet-journal fee entries to a plan by linking them, through their
+ * context_id, to a transaction/job already confirmed-matched to this plan.
+ * Fees follow their parent — no separate user confirmation. Idempotent via the
+ * UNIQUE(plan_id, source_type, source_id) index.
+ *
+ * Mapping:
+ *   brokers_fee / transaction_tax  → context_id = market_transaction_id → confirmed tx
+ *   industry_job_tax               → context_id = industry_job_id       → confirmed job
+ *
+ * @param {string} planId
+ * @returns {number} count of fee rows written/refreshed
+ */
+function attributeJournalFeesToPlan(planId) {
+  const db = getCharacterDatabase();
+  let written = 0;
+
+  try {
+    // Confirmed transaction ids for this plan (fee parents).
+    const confirmedTxIds = new Set(
+      db.prepare(`
+        SELECT transaction_id FROM plan_transaction_matches
+        WHERE plan_id = ? AND status = 'confirmed'
+      `).all(planId).map(r => r.transaction_id)
+    );
+    // Confirmed job ids for this plan.
+    const confirmedJobIds = new Set(
+      db.prepare(`
+        SELECT job_id FROM plan_job_matches
+        WHERE plan_id = ? AND status = 'confirmed'
+      `).all(planId).map(r => r.job_id)
+    );
+
+    if (confirmedTxIds.size === 0 && confirmedJobIds.size === 0) {
+      return 0;
+    }
+
+    // Fee-bearing journal entries.
+    const feeEntries = db.prepare(`
+      SELECT * FROM esi_wallet_journal
+      WHERE ref_type IN ('brokers_fee','transaction_tax','industry_job_tax')
+        AND context_id IS NOT NULL
+    `).all();
+
+    const catFor = (refType) => {
+      if (refType === 'brokers_fee') return 'broker_fee';
+      if (refType === 'transaction_tax') return 'sales_tax';
+      if (refType === 'industry_job_tax') return 'job_tax';
+      return 'other';
+    };
+
+    const upsert = db.prepare(`
+      INSERT INTO plan_material_ledger
+        (ledger_id, plan_id, type_id, event_type, quantity, method, unit_price, note,
+         source_type, source_id, character_id, corporation_id, cost_category, created_at)
+      VALUES (?, ?, 0, 'cost', 0, 'cost', ?, NULL,
+              'wallet_journal', ?, ?, ?, ?, ?)
+      ON CONFLICT(plan_id, source_type, source_id) WHERE source_id IS NOT NULL DO UPDATE SET
+        unit_price = excluded.unit_price,
+        cost_category = excluded.cost_category
+    `);
+
+    const now = Date.now();
+    for (const entry of feeEntries) {
+      const isTxFee = entry.ref_type === 'brokers_fee' || entry.ref_type === 'transaction_tax';
+      const isJobFee = entry.ref_type === 'industry_job_tax';
+      const attributed =
+        (isTxFee && confirmedTxIds.has(entry.context_id)) ||
+        (isJobFee && confirmedJobIds.has(entry.context_id));
+      if (!attributed) continue;
+
+      upsert.run(
+        uuidv4(), planId, Math.abs(entry.amount || 0), entry.id,
+        entry.character_id, entry.corporation_id || null, catFor(entry.ref_type), now
+      );
+      written++;
+    }
+
+    if (written > 0) {
+      console.log(`[Plan Matching] Attributed ${written} journal fee row(s) to plan ${planId}`);
+    }
+    return written;
+  } catch (error) {
+    console.error('Error attributing journal fees to plan:', error);
+    return 0;
   }
 }
 
@@ -553,15 +770,25 @@ function confirmTransactionMatch(matchId) {
   const db = getCharacterDatabase();
 
   try {
-    const stmt = db.prepare(`
+    const match = db.prepare('SELECT * FROM plan_transaction_matches WHERE match_id = ?').get(matchId);
+    if (!match) {
+      return { success: false };
+    }
+
+    const result = db.prepare(`
       UPDATE plan_transaction_matches
       SET status = 'confirmed',
           confirmed_at = ?,
           confirmed_by_user = 1
       WHERE match_id = ?
-    `);
+    `).run(Math.floor(Date.now() / 1000), matchId);
 
-    const result = stmt.run(Math.floor(Date.now() / 1000), matchId);
+    // Write the purchased-material ledger row from the underlying transaction
+    // (disambiguated by is_corporation — transaction_id alone is not unique).
+    const tx = db.prepare('SELECT * FROM esi_wallet_transactions WHERE transaction_id = ? AND is_corporation = ?')
+      .get(match.transaction_id, match.is_corporation ? 1 : 0);
+    writeTransactionLedgerRow(db, match, tx);
+
     return { success: result.changes > 0 };
   } catch (error) {
     console.error('Error confirming transaction match:', error);
@@ -576,14 +803,20 @@ function rejectTransactionMatch(matchId) {
   const db = getCharacterDatabase();
 
   try {
-    const stmt = db.prepare(`
+    const match = db.prepare('SELECT * FROM plan_transaction_matches WHERE match_id = ?').get(matchId);
+
+    const result = db.prepare(`
       UPDATE plan_transaction_matches
       SET status = 'rejected',
           confirmed_at = ?
       WHERE match_id = ?
-    `);
+    `).run(Math.floor(Date.now() / 1000), matchId);
 
-    const result = stmt.run(Math.floor(Date.now() / 1000), matchId);
+    // Remove the purchased-material ledger row (and dependent fee rows).
+    if (match) {
+      removeLedgerRowsForSource(db, match.plan_id, 'wallet_transaction', match.transaction_id);
+    }
+
     return { success: result.changes > 0 };
   } catch (error) {
     console.error('Error rejecting transaction match:', error);
@@ -687,7 +920,7 @@ function getPendingMatches(planId) {
         wt.is_personal,
         c.character_name
       FROM plan_transaction_matches tm
-      JOIN esi_wallet_transactions wt ON tm.transaction_id = wt.transaction_id
+      JOIN esi_wallet_transactions wt ON tm.transaction_id = wt.transaction_id AND tm.is_corporation = wt.is_corporation
       LEFT JOIN characters c ON wt.character_id = c.character_id
       WHERE tm.plan_id = ? AND tm.status = 'pending'
       ORDER BY tm.match_confidence DESC
@@ -740,7 +973,7 @@ function getPlanActuals(planId) {
       SELECT
         SUM(wt.quantity * wt.unit_price) as total_cost
       FROM plan_transaction_matches tm
-      JOIN esi_wallet_transactions wt ON tm.transaction_id = wt.transaction_id
+      JOIN esi_wallet_transactions wt ON tm.transaction_id = wt.transaction_id AND tm.is_corporation = wt.is_corporation
       WHERE tm.plan_id = ?
         AND tm.status = 'confirmed'
         AND tm.match_type = 'material_buy'
@@ -751,7 +984,7 @@ function getPlanActuals(planId) {
       SELECT
         SUM(wt.quantity * wt.unit_price) as total_sales
       FROM plan_transaction_matches tm
-      JOIN esi_wallet_transactions wt ON tm.transaction_id = wt.transaction_id
+      JOIN esi_wallet_transactions wt ON tm.transaction_id = wt.transaction_id AND tm.is_corporation = wt.is_corporation
       WHERE tm.plan_id = ?
         AND tm.status = 'confirmed'
         AND tm.match_type = 'product_sell'
@@ -916,15 +1149,20 @@ function unlinkJobMatch(matchId) {
   const db = getCharacterDatabase();
 
   try {
-    const stmt = db.prepare(`
+    const match = db.prepare('SELECT * FROM plan_job_matches WHERE match_id = ?').get(matchId);
+
+    const result = db.prepare(`
       DELETE FROM plan_job_matches
       WHERE match_id = ?
-    `);
-
-    const result = stmt.run(matchId);
+    `).run(matchId);
 
     if (result.changes === 0) {
       throw new Error('Match not found');
+    }
+
+    // Remove any ledger cost row written when this job was confirmed.
+    if (match) {
+      removeLedgerRowsForSource(db, match.plan_id, 'industry_job', match.job_id);
     }
 
     console.log(`[Plan Matching] Unlinked job match ${matchId}`);
@@ -964,7 +1202,7 @@ function getConfirmedTransactionMatches(planId) {
         wt.unit_price,
         c.character_name
       FROM plan_transaction_matches tm
-      JOIN esi_wallet_transactions wt ON tm.transaction_id = wt.transaction_id
+      JOIN esi_wallet_transactions wt ON tm.transaction_id = wt.transaction_id AND tm.is_corporation = wt.is_corporation
       LEFT JOIN characters c ON wt.character_id = c.character_id
       WHERE tm.plan_id = ? AND tm.status = 'confirmed'
       ORDER BY tm.confirmed_at DESC
@@ -1009,15 +1247,20 @@ function unlinkTransactionMatch(matchId) {
   const db = getCharacterDatabase();
 
   try {
-    const stmt = db.prepare(`
+    const match = db.prepare('SELECT * FROM plan_transaction_matches WHERE match_id = ?').get(matchId);
+
+    const result = db.prepare(`
       DELETE FROM plan_transaction_matches
       WHERE match_id = ?
-    `);
-
-    const result = stmt.run(matchId);
+    `).run(matchId);
 
     if (result.changes === 0) {
       throw new Error('Match not found');
+    }
+
+    // Remove the purchased-material ledger row (and dependent fee rows).
+    if (match) {
+      removeLedgerRowsForSource(db, match.plan_id, 'wallet_transaction', match.transaction_id);
     }
 
     console.log(`[Plan Matching] Unlinked transaction match ${matchId}`);
@@ -1042,5 +1285,6 @@ module.exports = {
   getConfirmedJobMatches,
   unlinkJobMatch,
   getConfirmedTransactionMatches,
-  unlinkTransactionMatch
+  unlinkTransactionMatch,
+  attributeJournalFeesToPlan
 };
