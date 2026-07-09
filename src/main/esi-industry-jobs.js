@@ -1,8 +1,6 @@
-const { refreshAccessToken, isTokenExpired } = require('./esi-auth');
-const { getCharacter, updateCharacterTokens } = require('./settings-manager');
-const { getUserAgent } = require('./user-agent');
+const { getCharacter } = require('./settings-manager');
 const { getCharacterDatabase } = require('./character-database');
-const { recordESICallStart, recordESICallSuccess, recordESICallError } = require('./esi-status-tracker');
+const { esiFetch } = require('./esi-fetch');
 
 /**
  * Fetch character industry jobs from ESI
@@ -13,91 +11,36 @@ const { recordESICallStart, recordESICallSuccess, recordESICallError } = require
 async function fetchCharacterIndustryJobs(characterId, includeCompleted = false) {
   const callKey = `character_${characterId}_industry_jobs`;
 
-  recordESICallStart(callKey, {
+  const includeParam = includeCompleted ? 'include_completed=true' : '';
+  const url = `https://esi.evetech.net/latest/characters/${characterId}/industry/jobs/?datasource=tranquility${includeParam ? '&' + includeParam : ''}`;
+
+  console.log(`Fetching character industry jobs (includeCompleted: ${includeCompleted})...`);
+
+  const result = await esiFetch('industry_jobs', callKey, url, {
+    characterId,
     category: 'character',
-    characterId: characterId,
-    endpointType: 'industry_jobs',
-    endpointLabel: 'Industry Jobs'
+    endpointLabel: 'Industry Jobs',
   });
 
-  const startTime = Date.now();
-
-  try {
-    let character = getCharacter(characterId);
-
-    if (!character) {
-      const errorMsg = 'Character not found';
-      recordESICallError(callKey, errorMsg, 'NOT_FOUND', startTime);
-      throw new Error(errorMsg);
-    }
-
-    // Check if token is expired and refresh if needed
-    if (isTokenExpired(character.expiresAt)) {
-      console.log('Token expired, refreshing...');
-      try {
-        const newTokens = await refreshAccessToken(character.refreshToken);
-        updateCharacterTokens(characterId, newTokens);
-        character = getCharacter(characterId);
-      } catch (refreshErr) {
-        const tagged = new Error(refreshErr.message);
-        tagged.code = 'ESI_TOKEN_REFRESH_FAILED';
-        tagged.characterId = characterId;
-        throw tagged;
-      }
-    }
-
-    // Fetch industry jobs from ESI
-    let allJobsData = [];
-    let cacheExpiresAt = null;
-
-    const includeParam = includeCompleted ? 'include_completed=true' : '';
-    const url = `https://esi.evetech.net/latest/characters/${characterId}/industry/jobs/?datasource=tranquility${includeParam ? '&' + includeParam : ''}`;
-
-    console.log(`Fetching character industry jobs (includeCompleted: ${includeCompleted})...`);
-
-    const response = await fetch(url, {
-      headers: {
-        'Authorization': `Bearer ${character.accessToken}`,
-        'User-Agent': getUserAgent(),
-      },
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      const errorMsg = `Failed to fetch industry jobs: ${response.status} ${errorText}`;
-      recordESICallError(callKey, errorMsg, response.status.toString(), startTime);
-      throw new Error(errorMsg);
-    }
-
-    const jobsData = await response.json();
-    allJobsData = jobsData;
-
-    // Get cache expiry from response headers
-    const expiresHeader = response.headers.get('expires');
-    if (expiresHeader) {
-      const expiresDate = new Date(expiresHeader);
-      cacheExpiresAt = expiresDate.getTime();
-      console.log('ESI industry jobs cache expires at:', expiresDate.toISOString());
-    }
-
-    console.log(`Fetched ${allJobsData.length} industry jobs`);
-
-    const responseSize = JSON.stringify(allJobsData).length;
-    recordESICallSuccess(callKey, cacheExpiresAt, null, responseSize, startTime);
-
+  if (result.skipped) {
     return {
-      jobs: allJobsData,
-      characterId: characterId,
+      jobs: [],
+      characterId,
       lastUpdated: Date.now(),
-      cacheExpiresAt: cacheExpiresAt,
+      cacheExpiresAt: null,
+      skipped: true,
     };
-  } catch (error) {
-    console.error('Error fetching character industry jobs:', error);
-    if (!error.message.includes('Character not found') && !error.message.includes('Failed to fetch')) {
-      recordESICallError(callKey, error.message, 'NETWORK_ERROR', startTime);
-    }
-    throw error;
   }
+
+  const jobs = result.data || [];
+  console.log(`Fetched ${jobs.length} industry jobs`);
+
+  return {
+    jobs,
+    characterId,
+    lastUpdated: Date.now(),
+    cacheExpiresAt: result.cacheExpiresAt,
+  };
 }
 
 /**
@@ -109,135 +52,59 @@ async function fetchCharacterIndustryJobs(characterId, includeCompleted = false)
  */
 async function fetchCorporationIndustryJobs(characterId, corporationId, includeCompleted = false) {
   const callKey = `corporation_${corporationId}_industry_jobs`;
+  const emptyResult = { jobs: [], corporationId, characterId, lastUpdated: Date.now(), cacheExpiresAt: null };
 
-  recordESICallStart(callKey, {
-    category: 'corporation',
-    characterId: characterId,
-    corporationId: corporationId,
-    endpointType: 'corporation_industry_jobs',
-    endpointLabel: 'Corporation Industry Jobs'
-  });
+  // Cheap scope pre-check before touching the network / status tracker.
+  const character = getCharacter(characterId);
+  if (!character) {
+    throw Object.assign(new Error('Character not found'), { code: 'NOT_FOUND', characterId });
+  }
+  if (!character.scopes || !character.scopes.includes('esi-industry.read_corporation_jobs.v1')) {
+    console.log('Character does not have corporation industry jobs scope, skipping...');
+    return emptyResult;
+  }
 
-  const startTime = Date.now();
+  const includeParam = includeCompleted ? 'include_completed=true' : '';
+  const url = `https://esi.evetech.net/latest/corporations/${corporationId}/industry/jobs/?datasource=tranquility${includeParam ? '&' + includeParam : ''}`;
+
+  console.log(`Fetching corporation ${corporationId} industry jobs (includeCompleted: ${includeCompleted})...`);
 
   try {
-    let character = getCharacter(characterId);
+    const result = await esiFetch('corporation_industry_jobs', callKey, url, {
+      characterId,
+      corporationId,
+      category: 'corporation',
+      endpointLabel: 'Corporation Industry Jobs',
+    });
 
-    if (!character) {
-      const errorMsg = 'Character not found';
-      recordESICallError(callKey, errorMsg, 'NOT_FOUND', startTime);
-      throw new Error(errorMsg);
+    if (result.skipped) {
+      return { ...emptyResult, skipped: true };
+    }
+    // Role-based 403 (not a director) — esiFetch returns empty silently.
+    if (result.roleForbidden) {
+      console.log('Character does not have permission to view corporation industry jobs (requires director role)');
+      return emptyResult;
     }
 
-    // Check if token is expired and refresh if needed
-    if (isTokenExpired(character.expiresAt)) {
-      console.log('Token expired, refreshing...');
-      try {
-        const newTokens = await refreshAccessToken(character.refreshToken);
-        updateCharacterTokens(characterId, newTokens);
-        character = getCharacter(characterId);
-      } catch (refreshErr) {
-        const tagged = new Error(refreshErr.message);
-        tagged.code = 'ESI_TOKEN_REFRESH_FAILED';
-        tagged.characterId = characterId;
-        throw tagged;
-      }
-    }
-
-    // Check if character has the required scope
-    if (!character.scopes || !character.scopes.includes('esi-industry.read_corporation_jobs.v1')) {
-      console.log('Character does not have corporation industry jobs scope, skipping...');
-      recordESICallSuccess(callKey, null, null, 0, startTime);
-      return { jobs: [], corporationId, characterId, lastUpdated: Date.now(), cacheExpiresAt: null };
-    }
-
-    // Fetch all pages of corporation industry jobs from ESI
-    let allJobsData = [];
-    let page = 1;
-    let totalPages = 1;
-    let cacheExpiresAt = null;
-
-    do {
-      const includeParam = includeCompleted ? 'include_completed=true' : '';
-      const url = `https://esi.evetech.net/latest/corporations/${corporationId}/industry/jobs/?datasource=tranquility&page=${page}${includeParam ? '&' + includeParam : ''}`;
-
-      console.log(`Fetching corporation ${corporationId} industry jobs page ${page} of ${totalPages} (includeCompleted: ${includeCompleted})...`);
-
-      const response = await fetch(url, {
-        headers: {
-          'Authorization': `Bearer ${character.accessToken}`,
-          'User-Agent': getUserAgent(),
-        },
-      });
-
-      if (!response.ok) {
-        // If we get a 403, distinguish between missing scope vs missing director role
-        if (response.status === 403) {
-          const errorText = await response.text();
-          const lower = errorText.toLowerCase();
-          if (lower.includes('token not valid for scope') || lower.includes('invalid scope')) {
-            const tagged = new Error(`ESI scope error: ${errorText}`);
-            tagged.code = 'ESI_SCOPE_ERROR';
-            tagged.characterId = characterId;
-            throw tagged;
-          }
-          // Role-based 403 (not a director) — expected, return empty silently
-          console.log('Character does not have permission to view corporation industry jobs (requires director role)');
-          recordESICallSuccess(callKey, null, null, 0, startTime);
-          return { jobs: [], corporationId, characterId, lastUpdated: Date.now(), cacheExpiresAt: null };
-        }
-        const errorText = await response.text();
-        const errorMsg = `Failed to fetch corporation industry jobs: ${response.status} ${errorText}`;
-        recordESICallError(callKey, errorMsg, response.status.toString(), startTime);
-        throw new Error(errorMsg);
-      }
-
-      const jobsData = await response.json();
-      allJobsData = allJobsData.concat(jobsData);
-
-      // Get cache expiry from response headers (from first page)
-      if (page === 1) {
-        const expiresHeader = response.headers.get('expires');
-        if (expiresHeader) {
-          const expiresDate = new Date(expiresHeader);
-          cacheExpiresAt = expiresDate.getTime();
-          console.log('ESI corporation industry jobs cache expires at:', expiresDate.toISOString());
-        }
-      }
-
-      // Check if there are more pages
-      const xPagesHeader = response.headers.get('X-Pages');
-      if (xPagesHeader) {
-        totalPages = parseInt(xPagesHeader, 10);
-      }
-
-      page++;
-    } while (page <= totalPages);
-
-    console.log(`Fetched ${allJobsData.length} corporation industry jobs across ${totalPages} page(s)`);
-
-    const responseSize = JSON.stringify(allJobsData).length;
-    recordESICallSuccess(callKey, cacheExpiresAt, null, responseSize, startTime);
+    const jobs = result.data || [];
+    console.log(`Fetched ${jobs.length} corporation industry jobs across ${result.pages} page(s)`);
 
     return {
-      jobs: allJobsData,
-      corporationId: corporationId,
-      characterId: characterId,
+      jobs,
+      corporationId,
+      characterId,
       isCorporation: true,
       lastUpdated: Date.now(),
-      cacheExpiresAt: cacheExpiresAt,
+      cacheExpiresAt: result.cacheExpiresAt,
     };
   } catch (error) {
     // Re-throw auth errors so IPC handlers can broadcast them to renderers
     if (error.code === 'ESI_TOKEN_REFRESH_FAILED' || error.code === 'ESI_SCOPE_ERROR') {
       throw error;
     }
+    // Rate-limited or network error — return empty so personal jobs still work.
     console.error('Error fetching corporation industry jobs:', error);
-    if (!error.message.includes('Character not found') && !error.message.includes('Failed to fetch')) {
-      recordESICallError(callKey, error.message, 'NETWORK_ERROR', startTime);
-    }
-    // Don't throw - return empty array so personal jobs still work
-    return { jobs: [], corporationId, characterId, lastUpdated: Date.now(), cacheExpiresAt: null };
+    return emptyResult;
   }
 }
 
@@ -256,24 +123,24 @@ function saveIndustryJobs(jobsData) {
     db.exec('BEGIN TRANSACTION');
 
     try {
-      // Different delete strategy for corp vs personal jobs
-      if (jobsData.isCorporation && jobsData.corporationId) {
-        // Delete existing corporation jobs for this corporation
-        db.prepare('DELETE FROM esi_industry_jobs WHERE corporation_id = ? AND is_corporation = 1')
-          .run(jobsData.corporationId);
-      } else {
-        // Delete existing personal jobs for this character
-        db.prepare('DELETE FROM esi_industry_jobs WHERE character_id = ? AND is_corporation = 0')
-          .run(jobsData.characterId);
-      }
-
-      // Insert new jobs
+      // Durable append/upsert log — never blind-delete. ESI's include_completed
+      // only returns a rolling recent window, so a delete-then-reinsert would
+      // silently drop completed jobs that aged out of that window and weaken
+      // plan matching for older plans. Instead we upsert by job_id (the PK,
+      // globally unique in EVE) so completed jobs are retained and their status
+      // refreshes in place as they progress (active -> delivered).
       const insertJob = db.prepare(`
         INSERT INTO esi_industry_jobs (
           job_id, character_id, installer_id, facility_id, activity_id,
           blueprint_type_id, runs, status, start_date, end_date,
           completed_date, last_updated, cache_expires_at, is_corporation, corporation_id
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(job_id) DO UPDATE SET
+          status = excluded.status,
+          completed_date = excluded.completed_date,
+          end_date = excluded.end_date,
+          last_updated = excluded.last_updated,
+          cache_expires_at = excluded.cache_expires_at
       `);
 
       const isCorporation = jobsData.isCorporation ? 1 : 0;

@@ -1,8 +1,5 @@
-const { refreshAccessToken, isTokenExpired } = require('./esi-auth');
-const { getCharacter, updateCharacterTokens } = require('./settings-manager');
-const { getUserAgent } = require('./user-agent');
 const { getCharacterDatabase } = require('./character-database');
-const { recordESICallStart, recordESICallSuccess, recordESICallError } = require('./esi-status-tracker');
+const { esiFetch } = require('./esi-fetch');
 
 /**
  * Fetch character wallet transactions from ESI
@@ -13,91 +10,36 @@ const { recordESICallStart, recordESICallSuccess, recordESICallError } = require
 async function fetchCharacterWalletTransactions(characterId, fromId = null) {
   const callKey = `character_${characterId}_wallet_transactions`;
 
-  recordESICallStart(callKey, {
+  const fromIdParam = fromId ? `from_id=${fromId}` : '';
+  const url = `https://esi.evetech.net/latest/characters/${characterId}/wallet/transactions/?datasource=tranquility${fromIdParam ? '&' + fromIdParam : ''}`;
+
+  console.log(`Fetching character wallet transactions${fromId ? ` from ID ${fromId}` : ''}...`);
+
+  const result = await esiFetch('wallet_transactions', callKey, url, {
+    characterId,
     category: 'character',
-    characterId: characterId,
-    endpointType: 'wallet_transactions',
-    endpointLabel: 'Wallet Transactions'
+    endpointLabel: 'Wallet Transactions',
   });
 
-  const startTime = Date.now();
-
-  try {
-    let character = getCharacter(characterId);
-
-    if (!character) {
-      const errorMsg = 'Character not found';
-      recordESICallError(callKey, errorMsg, 'NOT_FOUND', startTime);
-      throw new Error(errorMsg);
-    }
-
-    // Check if token is expired and refresh if needed
-    if (isTokenExpired(character.expiresAt)) {
-      console.log('Token expired, refreshing...');
-      try {
-        const newTokens = await refreshAccessToken(character.refreshToken);
-        updateCharacterTokens(characterId, newTokens);
-        character = getCharacter(characterId);
-      } catch (refreshErr) {
-        const tagged = new Error(refreshErr.message);
-        tagged.code = 'ESI_TOKEN_REFRESH_FAILED';
-        tagged.characterId = characterId;
-        throw tagged;
-      }
-    }
-
-    // Fetch wallet transactions from ESI
-    let allTransactionsData = [];
-    let cacheExpiresAt = null;
-
-    const fromIdParam = fromId ? `from_id=${fromId}` : '';
-    const url = `https://esi.evetech.net/latest/characters/${characterId}/wallet/transactions/?datasource=tranquility${fromIdParam ? '&' + fromIdParam : ''}`;
-
-    console.log(`Fetching character wallet transactions${fromId ? ` from ID ${fromId}` : ''}...`);
-
-    const response = await fetch(url, {
-      headers: {
-        'Authorization': `Bearer ${character.accessToken}`,
-        'User-Agent': getUserAgent(),
-      },
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      const errorMsg = `Failed to fetch wallet transactions: ${response.status} ${errorText}`;
-      recordESICallError(callKey, errorMsg, response.status.toString(), startTime);
-      throw new Error(errorMsg);
-    }
-
-    const transactionsData = await response.json();
-    allTransactionsData = transactionsData;
-
-    // Get cache expiry from response headers
-    const expiresHeader = response.headers.get('expires');
-    if (expiresHeader) {
-      const expiresDate = new Date(expiresHeader);
-      cacheExpiresAt = expiresDate.getTime();
-      console.log('ESI wallet transactions cache expires at:', expiresDate.toISOString());
-    }
-
-    console.log(`Fetched ${allTransactionsData.length} wallet transactions`);
-
-    const responseSize = JSON.stringify(allTransactionsData).length;
-    recordESICallSuccess(callKey, cacheExpiresAt, null, responseSize, startTime);
-
+  if (result.skipped) {
     return {
-      transactions: allTransactionsData,
-      characterId: characterId,
+      transactions: [],
+      characterId,
       lastUpdated: Date.now(),
-      cacheExpiresAt: cacheExpiresAt,
+      cacheExpiresAt: null,
+      skipped: true,
     };
-  } catch (error) {
-    console.error('Error fetching character wallet transactions:', error);
-    if (!error.message.includes('Character not found') && !error.message.includes('Failed to fetch')) {
-      recordESICallError(callKey, error.message, 'NETWORK_ERROR', startTime);
-    }
-    throw error;
   }
+
+  const transactions = result.data || [];
+  console.log(`Fetched ${transactions.length} wallet transactions`);
+
+  return {
+    transactions,
+    characterId,
+    lastUpdated: Date.now(),
+    cacheExpiresAt: result.cacheExpiresAt,
+  };
 }
 
 /**

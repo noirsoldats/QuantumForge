@@ -41,6 +41,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     onDefaultCharacterChanged: (callback) => ipcRenderer.on('default-character-changed', callback),
     checkMissingScopes: (characterId) => ipcRenderer.invoke('esi:checkMissingScopes', characterId),
     openAuthErrorWindow: (errorInfo) => ipcRenderer.invoke('esi:openAuthErrorWindow', errorInfo),
+    refreshGlobalNow: () => ipcRenderer.invoke('esi:refreshGlobalNow'),
+    getGlobalRefreshStatus: () => ipcRenderer.invoke('esi:getGlobalRefreshStatus'),
   },
 
   // SDE API

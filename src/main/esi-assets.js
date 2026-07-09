@@ -1,8 +1,6 @@
-const { refreshAccessToken, isTokenExpired } = require('./esi-auth');
-const { getCharacter, updateCharacterTokens } = require('./settings-manager');
-const { getUserAgent } = require('./user-agent');
+const { getCharacter } = require('./settings-manager');
 const { getCharacterDatabase } = require('./character-database');
-const { recordESICallStart, recordESICallSuccess, recordESICallError } = require('./esi-status-tracker');
+const { esiFetch } = require('./esi-fetch');
 
 /**
  * Fetch character assets from ESI
@@ -11,107 +9,37 @@ const { recordESICallStart, recordESICallSuccess, recordESICallError } = require
  */
 async function fetchCharacterAssets(characterId) {
   const callKey = `character_${characterId}_assets`;
+  const url = `https://esi.evetech.net/latest/characters/${characterId}/assets/?datasource=tranquility`;
 
-  recordESICallStart(callKey, {
+  console.log('Fetching character assets...');
+
+  const result = await esiFetch('assets', callKey, url, {
+    characterId,
     category: 'character',
-    characterId: characterId,
-    endpointType: 'assets',
-    endpointLabel: 'Assets'
+    endpointLabel: 'Assets',
   });
 
-  const startTime = Date.now();
-
-  try {
-    let character = getCharacter(characterId);
-
-    if (!character) {
-      const errorMsg = 'Character not found';
-      recordESICallError(callKey, errorMsg, 'NOT_FOUND', startTime);
-      throw new Error(errorMsg);
-    }
-
-    // Check if token is expired and refresh if needed
-    if (isTokenExpired(character.expiresAt)) {
-      console.log('Token expired, refreshing...');
-      try {
-        const newTokens = await refreshAccessToken(character.refreshToken);
-        updateCharacterTokens(characterId, newTokens);
-        character = getCharacter(characterId);
-      } catch (refreshErr) {
-        const tagged = new Error(refreshErr.message);
-        tagged.code = 'ESI_TOKEN_REFRESH_FAILED';
-        tagged.characterId = characterId;
-        throw tagged;
-      }
-    }
-
-    // Fetch all pages of character assets from ESI
-    let allAssetsData = [];
-    let page = 1;
-    let totalPages = 1;
-    let cacheExpiresAt = null;
-
-    do {
-      console.log(`Fetching character assets page ${page} of ${totalPages}...`);
-
-      const response = await fetch(
-        `https://esi.evetech.net/latest/characters/${characterId}/assets/?datasource=tranquility&page=${page}`,
-        {
-          headers: {
-            'Authorization': `Bearer ${character.accessToken}`,
-            'User-Agent': getUserAgent(),
-          },
-        }
-      );
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        const errorMsg = `Failed to fetch assets: ${response.status} ${errorText}`;
-        recordESICallError(callKey, errorMsg, response.status.toString(), startTime);
-        throw new Error(errorMsg);
-      }
-
-      const assetsData = await response.json();
-      allAssetsData = allAssetsData.concat(assetsData);
-
-      // Get cache expiry from response headers (from first page)
-      if (page === 1) {
-        const expiresHeader = response.headers.get('expires');
-        if (expiresHeader) {
-          const expiresDate = new Date(expiresHeader);
-          cacheExpiresAt = expiresDate.getTime();
-          console.log('ESI character assets cache expires at:', expiresDate.toISOString());
-        }
-      }
-
-      // Check if there are more pages
-      const xPagesHeader = response.headers.get('X-Pages');
-      if (xPagesHeader) {
-        totalPages = parseInt(xPagesHeader, 10);
-      }
-
-      page++;
-    } while (page <= totalPages);
-
-    console.log(`Fetched ${allAssetsData.length} character assets across ${totalPages} page(s)`);
-
-    const responseSize = JSON.stringify(allAssetsData).length;
-    recordESICallSuccess(callKey, cacheExpiresAt, null, responseSize, startTime);
-
+  if (result.skipped) {
     return {
-      assets: allAssetsData,
-      characterId: characterId,
+      assets: [],
+      characterId,
       isCorporation: false,
       lastUpdated: Date.now(),
-      cacheExpiresAt: cacheExpiresAt,
+      cacheExpiresAt: null,
+      skipped: true,
     };
-  } catch (error) {
-    console.error('Error fetching character assets:', error);
-    if (!error.message.includes('Character not found') && !error.message.includes('Failed to fetch')) {
-      recordESICallError(callKey, error.message, 'NETWORK_ERROR', startTime);
-    }
-    throw error;
   }
+
+  const assets = result.data || [];
+  console.log(`Fetched ${assets.length} character assets across ${result.pages} page(s)`);
+
+  return {
+    assets,
+    characterId,
+    isCorporation: false,
+    lastUpdated: Date.now(),
+    cacheExpiresAt: result.cacheExpiresAt,
+  };
 }
 
 /**
@@ -122,135 +50,56 @@ async function fetchCharacterAssets(characterId) {
  */
 async function fetchCorporationAssets(characterId, corporationId) {
   const callKey = `character_${characterId}_corporation_assets`;
+  const emptyResult = {
+    assets: [],
+    characterId,
+    corporationId,
+    isCorporation: true,
+    lastUpdated: Date.now(),
+    cacheExpiresAt: null,
+  };
 
-  recordESICallStart(callKey, {
-    category: 'character',
-    characterId: characterId,
-    endpointType: 'corporation_assets',
-    endpointLabel: 'Corporation Assets'
-  });
+  // Cheap scope pre-check — avoids a guaranteed-403 network call.
+  const character = getCharacter(characterId);
+  if (!character) {
+    throw Object.assign(new Error('Character not found'), { code: 'NOT_FOUND', characterId });
+  }
+  if (!character.scopes || !character.scopes.includes('esi-assets.read_corporation_assets.v1')) {
+    console.log('Character does not have corporation assets scope, skipping...');
+    return emptyResult;
+  }
 
-  const startTime = Date.now();
+  const url = `https://esi.evetech.net/latest/corporations/${corporationId}/assets/?datasource=tranquility`;
+
+  console.log('Fetching corporation assets...');
 
   try {
-    let character = getCharacter(characterId);
+    const result = await esiFetch('corporation_assets', callKey, url, {
+      characterId,
+      corporationId,
+      category: 'character',
+      endpointLabel: 'Corporation Assets',
+    });
 
-    if (!character) {
-      const errorMsg = 'Character not found';
-      recordESICallError(callKey, errorMsg, 'NOT_FOUND', startTime);
-      throw new Error(errorMsg);
+    if (result.skipped) {
+      return { ...emptyResult, skipped: true };
+    }
+    // Role-based 403 (not a director) — esiFetch returns empty silently.
+    if (result.roleForbidden) {
+      console.log('Character does not have permission to view corporation assets');
+      return emptyResult;
     }
 
-    // Check if token is expired and refresh if needed
-    if (isTokenExpired(character.expiresAt)) {
-      console.log('Token expired, refreshing...');
-      try {
-        const newTokens = await refreshAccessToken(character.refreshToken);
-        updateCharacterTokens(characterId, newTokens);
-        character = getCharacter(characterId);
-      } catch (refreshErr) {
-        const tagged = new Error(refreshErr.message);
-        tagged.code = 'ESI_TOKEN_REFRESH_FAILED';
-        tagged.characterId = characterId;
-        throw tagged;
-      }
-    }
-
-    // Check if character has the required scope
-    if (!character.scopes || !character.scopes.includes('esi-assets.read_corporation_assets.v1')) {
-      console.log('Character does not have corporation assets scope, skipping...');
-      recordESICallSuccess(callKey, null, null, 0, startTime);
-      return {
-        assets: [],
-        characterId: characterId,
-        corporationId: corporationId,
-        isCorporation: true,
-        lastUpdated: Date.now(),
-        cacheExpiresAt: null,
-      };
-    }
-
-    // Fetch all pages of corporation assets from ESI
-    let allAssetsData = [];
-    let page = 1;
-    let totalPages = 1;
-    let cacheExpiresAt = null;
-
-    do {
-      console.log(`Fetching corporation assets page ${page} of ${totalPages}...`);
-
-      const response = await fetch(
-        `https://esi.evetech.net/latest/corporations/${corporationId}/assets/?datasource=tranquility&page=${page}`,
-        {
-          headers: {
-            'Authorization': `Bearer ${character.accessToken}`,
-            'User-Agent': getUserAgent(),
-          },
-        }
-      );
-
-      if (!response.ok) {
-        // If we get a 403, check if it's a scope error vs role/permission error
-        if (response.status === 403) {
-          const errorText = await response.text();
-          const lower = errorText.toLowerCase();
-          if (lower.includes('token not valid for scope') || lower.includes('invalid scope')) {
-            const tagged = new Error(`ESI scope error: ${errorText}`);
-            tagged.code = 'ESI_SCOPE_ERROR';
-            tagged.characterId = characterId;
-            throw tagged;
-          }
-          console.log('Character does not have permission to view corporation assets');
-          recordESICallSuccess(callKey, null, null, 0, startTime);
-          return {
-            assets: [],
-            characterId: characterId,
-            corporationId: corporationId,
-            isCorporation: true,
-            lastUpdated: Date.now(),
-            cacheExpiresAt: null,
-          };
-        }
-        const errorText = await response.text();
-        const errorMsg = `Failed to fetch corporation assets: ${response.status} ${errorText}`;
-        recordESICallError(callKey, errorMsg, response.status.toString(), startTime);
-        throw new Error(errorMsg);
-      }
-
-      const assetsData = await response.json();
-      allAssetsData = allAssetsData.concat(assetsData);
-
-      // Get cache expiry from response headers (from first page)
-      if (page === 1) {
-        const expiresHeader = response.headers.get('expires');
-        if (expiresHeader) {
-          const expiresDate = new Date(expiresHeader);
-          cacheExpiresAt = expiresDate.getTime();
-          console.log('ESI corporation assets cache expires at:', expiresDate.toISOString());
-        }
-      }
-
-      // Check if there are more pages
-      const xPagesHeader = response.headers.get('X-Pages');
-      if (xPagesHeader) {
-        totalPages = parseInt(xPagesHeader, 10);
-      }
-
-      page++;
-    } while (page <= totalPages);
-
-    console.log(`Fetched ${allAssetsData.length} corporation assets across ${totalPages} page(s)`);
-
-    const responseSize = JSON.stringify(allAssetsData).length;
-    recordESICallSuccess(callKey, cacheExpiresAt, null, responseSize, startTime);
+    const assets = result.data || [];
+    console.log(`Fetched ${assets.length} corporation assets across ${result.pages} page(s)`);
 
     return {
-      assets: allAssetsData,
-      characterId: characterId,
-      corporationId: corporationId,
+      assets,
+      characterId,
+      corporationId,
       isCorporation: true,
       lastUpdated: Date.now(),
-      cacheExpiresAt: cacheExpiresAt,
+      cacheExpiresAt: result.cacheExpiresAt,
     };
   } catch (error) {
     // Re-throw auth errors so IPC handlers can broadcast them to renderers
@@ -258,18 +107,8 @@ async function fetchCorporationAssets(characterId, corporationId) {
       throw error;
     }
     console.error('Error fetching corporation assets:', error);
-    if (!error.message.includes('Character not found') && !error.message.includes('Failed to fetch')) {
-      recordESICallError(callKey, error.message, 'NETWORK_ERROR', startTime);
-    }
     // Don't throw - just return empty array so character assets still work
-    return {
-      assets: [],
-      characterId: characterId,
-      corporationId: corporationId,
-      isCorporation: true,
-      lastUpdated: Date.now(),
-      cacheExpiresAt: null,
-    };
+    return emptyResult;
   }
 }
 

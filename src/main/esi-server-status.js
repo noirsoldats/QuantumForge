@@ -1,6 +1,5 @@
-const { getUserAgent } = require('./user-agent');
 const { getMarketDatabase } = require('./market-database');
-const { recordESICallStart, recordESICallSuccess, recordESICallError } = require('./esi-status-tracker');
+const { esiFetch } = require('./esi-fetch');
 
 const ESI_BASE_URL = 'https://esi.evetech.net/latest';
 const CACHE_TTL = 60 * 1000; // 1 minute cache
@@ -32,41 +31,24 @@ async function fetchServerStatus(forceRefresh = false) {
     };
   }
 
-  // Record call start
-  recordESICallStart(CALL_KEY, {
-    category: 'universe',
-    characterId: null,
-    endpointType: 'server_status',
-    endpointLabel: 'Server Status'
-  });
-
-  const startTime = Date.now();
-
   try {
-    // Fetch from ESI with retry logic
-    const response = await retryFetch(
-      () => fetch(`${ESI_BASE_URL}/status/`, {
-        headers: {
-          'User-Agent': getUserAgent(),
-        },
-      }),
-      3,
-      1000
-    );
+    // This module keeps its own gate (canFetchServerStatus / fetch_metadata),
+    // so bypass esiFetch's per-endpoint gate. esiFetch still handles retry,
+    // rate-limit headers, 429/420, and status recording.
+    const result = await esiFetch('server_status', CALL_KEY, `${ESI_BASE_URL}/status/`, {
+      requiresAuth: false,
+      category: 'universe',
+      endpointLabel: 'Server Status',
+      skipGate: true,
+    });
 
-    if (!response.ok) {
-      const errorMsg = `Failed to fetch server status: ${response.status} ${response.statusText}`;
-      recordESICallError(CALL_KEY, errorMsg, response.status.toString(), startTime);
-      throw new Error(errorMsg);
-    }
-
-    const data = await response.json();
+    const data = result.data || {};
     const now = Date.now();
 
     // Determine server status from response
     const serverStatus = data.vip ? 'restarting' : 'online';
 
-    const result = {
+    const statusResult = {
       players: data.players,
       serverVersion: data.server_version,
       startTime: data.start_time,
@@ -89,16 +71,11 @@ async function fetchServerStatus(forceRefresh = false) {
       VALUES (?, ?, ?)
     `).run('server_status', now, now + CACHE_TTL);
 
-    // Record success
-    const responseSize = JSON.stringify(data).length;
-    recordESICallSuccess(CALL_KEY, now + CACHE_TTL, null, responseSize, startTime);
-
     console.log(`[Server Status] Fetched fresh data from ESI (${data.players} players online)`);
-    return result;
+    return statusResult;
 
   } catch (error) {
     console.error('[ESI Server Status] Error fetching server status:', error);
-    recordESICallError(CALL_KEY, error.message, 'NETWORK_ERROR', startTime);
     return {
       success: false,
       error: error.message,
@@ -168,28 +145,6 @@ function getLastServerStatusFetchTime() {
     .get('server_status');
 
   return result ? result.last_fetch : null;
-}
-
-/**
- * Retry helper with exponential backoff
- */
-async function retryFetch(fetchFn, maxRetries = 3, initialDelay = 1000) {
-  let lastError;
-
-  for (let attempt = 0; attempt < maxRetries; attempt++) {
-    try {
-      return await fetchFn();
-    } catch (error) {
-      lastError = error;
-      if (attempt < maxRetries - 1) {
-        const delay = initialDelay * Math.pow(2, attempt);
-        console.log(`[ESI Server Status] Retry attempt ${attempt + 1}/${maxRetries} after ${delay}ms`);
-        await new Promise(resolve => setTimeout(resolve, delay));
-      }
-    }
-  }
-
-  throw lastError;
 }
 
 module.exports = {

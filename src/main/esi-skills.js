@@ -1,7 +1,4 @@
-const { refreshAccessToken, isTokenExpired } = require('./esi-auth');
-const { getCharacter, updateCharacterTokens } = require('./settings-manager');
-const { getUserAgent } = require('./user-agent');
-const { recordESICallStart, recordESICallSuccess, recordESICallError } = require('./esi-status-tracker');
+const { esiFetch } = require('./esi-fetch');
 
 /**
  * Fetch character skills from ESI
@@ -10,102 +7,47 @@ const { recordESICallStart, recordESICallSuccess, recordESICallError } = require
  */
 async function fetchCharacterSkills(characterId) {
   const callKey = `character_${characterId}_skills`;
+  const url = `https://esi.evetech.net/latest/characters/${characterId}/skills/?datasource=tranquility`;
 
-  // Record call start
-  recordESICallStart(callKey, {
+  const result = await esiFetch('skills', callKey, url, {
+    characterId,
     category: 'character',
-    characterId: characterId,
-    endpointType: 'skills',
-    endpointLabel: 'Skills'
+    endpointLabel: 'Skills',
   });
 
-  const startTime = Date.now();
-
-  try {
-    let character = getCharacter(characterId);
-
-    if (!character) {
-      const errorMsg = 'Character not found';
-      recordESICallError(callKey, errorMsg, 'NOT_FOUND', startTime);
-      throw new Error(errorMsg);
-    }
-
-    // Check if token is expired and refresh if needed
-    if (isTokenExpired(character.expiresAt)) {
-      console.log('Token expired, refreshing...');
-      try {
-        const newTokens = await refreshAccessToken(character.refreshToken);
-        updateCharacterTokens(characterId, newTokens);
-        character = getCharacter(characterId);
-      } catch (refreshErr) {
-        const tagged = new Error(refreshErr.message);
-        tagged.code = 'ESI_TOKEN_REFRESH_FAILED';
-        tagged.characterId = characterId;
-        throw tagged;
-      }
-    }
-
-    // Fetch skills from ESI
-    const response = await fetch(
-      `https://esi.evetech.net/latest/characters/${characterId}/skills/?datasource=tranquility`,
-      {
-        headers: {
-          'Authorization': `Bearer ${character.accessToken}`,
-          'User-Agent': getUserAgent(),
-        },
-      }
-    );
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      const errorMsg = `Failed to fetch skills: ${response.status} ${errorText}`;
-      recordESICallError(callKey, errorMsg, response.status.toString(), startTime);
-      throw new Error(errorMsg);
-    }
-
-    const skillsData = await response.json();
-
-    // Get cache expiry from response headers
-    const expiresHeader = response.headers.get('expires');
-    let cacheExpiresAt = null;
-
-    if (expiresHeader) {
-      const expiresDate = new Date(expiresHeader);
-      cacheExpiresAt = expiresDate.getTime();
-      console.log('ESI skills cache expires at:', expiresDate.toISOString());
-    }
-
-    // Transform skills array into a map for easier access
-    const skillsMap = {};
-    if (skillsData.skills) {
-      skillsData.skills.forEach(skill => {
-        skillsMap[skill.skill_id] = {
-          skillId: skill.skill_id,
-          activeSkillLevel: skill.active_skill_level,
-          trainedSkillLevel: skill.trained_skill_level,
-          skillpointsInSkill: skill.skillpoints_in_skill,
-        };
-      });
-    }
-
-    // Record success
-    const responseSize = JSON.stringify(skillsData).length;
-    recordESICallSuccess(callKey, cacheExpiresAt, null, responseSize, startTime);
-
+  if (result.skipped) {
     return {
-      totalSp: skillsData.total_sp || 0,
-      unallocatedSp: skillsData.unallocated_sp || 0,
-      skills: skillsMap,
+      totalSp: 0,
+      unallocatedSp: 0,
+      skills: {},
       lastUpdated: Date.now(),
-      cacheExpiresAt: cacheExpiresAt,
+      cacheExpiresAt: null,
+      skipped: true,
     };
-  } catch (error) {
-    console.error('Error fetching character skills:', error);
-    if (!error.message.includes('Character not found') && !error.message.includes('Failed to fetch skills')) {
-      recordESICallError(callKey, error.message, 'NETWORK_ERROR', startTime);
-    }
-    throw error;
   }
+
+  const skillsData = result.data || {};
+
+  // Transform skills array into a map for easier access
+  const skillsMap = {};
+  if (skillsData.skills) {
+    skillsData.skills.forEach(skill => {
+      skillsMap[skill.skill_id] = {
+        skillId: skill.skill_id,
+        activeSkillLevel: skill.active_skill_level,
+        trainedSkillLevel: skill.trained_skill_level,
+        skillpointsInSkill: skill.skillpoints_in_skill,
+      };
+    });
+  }
+
+  return {
+    totalSp: skillsData.total_sp || 0,
+    unallocatedSp: skillsData.unallocated_sp || 0,
+    skills: skillsMap,
+    lastUpdated: Date.now(),
+    cacheExpiresAt: result.cacheExpiresAt,
+  };
 }
 
 /**

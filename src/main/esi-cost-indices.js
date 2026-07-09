@@ -1,41 +1,5 @@
 const { getMarketDatabase } = require('./market-database');
-const { getUserAgent } = require('./user-agent');
-const { recordESICallStart, recordESICallSuccess, recordESICallError } = require('./esi-status-tracker');
-
-/**
- * Retry a fetch operation with exponential backoff
- * @param {Function} fetchFn - Async function that performs the fetch
- * @param {number} maxRetries - Maximum number of retry attempts (default: 3)
- * @param {number} initialDelay - Initial delay in milliseconds (default: 1000)
- * @returns {Promise<Response>} Fetch response
- */
-async function retryFetch(fetchFn, maxRetries = 3, initialDelay = 1000) {
-  let lastError;
-
-  for (let attempt = 0; attempt <= maxRetries; attempt++) {
-    try {
-      const response = await fetchFn();
-      return response;
-    } catch (error) {
-      lastError = error;
-
-      // Don't retry if it's the last attempt
-      if (attempt === maxRetries) {
-        break;
-      }
-
-      // Calculate exponential backoff delay
-      const delay = initialDelay * Math.pow(2, attempt);
-      console.log(`Fetch attempt ${attempt + 1} failed: ${error.message}. Retrying in ${delay}ms...`);
-
-      // Wait before retrying
-      await new Promise(resolve => setTimeout(resolve, delay));
-    }
-  }
-
-  // If we get here, all retries failed
-  throw new Error(`Failed after ${maxRetries + 1} attempts: ${lastError.message}`);
-}
+const { esiFetch } = require('./esi-fetch');
 
 /**
  * Check if we can fetch cost indices (rate limiting - 1 hour cache)
@@ -103,36 +67,22 @@ async function fetchCostIndices(forceRefresh = false) {
 
   const callKey = 'universe_cost_indices';
 
-  recordESICallStart(callKey, {
-    category: 'universe',
-    characterId: null,
-    endpointType: 'cost_indices',
-    endpointLabel: 'Cost Indices'
-  });
-
-  const startTime = Date.now();
-
   try {
     const url = 'https://esi.evetech.net/latest/industry/systems/?datasource=tranquility';
 
     console.log('Fetching cost indices from ESI:', url);
 
-    // Fetch with retry logic
-    const response = await retryFetch(async () => {
-      const res = await fetch(url, {
-        headers: {
-          'User-Agent': getUserAgent(),
-        },
-      });
-
-      if (!res.ok) {
-        throw new Error(`Failed to fetch cost indices: ${res.status} ${res.statusText}`);
-      }
-
-      return res;
+    // This module keeps its own 1-hour gate (canFetchCostIndices / fetch_metadata),
+    // so bypass esiFetch's per-endpoint gate. esiFetch still handles retry,
+    // rate-limit headers, 429/420, and status recording.
+    const result = await esiFetch('cost_indices', callKey, url, {
+      requiresAuth: false,
+      category: 'universe',
+      endpointLabel: 'Cost Indices',
+      skipGate: true,
     });
 
-    const systemsData = await response.json();
+    const systemsData = result.data || [];
     console.log(`Fetched cost indices for ${systemsData.length} solar systems`);
 
     // Store in database
@@ -141,9 +91,6 @@ async function fetchCostIndices(forceRefresh = false) {
     // Update fetch metadata
     updateCostIndicesFetchMetadata();
 
-    const responseSize = JSON.stringify(systemsData).length;
-    recordESICallSuccess(callKey, null, null, responseSize, startTime);
-
     return {
       success: true,
       systemCount: systemsData.length,
@@ -151,8 +98,6 @@ async function fetchCostIndices(forceRefresh = false) {
       message: `Cost indices updated for ${systemsData.length} solar systems`
     };
   } catch (error) {
-    const errorMsg = `Failed to fetch cost indices: ${error.message}`;
-    recordESICallError(callKey, errorMsg, 'NETWORK_ERROR', startTime);
     console.error('Error fetching cost indices:', error);
     return {
       success: false,

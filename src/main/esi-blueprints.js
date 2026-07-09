@@ -1,7 +1,5 @@
-const { refreshAccessToken, isTokenExpired } = require('./esi-auth');
-const { getCharacter, updateCharacterTokens } = require('./settings-manager');
-const { getUserAgent } = require('./user-agent');
-const { recordESICallStart, recordESICallSuccess, recordESICallError } = require('./esi-status-tracker');
+const { getCharacter } = require('./settings-manager');
+const { esiFetch } = require('./esi-fetch');
 
 /**
  * Fetch corporation blueprints from ESI
@@ -12,134 +10,63 @@ const { recordESICallStart, recordESICallSuccess, recordESICallError } = require
 async function fetchCorporationBlueprints(characterId, corporationId) {
   const callKey = `character_${characterId}_corporation_blueprints`;
 
-  // Record call start
-  recordESICallStart(callKey, {
-    category: 'character',
-    characterId: characterId,
-    endpointType: 'corporation_blueprints',
-    endpointLabel: 'Corporation Blueprints'
-  });
+  // Cheap scope pre-check — avoids a guaranteed-403 network call.
+  const character = getCharacter(characterId);
+  if (!character) {
+    throw Object.assign(new Error('Character not found'), { code: 'NOT_FOUND', characterId });
+  }
+  if (!character.scopes || !character.scopes.includes('esi-corporations.read_blueprints.v1')) {
+    console.log('Character does not have corporation blueprints scope, skipping...');
+    return [];
+  }
 
-  const startTime = Date.now();
+  const url = `https://esi.evetech.net/latest/corporations/${corporationId}/blueprints/?datasource=tranquility`;
+
+  console.log('Fetching corporation blueprints...');
 
   try {
-    let character = getCharacter(characterId);
+    const result = await esiFetch('corporation_blueprints', callKey, url, {
+      characterId,
+      corporationId,
+      category: 'character',
+      endpointLabel: 'Corporation Blueprints',
+    });
 
-    if (!character) {
-      const errorMsg = 'Character not found';
-      recordESICallError(callKey, errorMsg, 'NOT_FOUND', startTime);
-      throw new Error(errorMsg);
+    if (result.skipped) {
+      return [];
     }
-
-    // Check if token is expired and refresh if needed
-    if (isTokenExpired(character.expiresAt)) {
-      console.log('Token expired, refreshing...');
-      try {
-        const newTokens = await refreshAccessToken(character.refreshToken);
-        updateCharacterTokens(characterId, newTokens);
-        character = getCharacter(characterId);
-      } catch (refreshErr) {
-        const tagged = new Error(refreshErr.message);
-        tagged.code = 'ESI_TOKEN_REFRESH_FAILED';
-        tagged.characterId = characterId;
-        throw tagged;
-      }
-    }
-
-    // Check if character has the required scope
-    if (!character.scopes || !character.scopes.includes('esi-corporations.read_blueprints.v1')) {
-      console.log('Character does not have corporation blueprints scope, skipping...');
-      recordESICallSuccess(callKey, null, null, 0, startTime);
+    // Role-based 403 (not a director) — esiFetch returns empty silently.
+    if (result.roleForbidden) {
+      console.log('Character does not have permission to view corporation blueprints');
       return [];
     }
 
-    // Fetch all pages of corporation blueprints from ESI
-    let allBlueprintsData = [];
-    let page = 1;
-    let totalPages = 1;
-
-    do {
-      console.log(`Fetching corporation blueprints page ${page} of ${totalPages}...`);
-
-      const response = await fetch(
-        `https://esi.evetech.net/latest/corporations/${corporationId}/blueprints/?datasource=tranquility&page=${page}`,
-        {
-          headers: {
-            'Authorization': `Bearer ${character.accessToken}`,
-            'User-Agent': getUserAgent(),
-          },
-        }
-      );
-
-      if (!response.ok) {
-        // If we get a 403, check if it's a scope error vs role/permission error
-        if (response.status === 403) {
-          const errorText = await response.text();
-          const lower = errorText.toLowerCase();
-          if (lower.includes('token not valid for scope') || lower.includes('invalid scope')) {
-            const tagged = new Error(`ESI scope error: ${errorText}`);
-            tagged.code = 'ESI_SCOPE_ERROR';
-            tagged.characterId = characterId;
-            throw tagged;
-          }
-          console.log('Character does not have permission to view corporation blueprints');
-          recordESICallSuccess(callKey, null, null, 0, startTime);
-          return [];
-        }
-        const errorText = await response.text();
-        const errorMsg = `Failed to fetch corporation blueprints: ${response.status} ${errorText}`;
-        recordESICallError(callKey, errorMsg, response.status.toString(), startTime);
-        throw new Error(errorMsg);
-      }
-
-      const blueprintsData = await response.json();
-      allBlueprintsData = allBlueprintsData.concat(blueprintsData);
-
-      // Check if there are more pages
-      const xPagesHeader = response.headers.get('X-Pages');
-      if (xPagesHeader) {
-        totalPages = parseInt(xPagesHeader, 10);
-      }
-
-      page++;
-    } while (page <= totalPages);
-
-    console.log(`Fetched ${allBlueprintsData.length} corporation blueprints across ${totalPages} page(s)`);
+    const allBlueprintsData = result.data || [];
+    console.log(`Fetched ${allBlueprintsData.length} corporation blueprints across ${result.pages} page(s)`);
 
     // Transform blueprints data
-    const blueprints = allBlueprintsData.map(bp => {
-      return {
-        itemId: String(Math.floor(bp.item_id)),
-        typeId: bp.type_id,
-        locationId: bp.location_id,
-        locationFlag: bp.location_flag,
-        quantity: bp.quantity,
-        timeEfficiency: bp.time_efficiency,
-        materialEfficiency: bp.material_efficiency,
-        runs: bp.runs,
-        isCopy: bp.quantity === -2,
-        isCorporation: true, // Always true for corporation blueprints
-        source: 'esi',
-        characterId: characterId,
-        corporationId: corporationId,
-        fetchedAt: Date.now(),
-      };
-    });
-
-    // Record success
-    const responseSize = JSON.stringify(allBlueprintsData).length;
-    recordESICallSuccess(callKey, null, null, responseSize, startTime);
-
-    return blueprints;
+    return allBlueprintsData.map(bp => ({
+      itemId: String(Math.floor(bp.item_id)),
+      typeId: bp.type_id,
+      locationId: bp.location_id,
+      locationFlag: bp.location_flag,
+      quantity: bp.quantity,
+      timeEfficiency: bp.time_efficiency,
+      materialEfficiency: bp.material_efficiency,
+      runs: bp.runs,
+      isCopy: bp.quantity === -2,
+      isCorporation: true, // Always true for corporation blueprints
+      source: 'esi',
+      characterId,
+      corporationId,
+      fetchedAt: Date.now(),
+    }));
   } catch (error) {
     // Re-throw auth errors so IPC handlers can broadcast them to renderers
     if (error.code === 'ESI_TOKEN_REFRESH_FAILED' || error.code === 'ESI_SCOPE_ERROR') {
       throw error;
     }
     console.error('Error fetching corporation blueprints:', error);
-    if (!error.message.includes('Character not found') && !error.message.includes('Failed to fetch')) {
-      recordESICallError(callKey, error.message, 'NETWORK_ERROR', startTime);
-    }
     // Don't throw - just return empty array so character blueprints still work
     return [];
   }
@@ -152,138 +79,64 @@ async function fetchCorporationBlueprints(characterId, corporationId) {
  */
 async function fetchCharacterBlueprints(characterId) {
   const callKey = `character_${characterId}_blueprints`;
+  const url = `https://esi.evetech.net/latest/characters/${characterId}/blueprints/?datasource=tranquility`;
 
-  // Record call start
-  recordESICallStart(callKey, {
+  console.log('Fetching character blueprints...');
+
+  const result = await esiFetch('blueprints', callKey, url, {
+    characterId,
     category: 'character',
-    characterId: characterId,
-    endpointType: 'blueprints',
-    endpointLabel: 'Blueprints'
+    endpointLabel: 'Blueprints',
   });
 
-  const startTime = Date.now();
-
-  try {
-    let character = getCharacter(characterId);
-
-    if (!character) {
-      const errorMsg = 'Character not found';
-      recordESICallError(callKey, errorMsg, 'NOT_FOUND', startTime);
-      throw new Error(errorMsg);
-    }
-
-    // Check if token is expired and refresh if needed
-    if (isTokenExpired(character.expiresAt)) {
-      console.log('Token expired, refreshing...');
-      try {
-        const newTokens = await refreshAccessToken(character.refreshToken);
-        updateCharacterTokens(characterId, newTokens);
-        character = getCharacter(characterId);
-      } catch (refreshErr) {
-        const tagged = new Error(refreshErr.message);
-        tagged.code = 'ESI_TOKEN_REFRESH_FAILED';
-        tagged.characterId = characterId;
-        throw tagged;
-      }
-    }
-
-    // Fetch all pages of character blueprints from ESI
-    let allBlueprintsData = [];
-    let page = 1;
-    let totalPages = 1;
-    let cacheExpiresAt = null;
-
-    do {
-      console.log(`Fetching character blueprints page ${page} of ${totalPages}...`);
-
-      const response = await fetch(
-        `https://esi.evetech.net/latest/characters/${characterId}/blueprints/?datasource=tranquility&page=${page}`,
-        {
-          headers: {
-            'Authorization': `Bearer ${character.accessToken}`,
-            'User-Agent': getUserAgent(),
-          },
-        }
-      );
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        const errorMsg = `Failed to fetch blueprints: ${response.status} ${errorText}`;
-        recordESICallError(callKey, errorMsg, response.status.toString(), startTime);
-        throw new Error(errorMsg);
-      }
-
-      const blueprintsData = await response.json();
-      allBlueprintsData = allBlueprintsData.concat(blueprintsData);
-
-      // Get cache expiry from response headers (from first page)
-      if (page === 1) {
-        const expiresHeader = response.headers.get('expires');
-        if (expiresHeader) {
-          const expiresDate = new Date(expiresHeader);
-          cacheExpiresAt = expiresDate.getTime();
-          console.log('ESI character blueprints cache expires at:', expiresDate.toISOString());
-        }
-      }
-
-      // Check if there are more pages
-      const xPagesHeader = response.headers.get('X-Pages');
-      if (xPagesHeader) {
-        totalPages = parseInt(xPagesHeader, 10);
-      }
-
-      page++;
-    } while (page <= totalPages);
-
-    console.log(`Fetched ${allBlueprintsData.length} character blueprints across ${totalPages} page(s)`);
-
-    // Transform character blueprints data
-    const characterBlueprints = allBlueprintsData.map(bp => {
-      return {
-        itemId: String(Math.floor(bp.item_id)),
-        typeId: bp.type_id,
-        locationId: bp.location_id,
-        locationFlag: bp.location_flag,
-        quantity: bp.quantity,
-        timeEfficiency: bp.time_efficiency,
-        materialEfficiency: bp.material_efficiency,
-        runs: bp.runs,
-        isCopy: bp.quantity === -2,
-        isCorporation: false, // Character blueprints are not corporation blueprints
-        source: 'esi',
-        characterId: characterId,
-        fetchedAt: Date.now(),
-      };
-    });
-
-    // Fetch corporation blueprints if character is in a corporation
-    let corporationBlueprints = [];
-    if (character.corporationId) {
-      console.log(`Fetching corporation blueprints for corp ${character.corporationId}...`);
-      corporationBlueprints = await fetchCorporationBlueprints(characterId, character.corporationId);
-      console.log(`Found ${corporationBlueprints.length} corporation blueprints`);
-    }
-
-    // Combine character and corporation blueprints
-    const allBlueprints = [...characterBlueprints, ...corporationBlueprints];
-
-    // Record success
-    const responseSize = JSON.stringify(allBlueprintsData).length;
-    recordESICallSuccess(callKey, cacheExpiresAt, null, responseSize, startTime);
-
+  if (result.skipped) {
     return {
-      blueprints: allBlueprints,
+      blueprints: [],
       lastUpdated: Date.now(),
-      cacheExpiresAt: cacheExpiresAt,
-      characterId: characterId,
+      cacheExpiresAt: null,
+      characterId,
+      skipped: true,
     };
-  } catch (error) {
-    console.error('Error fetching character blueprints:', error);
-    if (!error.message.includes('Character not found') && !error.message.includes('Failed to fetch')) {
-      recordESICallError(callKey, error.message, 'NETWORK_ERROR', startTime);
-    }
-    throw error;
   }
+
+  const allBlueprintsData = result.data || [];
+  console.log(`Fetched ${allBlueprintsData.length} character blueprints across ${result.pages} page(s)`);
+
+  // Transform character blueprints data
+  const characterBlueprints = allBlueprintsData.map(bp => ({
+    itemId: String(Math.floor(bp.item_id)),
+    typeId: bp.type_id,
+    locationId: bp.location_id,
+    locationFlag: bp.location_flag,
+    quantity: bp.quantity,
+    timeEfficiency: bp.time_efficiency,
+    materialEfficiency: bp.material_efficiency,
+    runs: bp.runs,
+    isCopy: bp.quantity === -2,
+    isCorporation: false, // Character blueprints are not corporation blueprints
+    source: 'esi',
+    characterId,
+    fetchedAt: Date.now(),
+  }));
+
+  // Fetch corporation blueprints if character is in a corporation
+  let corporationBlueprints = [];
+  const character = getCharacter(characterId);
+  if (character && character.corporationId) {
+    console.log(`Fetching corporation blueprints for corp ${character.corporationId}...`);
+    corporationBlueprints = await fetchCorporationBlueprints(characterId, character.corporationId);
+    console.log(`Found ${corporationBlueprints.length} corporation blueprints`);
+  }
+
+  // Combine character and corporation blueprints
+  const allBlueprints = [...characterBlueprints, ...corporationBlueprints];
+
+  return {
+    blueprints: allBlueprints,
+    lastUpdated: Date.now(),
+    cacheExpiresAt: result.cacheExpiresAt,
+    characterId,
+  };
 }
 
 module.exports = {

@@ -83,7 +83,31 @@ function createTables() {
     CREATE INDEX IF NOT EXISTS idx_call_history_timestamp ON esi_call_history(timestamp);
   `);
 
+  // Guarded, idempotent column additions for the rate-limit layer.
+  // This DB is NOT part of the numbered character-DB migration system, so we
+  // upgrade existing esi-status.db files in place here (pragma-checked ALTERs).
+  addColumnIfMissing('esi_call_status', 'ratelimit_remaining', 'INTEGER');
+  addColumnIfMissing('esi_call_status', 'ratelimit_limit', 'TEXT');
+  addColumnIfMissing('esi_call_status', 'ratelimit_group', 'TEXT');
+  addColumnIfMissing('esi_call_status', 'ratelimit_reset_at', 'INTEGER');
+  addColumnIfMissing('esi_call_status', 'retry_after_at', 'INTEGER');
+
   console.log('[ESI Status] Database tables created successfully');
+}
+
+/**
+ * Add a column to a table if it does not already exist (idempotent).
+ * @param {string} table - Table name
+ * @param {string} column - Column name
+ * @param {string} definition - Column type/definition (e.g. "INTEGER")
+ */
+function addColumnIfMissing(table, column, definition) {
+  const cols = db.prepare(`PRAGMA table_info(${table})`).all();
+  if (cols.some(c => c.name === column)) {
+    return;
+  }
+  db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+  console.log(`[ESI Status] Added column ${table}.${column}`);
 }
 
 /**
@@ -310,6 +334,109 @@ function recordESICallError(callKey, errorMessage, errorCode = null, startTime =
 }
 
 /**
+ * Record rate-limit header state for an ESI call.
+ * Parses the X-Ratelimit-* headers (and any Retry-After deadline) and persists
+ * them on the call's status row. Called by esiFetch after every response.
+ * @param {string} callKey - Unique identifier for the call
+ * @param {Object} rateLimit - Parsed rate-limit fields
+ * @param {number} [rateLimit.remaining] - X-Ratelimit-Remaining (tokens left)
+ * @param {string} [rateLimit.limit] - X-Ratelimit-Limit (e.g. "150/15m")
+ * @param {string} [rateLimit.group] - X-Ratelimit-Group
+ * @param {number} [rateLimit.resetAt] - When the token window resets (timestamp)
+ * @param {number} [rateLimit.retryAfterAt] - Retry-After deadline (timestamp, from 429/420)
+ */
+function recordRateLimit(callKey, rateLimit = {}) {
+  try {
+    const database = getDatabase();
+    database.prepare(`
+      UPDATE esi_call_status
+      SET ratelimit_remaining = COALESCE(?, ratelimit_remaining),
+          ratelimit_limit = COALESCE(?, ratelimit_limit),
+          ratelimit_group = COALESCE(?, ratelimit_group),
+          ratelimit_reset_at = COALESCE(?, ratelimit_reset_at),
+          retry_after_at = COALESCE(?, retry_after_at)
+      WHERE call_key = ?
+    `).run(
+      rateLimit.remaining ?? null,
+      rateLimit.limit ?? null,
+      rateLimit.group ?? null,
+      rateLimit.resetAt ?? null,
+      rateLimit.retryAfterAt ?? null,
+      callKey
+    );
+  } catch (error) {
+    console.error(`[ESI Status] Error recording rate limit for ${callKey}:`, error);
+  }
+}
+
+/**
+ * Whether an endpoint is eligible to be fetched right now.
+ * True when there is no recorded next_allowed_at, or it is in the past.
+ * next_allowed_at folds in cache TTL, the client-side minInterval floor, and
+ * any active Retry-After deadline. This is the single gate the background cycle
+ * and on-demand callers consult.
+ * @param {string} callKey - Unique identifier for the call
+ * @returns {boolean}
+ */
+function canFetchEndpoint(callKey) {
+  try {
+    const database = getDatabase();
+    const row = database.prepare(
+      'SELECT next_allowed_at FROM esi_call_status WHERE call_key = ?'
+    ).get(callKey);
+    if (!row || row.next_allowed_at == null) {
+      return true;
+    }
+    return Date.now() >= row.next_allowed_at;
+  } catch (error) {
+    console.error(`[ESI Status] Error checking fetch eligibility for ${callKey}:`, error);
+    // Fail open — don't block fetching because the status DB hiccuped.
+    return true;
+  }
+}
+
+/**
+ * Get per-endpoint freshness/eligibility info for a call.
+ * Used by the global-refresh status IPC to report "next eligible at T".
+ * @param {string} callKey - Unique identifier for the call
+ * @returns {Object|null} { callKey, status, lastQueryAt, cacheExpiresAt, nextAllowedAt, eligible, ratelimit* } or null
+ */
+function getEndpointFreshness(callKey) {
+  try {
+    const database = getDatabase();
+    const row = database.prepare(`
+      SELECT call_key, endpoint_type, endpoint_label, character_id, status,
+             last_query_at, cache_expires_at, next_allowed_at,
+             ratelimit_remaining, ratelimit_limit, ratelimit_group,
+             ratelimit_reset_at, retry_after_at
+      FROM esi_call_status WHERE call_key = ?
+    `).get(callKey);
+    if (!row) {
+      return null;
+    }
+    return {
+      callKey: row.call_key,
+      endpointType: row.endpoint_type,
+      endpointLabel: row.endpoint_label,
+      characterId: row.character_id,
+      status: row.status,
+      lastQueryAt: row.last_query_at,
+      cacheExpiresAt: row.cache_expires_at,
+      nextAllowedAt: row.next_allowed_at,
+      eligible: row.next_allowed_at == null || Date.now() >= row.next_allowed_at,
+      ratelimitRemaining: row.ratelimit_remaining,
+      ratelimitLimit: row.ratelimit_limit,
+      ratelimitGroup: row.ratelimit_group,
+      ratelimitResetAt: row.ratelimit_reset_at,
+      retryAfterAt: row.retry_after_at,
+    };
+  } catch (error) {
+    console.error(`[ESI Status] Error getting endpoint freshness for ${callKey}:`, error);
+    return null;
+  }
+}
+
+/**
  * Cleanup old history for a specific call key (keep last 50)
  * @param {string} callKey - Call key to cleanup
  */
@@ -525,6 +652,9 @@ module.exports = {
   recordESICallStart,
   recordESICallSuccess,
   recordESICallError,
+  recordRateLimit,
+  canFetchEndpoint,
+  getEndpointFreshness,
   getESICallStatus,
   getAllCharacterCallStatuses,
   getAllUniverseCallStatuses,

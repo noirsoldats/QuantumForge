@@ -1,6 +1,10 @@
 const { getMarketDatabase, clearPriceCache } = require('./market-database');
 const { getUserAgent } = require('./user-agent');
-const { recordESICallStart, recordESICallSuccess, recordESICallError } = require('./esi-status-tracker');
+const { esiFetch } = require('./esi-fetch');
+// NOTE: retryFetch (below) is retained ONLY for the authenticated structure-market
+// helpers (searchStructures / fetchStructureMarketOrders), which are not tracked
+// ESI status endpoints. The 3 tracked market endpoints (orders/history/adjusted)
+// route through esiFetch.
 
 /**
  * Retry a fetch operation with exponential backoff
@@ -123,15 +127,6 @@ async function fetchMarketOrders(regionId, typeId = null, locationFilter = null,
 
   const callKey = `universe_market_orders_${regionId}`;
 
-  recordESICallStart(callKey, {
-    category: 'universe',
-    characterId: null,
-    endpointType: 'market_orders',
-    endpointLabel: 'Market Orders'
-  });
-
-  const startTime = Date.now();
-
   try {
     const baseUrl = typeId
       ? `https://esi.evetech.net/latest/markets/${regionId}/orders/?datasource=tranquility&type_id=${typeId}`
@@ -139,100 +134,40 @@ async function fetchMarketOrders(regionId, typeId = null, locationFilter = null,
 
     console.log(`Fetching market orders from ESI: ${baseUrl}`);
 
-    // Fetch first page to check for pagination (with retry logic)
-    const firstResponse = await retryFetch(async () => {
-      const response = await fetch(`${baseUrl}&page=1`, {
-        headers: {
-          'User-Agent': getUserAgent(),
-        },
-      });
-
-      if (!response.ok) {
-        // Don't retry on 400 errors - item doesn't exist in market
-        if (response.status === 400 || response.status === 404) {
-          const error = new Error(`Item not available in market: ${response.status} ${response.statusText}`);
-          error.noRetry = true;
-          throw error;
+    // This module keeps its own canFetch/fetch_metadata gate, so bypass esiFetch's
+    // per-endpoint gate. esiFetch handles retry, rate-limit headers, 429/420,
+    // parallel pagination, per-page progress events, status recording, and treats
+    // 400/404 as an expected-empty result (item not on market).
+    const result = await esiFetch('market_orders', callKey, baseUrl, {
+      requiresAuth: false,
+      category: 'universe',
+      endpointLabel: 'Market Orders',
+      skipGate: true,
+      parallelPages: true,
+      emptyStatuses: [400, 404],
+      onProgress: (p) => {
+        const { BrowserWindow } = require('electron');
+        const mainWindow = BrowserWindow.getAllWindows()[0];
+        if (mainWindow) {
+          mainWindow.webContents.send('market:fetchProgress', p);
         }
-        throw new Error(`Failed to fetch market orders: ${response.status} ${response.statusText}`);
-      }
-
-      return response;
+      },
     });
 
-    const firstPageOrders = await firstResponse.json();
-    const expiresAt = getCacheExpiry(firstResponse);
-
-    // Check for pagination
-    const totalPages = parseInt(firstResponse.headers.get('X-Pages') || '1', 10);
-    console.log(`Total pages for region ${regionId}: ${totalPages}`);
-
-    let allOrders = [...firstPageOrders];
-
-    // Fetch remaining pages if there are multiple pages
-    if (totalPages > 1) {
-      const pagePromises = [];
-
-      for (let page = 2; page <= totalPages; page++) {
-        pagePromises.push(
-          retryFetch(async () => {
-            const response = await fetch(`${baseUrl}&page=${page}`, {
-              headers: {
-                'User-Agent': getUserAgent(),
-              },
-            });
-
-            if (!response.ok) {
-              // Don't retry on 400 errors - item doesn't exist in market
-              if (response.status === 400 || response.status === 404) {
-                const error = new Error(`Item not available in market: ${response.status} ${response.statusText}`);
-                error.noRetry = true;
-                throw error;
-              }
-              throw new Error(`Failed to fetch page ${page}: ${response.status} ${response.statusText}`);
-            }
-
-            return response;
-          }).then(async (response) => {
-            const pageOrders = await response.json();
-            console.log(`Fetched page ${page}/${totalPages} (${pageOrders.length} orders)`);
-
-            // Send progress update
-            const { BrowserWindow } = require('electron');
-            const mainWindow = BrowserWindow.getAllWindows()[0];
-            if (mainWindow) {
-              mainWindow.webContents.send('market:fetchProgress', {
-                currentPage: page,
-                totalPages: totalPages,
-                progress: (page / totalPages) * 100
-              });
-            }
-
-            return pageOrders;
-          }).catch((error) => {
-            console.error(`Failed to fetch page ${page} after retries: ${error.message}`);
-            return [];
-          })
-        );
-      }
-
-      // Wait for all pages to complete
-      const remainingPages = await Promise.all(pagePromises);
-      remainingPages.forEach(pageOrders => {
-        allOrders = allOrders.concat(pageOrders);
-      });
+    // 400/404 → item not available in market (expected for T2 BPs, etc.).
+    if (result.empty) {
+      console.log(`Item ${typeId} not available in market (expected for T2 Blueprints, etc.) - using fallback pricing`);
+      return [];
     }
 
+    const allOrders = result.data || [];
     console.log(`Fetched ${allOrders.length} total market orders for region ${regionId}`);
 
     // Store in database
     storeMarketOrders(allOrders, regionId);
 
     // Update fetch metadata
-    updateFetchMetadata(cacheKey, expiresAt);
-
-    const responseSize = JSON.stringify(allOrders).length;
-    recordESICallSuccess(callKey, expiresAt, null, responseSize, startTime);
+    updateFetchMetadata(cacheKey, result.cacheExpiresAt);
 
     // Apply location filter to fetched orders before returning
     if (locationFilter) {
@@ -245,14 +180,6 @@ async function fetchMarketOrders(regionId, typeId = null, locationFilter = null,
 
     return allOrders;
   } catch (error) {
-    // Special handling for items not available in market (T2 Blueprints, etc.)
-    if (error.noRetry) {
-      console.log(`Item ${typeId} not available in market (expected for T2 Blueprints, etc.) - using fallback pricing`);
-      recordESICallSuccess(callKey, null, null, 0, startTime);
-      return []; // Return empty array for items without market data
-    }
-    const errorMsg = `Failed to fetch market orders: ${error.message}`;
-    recordESICallError(callKey, errorMsg, 'NETWORK_ERROR', startTime);
     console.error('Error fetching market orders:', error);
     // Return cached data on error
     return getCachedMarketOrders(regionId, typeId, locationFilter);
@@ -418,42 +345,27 @@ function isHistoryStale(regionId, typeId) {
 async function fetchHistoryFromESI(regionId, typeId) {
   const callKey = `universe_market_history_${regionId}`;
 
-  recordESICallStart(callKey, {
-    category: 'universe',
-    characterId: null,
-    endpointType: 'market_history',
-    endpointLabel: 'Market History'
-  });
-
-  const startTime = Date.now();
-
   try {
     const url = `https://esi.evetech.net/latest/markets/${regionId}/history/?datasource=tranquility&type_id=${typeId}`;
 
     console.log(`Fetching market history from ESI: ${url}`);
 
-    const response = await retryFetch(async () => {
-      const res = await fetch(url, {
-        headers: {
-          'User-Agent': getUserAgent(),
-        },
-      });
-
-      if (!res.ok) {
-        if (res.status === 400 || res.status === 404) {
-          const error = new Error(`Item not available in market: ${res.status} ${res.statusText}`);
-          error.noRetry = true;
-          throw error;
-        }
-        throw new Error(`Failed to fetch market history: ${res.status} ${res.statusText}`);
-      }
-
-      return res;
+    // Own cache gate lives in fetchMarketHistory; skip esiFetch's gate here.
+    // 400/404 → item not on market (expected-empty).
+    const result = await esiFetch('market_history', callKey, url, {
+      requiresAuth: false,
+      category: 'universe',
+      endpointLabel: 'Market History',
+      skipGate: true,
+      emptyStatuses: [400, 404],
     });
 
-    const history = await response.json();
-    const expiresAt = getCacheExpiry(response);
+    if (result.empty) {
+      console.log(`Item ${typeId} not available in market - returning empty array`);
+      return [];
+    }
 
+    const history = result.data || [];
     console.log(`Fetched ${history.length} days of market history for type ${typeId} in region ${regionId}`);
 
     // Store in database
@@ -461,20 +373,10 @@ async function fetchHistoryFromESI(regionId, typeId) {
 
     // Update fetch metadata
     const cacheKey = `market_history_${regionId}_${typeId}`;
-    updateFetchMetadata(cacheKey, expiresAt);
-
-    const responseSize = JSON.stringify(history).length;
-    recordESICallSuccess(callKey, expiresAt, null, responseSize, startTime);
+    updateFetchMetadata(cacheKey, result.cacheExpiresAt);
 
     return history;
   } catch (error) {
-    if (error.noRetry) {
-      console.log(`Item ${typeId} not available in market - returning empty array`);
-      recordESICallSuccess(callKey, null, null, 0, startTime);
-      return [];
-    }
-    const errorMsg = `Failed to fetch market history: ${error.message}`;
-    recordESICallError(callKey, errorMsg, 'NETWORK_ERROR', startTime);
     console.error('Error fetching market history:', error);
     // Return cached data on error
     return getCachedMarketHistory(regionId, typeId);
@@ -853,40 +755,21 @@ async function manualRefreshHistoryData(regionId) {
 async function fetchAdjustedPrices() {
   const callKey = 'universe_adjusted_prices';
 
-  recordESICallStart(callKey, {
+  console.log('Fetching adjusted prices from ESI...');
+
+  // No own cache gate here — caller (manualRefreshAdjustedPrices) controls cadence.
+  // Keep skipGate:true to preserve today's always-fetch-on-call behavior.
+  const result = await esiFetch('adjusted_prices', callKey, 'https://esi.evetech.net/latest/markets/prices/?datasource=tranquility', {
+    requiresAuth: false,
     category: 'universe',
-    characterId: null,
-    endpointType: 'adjusted_prices',
-    endpointLabel: 'Adjusted Prices'
+    endpointLabel: 'Adjusted Prices',
+    skipGate: true,
   });
 
-  const startTime = Date.now();
+  const prices = result.data || [];
+  console.log(`Fetched ${prices.length} adjusted prices from ESI`);
 
-  try {
-    console.log('Fetching adjusted prices from ESI...');
-
-    const response = await retryFetch(async () => {
-      const res = await fetch('https://esi.evetech.net/latest/markets/prices/?datasource=tranquility');
-      if (!res.ok) {
-        throw new Error(`ESI returned status ${res.status}`);
-      }
-      return res;
-    });
-
-    const prices = await response.json();
-    const expiresAt = getCacheExpiry(response);
-    console.log(`Fetched ${prices.length} adjusted prices from ESI`);
-
-    const responseSize = JSON.stringify(prices).length;
-    recordESICallSuccess(callKey, expiresAt, null, responseSize, startTime);
-
-    return prices;
-  } catch (error) {
-    const errorMsg = `Failed to fetch adjusted prices: ${error.message}`;
-    recordESICallError(callKey, errorMsg, 'NETWORK_ERROR', startTime);
-    console.error('Error fetching adjusted prices:', error);
-    throw error;
-  }
+  return prices;
 }
 
 /**

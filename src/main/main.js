@@ -217,6 +217,7 @@ const {
 const { initializeMarketDatabase, getMarketDatabase } = require('./market-database');
 const { createAuthErrorWindow, setupAuthErrorWindowHandlers, broadcastAuthError, buildAuthErrorInfo } = require('./auth-error-window');
 const { initializeESIStatusDatabase } = require('./esi-status-tracker');
+const { startBackgroundRefresh, stopBackgroundRefresh, runRefreshCycle, getGlobalRefreshStatus } = require('./esi-background-refresh');
 const { fetchMarketOrders, fetchMarketHistory, fetchMarketData, getLastMarketFetchTime, getLastHistoryFetchTime, getHistoryDataStatus, manualRefreshMarketData, manualRefreshHistoryData, getCachedMarketHistory } = require('./esi-market');
 const { parseLootText, getTypeSpecificSkillId, calculateReprocessingYield, calculateReprocessingValue } = require('./reprocessing-calculator');
 const { fetchCostIndices, getCostIndices, getAllCostIndices, getLastCostIndicesFetchTime, getCostIndicesSystemCount } = require('./esi-cost-indices');
@@ -538,6 +539,15 @@ async function startNormalApplication() {
 
       // Create main window
       createWindow();
+
+      // Start the global ESI background refresh cycle now that the DB and
+      // characters are initialized. Fetch-only; per-endpoint gating decides
+      // what actually hits the network each tick.
+      try {
+        startBackgroundRefresh();
+      } catch (err) {
+        console.error('[App] Failed to start background ESI refresh:', err);
+      }
 
       // Close splash window after main window is visible
       mainWindow.once('ready-to-show', () => {
@@ -1835,6 +1845,15 @@ function setupIPCHandlers() {
     return getLastMarketFetchTime();
   });
 
+  // Global ESI background refresh — manual "refresh now" + status.
+  ipcMain.handle('esi:refreshGlobalNow', async () => {
+    return await runRefreshCycle();
+  });
+
+  ipcMain.handle('esi:getGlobalRefreshStatus', () => {
+    return getGlobalRefreshStatus();
+  });
+
   ipcMain.handle('market:manualRefresh', async (event, regionId) => {
     return await manualRefreshMarketData(regionId);
   });
@@ -2765,4 +2784,13 @@ app.on('activate', () => {
 app.on('window-all-closed', () => {
   // Quit the app on all platforms when all windows are closed
   app.quit();
+});
+
+app.on('before-quit', () => {
+  // Tear down the global ESI background refresh timer so no fetch fires post-quit.
+  try {
+    stopBackgroundRefresh();
+  } catch (err) {
+    console.error('[App] Error stopping background ESI refresh:', err);
+  }
 });

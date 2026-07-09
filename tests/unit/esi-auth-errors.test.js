@@ -93,6 +93,9 @@ jest.mock('../../src/main/esi-status-tracker', () => ({
   recordESICallStart: jest.fn(() => 'mock-call-key'),
   recordESICallSuccess: jest.fn(),
   recordESICallError: jest.fn(),
+  // The central esi-fetch wrapper (now used by all modules) also consults these.
+  recordRateLimit: jest.fn(),
+  canFetchEndpoint: jest.fn(() => true), // always eligible in these tests
 }));
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

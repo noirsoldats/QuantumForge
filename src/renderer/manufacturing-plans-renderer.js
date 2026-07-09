@@ -4527,38 +4527,74 @@ function startAutoRefresh() {
     clearInterval(autoRefreshInterval);
   }
 
-  // Refresh every 15 minutes (900000 ms)
-  const REFRESH_INTERVAL = 15 * 60 * 1000;
+  // ESI fetching is now driven by the main-process global background refresh
+  // cycle (esi-background-refresh.js), not this timer. This interval only
+  // RE-MATCHES the open plan against already-fetched data (no ESI call) so an
+  // open plan keeps live-updating as the background cycle refreshes the DB.
+  // The manual refresh button and on-open path still do an explicit fetch+match.
+  const REFRESH_INTERVAL = 5 * 60 * 1000;
 
   autoRefreshInterval = setInterval(async () => {
-    // Only refresh if viewing a plan
+    // Only re-match if viewing a plan
     if (!selectedPlanId) {
       return;
     }
 
     try {
-      console.log('Auto-refreshing ESI data for plan...');
-      // Use plan-based refresh instead of character-based
-      const result = await window.electronAPI.plans.refreshPlanESIData(selectedPlanId);
-
-      if (result.success) {
-        console.log(`Auto-refresh: ${result.message}`);
-
-        // Reload current tab to show new matches
-        const currentTab = document.querySelector('.manufacturing-tab.active');
-        if (currentTab) {
-          const tabName = currentTab.dataset.tab;
-          if (tabName === 'jobs') {
-            await loadJobs();
-          } else if (tabName === 'transactions') {
-            await loadTransactions();
-          }
-        }
-      }
+      console.log('Auto re-matching open plan against latest fetched data...');
+      await rematchOpenPlanSilently();
     } catch (error) {
-      console.error('Auto-refresh failed:', error);
+      console.error('Auto re-match failed:', error);
     }
   }, REFRESH_INTERVAL);
+}
+
+// Silently re-match the open plan against already-fetched ESI data (no network
+// fetch) and reload the active tab. Used by the auto-refresh interval.
+async function rematchOpenPlanSilently() {
+  if (!selectedPlanId) return;
+
+  // Resolve configured characters + their corporations (same as matchJobs).
+  const planSettings = await window.electronAPI.plans.getIndustrySettings(selectedPlanId);
+  let characterIds = planSettings.defaultCharacters || [];
+  if (characterIds.length === 0) {
+    const currentCharacterId = await window.electronAPI.esi.getDefaultCharacter();
+    if (currentCharacterId) characterIds = [currentCharacterId];
+  }
+  if (characterIds.length === 0) return;
+
+  const allCharacters = await window.electronAPI.esi.getCharacters();
+  const corporationIds = [...new Set(
+    characterIds
+      .map(cid => allCharacters.find(c => c.characterId === cid)?.corporationId)
+      .filter(Boolean)
+  )];
+
+  // Re-match jobs and transactions against the DB (no ESI fetch).
+  const jobMatches = await window.electronAPI.plans.matchJobs(selectedPlanId, {
+    characterIds, corporationIds, minConfidence: 0.3
+  });
+  if (jobMatches.length > 0) {
+    await window.electronAPI.plans.saveJobMatches(jobMatches);
+  }
+
+  const txMatches = await window.electronAPI.plans.matchTransactions(selectedPlanId, {
+    characterIds, corporationIds, minConfidence: 0.3
+  });
+  if (txMatches.length > 0) {
+    await window.electronAPI.plans.saveTransactionMatches(selectedPlanId, txMatches);
+  }
+
+  // Reload the active tab so new matches appear.
+  const currentTab = document.querySelector('.manufacturing-tab.active');
+  if (currentTab) {
+    const tabName = currentTab.dataset.tab;
+    if (tabName === 'jobs') {
+      await loadJobs();
+    } else if (tabName === 'transactions') {
+      await loadTransactions();
+    }
+  }
 }
 
 // Stop auto-refresh (called when window is closed)
