@@ -592,24 +592,32 @@ function rejectJobMatch(matchId) {
 // ─── Ledger write-through (confirmed matches become ledger rows) ──────────────
 
 /**
- * Write (or refresh) a purchased-material ledger row from a confirmed transaction
- * match. Idempotent via the UNIQUE(plan_id, source_type, source_id) index — a
- * given transaction produces at most one ledger row. Only material BUYS create a
- * quantity row (product sells are revenue, not spend).
+ * Write (or refresh) a ledger row from a confirmed transaction match. Idempotent
+ * via the UNIQUE(plan_id, source_type, source_id) index — a given transaction
+ * produces at most one ledger row.
+ *
+ * Material BUYS  → event_type='acquired', method='purchased' (spend + acquired qty).
+ * Product SELLS  → event_type='sold',    method='sold'      (revenue; first-class
+ *                  row, naturally excluded from spend totals and acquisition math).
  * @param {Object} db - character DB
  * @param {Object} match - plan_transaction_matches row
  * @param {Object} tx - esi_wallet_transactions row
  */
 function writeTransactionLedgerRow(db, match, tx) {
-  if (!tx || match.match_type !== 'material_buy' || tx.is_buy !== 1) {
-    return; // only material purchases contribute acquired quantity/spend
-  }
-  const now = Date.now();
+  if (!tx) return;
+
+  const isBuy = match.match_type === 'material_buy' && tx.is_buy === 1;
+  const isSell = match.match_type === 'product_sell' && tx.is_buy === 0;
+  if (!isBuy && !isSell) return;
+
+  const eventType = isBuy ? 'acquired' : 'sold';
+  const method = isBuy ? 'purchased' : 'sold';
+
   db.prepare(`
     INSERT INTO plan_material_ledger
       (ledger_id, plan_id, type_id, event_type, quantity, method, unit_price, note,
        source_type, source_id, character_id, corporation_id, created_at)
-    VALUES (?, ?, ?, 'acquired', ?, 'purchased', ?, NULL,
+    VALUES (?, ?, ?, ?, ?, ?, ?, NULL,
             'wallet_transaction', ?, ?, ?, ?)
     ON CONFLICT(plan_id, source_type, source_id) WHERE source_id IS NOT NULL DO UPDATE SET
       quantity = excluded.quantity,
@@ -617,8 +625,8 @@ function writeTransactionLedgerRow(db, match, tx) {
       character_id = excluded.character_id,
       corporation_id = excluded.corporation_id
   `).run(
-    uuidv4(), match.plan_id, tx.type_id, tx.quantity, tx.unit_price,
-    tx.transaction_id, tx.character_id, tx.corporation_id || null, now
+    uuidv4(), match.plan_id, tx.type_id, eventType, tx.quantity, method, tx.unit_price,
+    tx.transaction_id, tx.character_id, tx.corporation_id || null, Date.now()
   );
 }
 

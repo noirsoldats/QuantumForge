@@ -3864,15 +3864,24 @@ async function getPlanMaterials(planId, includeAssets = false) {
       ORDER BY SUM(quantity_needed) DESC
     `).all(planId);
 
-    // Get ledger net acquired per type
+    // Get ledger net acquired per type. custom_price is the QUANTITY-WEIGHTED
+    // average unit price across all priced acquisition rows for this type
+    // (SUM(qty*price) / SUM(qty)), so multiple acquisitions average correctly.
+    // Only rows with a price and positive quantity contribute (cost rows have
+    // quantity=0 and are excluded).
     const ledgerEntries = db.prepare(`
       SELECT type_id, SUM(quantity) as net_acquired,
-             MAX(CASE WHEN unit_price IS NOT NULL THEN unit_price END) as custom_price,
+             CASE
+               WHEN SUM(CASE WHEN unit_price IS NOT NULL AND quantity > 0 THEN quantity ELSE 0 END) > 0
+               THEN SUM(CASE WHEN unit_price IS NOT NULL AND quantity > 0 THEN quantity * unit_price ELSE 0 END)
+                    / SUM(CASE WHEN unit_price IS NOT NULL AND quantity > 0 THEN quantity ELSE 0 END)
+               ELSE NULL
+             END as custom_price,
              MAX(CASE WHEN method != 'manufactured' THEN method END) as acquisition_method,
              MAX(note) as acquisition_note,
              MAX(created_at) as acquisition_updated_at
       FROM plan_material_ledger
-      WHERE plan_id = ?
+      WHERE plan_id = ? AND event_type NOT IN ('cost','sold')
       GROUP BY type_id
     `).all(planId);
 
@@ -4555,8 +4564,23 @@ async function getPlanAnalytics(planId) {
     // Get planned costs from summary
     const summary = await getPlanSummary(planId);
 
-    // Get actuals from confirmed matches (includes time-based job progress)
+    // Get actuals: the CONSOLIDATED LEDGER is the single source of truth for
+    // realized spend/revenue (purchases incl. manual acquisitions, job install,
+    // market fees, and product sales). getPlanActuals still provides time-based
+    // JOB PROGRESS (which the ledger doesn't track).
+    const ledger = await getPlanLedger(planId);
     const actuals = getPlanActuals(planId);
+
+    // Actual figures from the ledger.
+    const actualMaterialCost = ledger.totals.materialPurchases || 0;
+    const actualJobInstallCost = ledger.totals.jobInstallation || 0;
+    const actualMarketFees = ledger.totals.marketFees || 0;
+    const actualOtherCost = ledger.totals.other || 0;
+    const actualProductValue = ledger.totals.productSales || 0;
+    // Full realized spend = everything in the ledger that is a cost.
+    const actualTotalSpend = ledger.totals.totalSpend || 0;
+    // Realized profit = revenue − full spend (materials + job install + fees + other).
+    const actualProfitFull = actualProductValue - actualTotalSpend;
 
     // Get total manufacturing lines for display
     const blueprints = db.prepare('SELECT lines FROM plan_blueprints WHERE plan_id = ?').all(planId);
@@ -4576,34 +4600,21 @@ async function getPlanAnalytics(planId) {
     `).get(planId);
     const totalMaterialQuantity = materialsAgg?.total_quantity || 0;
 
-    // Sum quantity of confirmed material purchases from transactions
-    const materialsPurchasedResult = db.prepare(`
-      SELECT SUM(quantity) as total_quantity
-      FROM plan_transaction_matches
-      WHERE plan_id = ? AND match_type = 'material_buy' AND status = 'confirmed'
-    `).get(planId);
-
-    const materialQuantityFromTransactions = materialsPurchasedResult?.total_quantity || 0;
-
-    // Sum manually acquired materials from ledger
-    const manualsAcquiredResult = db.prepare(`
+    // Total acquired material quantity = the ledger net of ACQUISITION rows only
+    // (acquired/deducted/adjusted), which already unifies confirmed purchases +
+    // manual acquisitions + manufactured, minus any deductions. Excludes 'cost'
+    // and 'sold' rows so sales/fees/job-costs never inflate material progress,
+    // and avoids the old double-count (purchases were counted twice).
+    const acquiredNetResult = db.prepare(`
       SELECT SUM(quantity) as total_quantity
       FROM plan_material_ledger
-      WHERE plan_id = ?
+      WHERE plan_id = ? AND event_type NOT IN ('cost','sold')
     `).get(planId);
 
-    const materialQuantityManuallyAcquired = Math.max(0, manualsAcquiredResult?.total_quantity || 0);
-
-    // Total acquired = transactions + manually acquired
-    const materialQuantityPurchased = materialQuantityFromTransactions + materialQuantityManuallyAcquired;
+    const materialQuantityPurchased = Math.max(0, acquiredNetResult?.total_quantity || 0);
     const materialPurchasePercent = totalMaterialQuantity > 0 ? (materialQuantityPurchased / totalMaterialQuantity) * 100 : 0;
 
-    console.log(`[Analytics] Material progress for plan ${planId}:`);
-    console.log(`[Analytics]   From transactions: ${materialQuantityFromTransactions}`);
-    console.log(`[Analytics]   Manually acquired: ${materialQuantityManuallyAcquired}`);
-    console.log(`[Analytics]   Total acquired: ${materialQuantityPurchased}`);
-    console.log(`[Analytics]   Total needed: ${totalMaterialQuantity}`);
-    console.log(`[Analytics]   Progress: ${materialPurchasePercent.toFixed(2)}%`);
+    console.log(`[Analytics] Material progress for plan ${planId}: acquired=${materialQuantityPurchased} / needed=${totalMaterialQuantity} (${materialPurchasePercent.toFixed(2)}%)`);
 
     // Calculate product sales progress - total quantity of FINAL products only (not intermediates)
     const products = db.prepare(`
@@ -4624,19 +4635,20 @@ async function getPlanAnalytics(planId) {
     const productQuantitySold = productsSoldResult?.total_quantity || 0;
     const productSalesPercent = totalProductQuantity > 0 ? (productQuantitySold / totalProductQuantity) * 100 : 0;
 
-    // Calculate cost/profit comparisons
+    // Calculate cost/profit comparisons. ACTUALS come from the ledger (defined
+    // above); PLANNED comes from the plan summary (market-price estimate).
+    // Material Cost "actual" = ledger material purchases (incl. manual acquisitions).
     const plannedMaterialCost = summary.materialCost;
-    const actualMaterialCost = actuals.actualMaterialCost;
     const materialCostDelta = actualMaterialCost - plannedMaterialCost;
     const materialCostDeltaPercent = plannedMaterialCost > 0 ? (materialCostDelta / plannedMaterialCost) * 100 : 0;
 
     const plannedProductValue = summary.productValue;
-    const actualProductValue = actuals.actualProductSales;
     const productValueDelta = actualProductValue - plannedProductValue;
     const productValueDeltaPercent = plannedProductValue > 0 ? (productValueDelta / plannedProductValue) * 100 : 0;
 
+    // Realized profit = product sales − FULL spend (materials + job install + fees + other).
     const plannedProfit = summary.estimatedProfit;
-    const actualProfit = actualProductValue - actualMaterialCost;
+    const actualProfit = actualProfitFull;
     const profitDelta = actualProfit - plannedProfit;
     const profitDeltaPercent = plannedProfit !== 0 ? (profitDelta / Math.abs(plannedProfit)) * 100 : 0;
 
@@ -4685,10 +4697,11 @@ async function getPlanAnalytics(planId) {
         deltaPercent: profitDeltaPercent,
       },
 
-      // Summary metrics
+      // Summary metrics. ROI is profit over the full realized investment
+      // (total spend), consistent with the planned ROI's cost basis.
       summary: {
         plannedROI: summary.roi,
-        actualROI: actualMaterialCost > 0 ? (actualProfit / actualMaterialCost) * 100 : 0,
+        actualROI: actualTotalSpend > 0 ? (actualProfit / actualTotalSpend) * 100 : 0,
       },
     };
   } catch (error) {
@@ -5877,6 +5890,7 @@ async function getPlanLedger(planId) {
     const typeNames = resolveTypeNames(rows.map(r => r.type_id));
 
     const materialPurchases = [];
+    const productSales = [];
     const jobInstallation = [];
     const marketFees = [];
     const other = [];
@@ -5896,7 +5910,18 @@ async function getPlanLedger(planId) {
         editable: r.source_type == null || r.source_type === 'manual',
       };
 
-      if (r.event_type === 'cost') {
+      if (r.event_type === 'sold') {
+        // Product sale (revenue). Shown so it can be viewed/unlinked; NOT spend.
+        const qty = r.quantity || 0;
+        const unitPrice = r.unit_price || 0;
+        productSales.push({
+          ...base,
+          quantity: qty,
+          unitPrice,
+          amount: qty * unitPrice,
+          source: r.source_type === 'wallet_transaction' ? 'esi' : 'manual',
+        });
+      } else if (r.event_type === 'cost') {
         const amount = r.unit_price || 0;
         if (r.cost_category === 'job_install') {
           jobInstallation.push({ ...base, amount, category: 'job_install', estimated: false });
@@ -5942,9 +5967,11 @@ async function getPlanLedger(planId) {
 
     const sum = (arr) => arr.reduce((t, x) => t + (x.amount || 0), 0);
     const materialPurchasesTotal = sum(materialPurchases);
+    const productSalesTotal = sum(productSales);
     const jobInstallationTotal = sum(jobInstallation);
     const marketFeesTotal = sum(marketFees);
     const otherTotal = sum(other);
+    // Product sales are revenue, NOT spend — excluded from totalSpend.
     const totalSpend = materialPurchasesTotal + jobInstallationTotal + marketFeesTotal + otherTotal;
 
     // Reconciliation vs the plan's *planned* cost.
@@ -5960,12 +5987,14 @@ async function getPlanLedger(planId) {
       planId,
       categories: {
         materialPurchases: { items: materialPurchases, total: materialPurchasesTotal },
+        productSales: { items: productSales, total: productSalesTotal },
         jobInstallation: { items: jobInstallation, total: jobInstallationTotal, estimated: jobEstimated },
         marketFees: { items: marketFees, total: marketFeesTotal },
         other: { items: other, total: otherTotal },
       },
       totals: {
         materialPurchases: materialPurchasesTotal,
+        productSales: productSalesTotal,
         jobInstallation: jobInstallationTotal,
         marketFees: marketFeesTotal,
         other: otherTotal,
@@ -6014,14 +6043,94 @@ function addManualLedgerCost(planId, opts = {}) {
 }
 
 /**
- * Edit a ledger entry's price/quantity/note. For quantity edits on a material
- * row we append an 'adjusted' row (preserving the append-only net); unit_price
- * and note are updated in place (as updateMaterialCustomPrice already does).
+ * Compute how many more units of a material the plan still needs, accounting for
+ * ALL acquisition sources (ledger net + confirmed purchases + confirmed
+ * manufacturing) — the same figure the Materials tab shows as "still needed".
+ * @param {string} planId
+ * @param {number} typeId
+ * @returns {Promise<{ needed:number, acquired:number, stillNeeded:number, material:object|null }>}
+ */
+async function getMaterialStillNeeded(planId, typeId) {
+  const materials = await getPlanMaterials(planId);
+  const material = materials.find(m => m.typeId === typeId) || null;
+  if (!material) {
+    return { needed: 0, acquired: 0, stillNeeded: 0, material: null };
+  }
+  const needed = material.quantity || 0;
+  const acquired =
+    (material.manuallyAcquiredQuantity || 0) +
+    (material.purchasedQuantity || 0) +
+    (material.manufacturedQuantity || 0);
+  return { needed, acquired, stillNeeded: Math.max(0, needed - acquired), material };
+}
+
+/**
+ * Add a manual quantity-based acquisition of a specific item to the ledger
+ * (e.g. pulling N units from a stockpile at an average per-unit value).
+ * Hard-capped at the plan's still-needed amount for that item.
+ *
+ * Value: pass EITHER unitPrice OR totalValue; the other is derived. If neither
+ * is given, unit_price is left null (quantity-only acquisition).
+ *
+ * @param {string} planId
+ * @param {number} typeId
+ * @param {Object} opts - { quantity, unitPrice, totalValue, note }
+ * @returns {Promise<{ success, actual, clamped, requested, ledgerId }>}
+ */
+async function addManualItemAcquisition(planId, typeId, opts = {}) {
+  const db = getCharacterDatabase();
+  const { quantity, unitPrice = null, totalValue = null, note = null } = opts;
+
+  const requested = Number(quantity);
+  if (!requested || isNaN(requested) || requested <= 0) {
+    throw new Error('Quantity is required and must be greater than 0');
+  }
+
+  // Cap against the full still-needed figure (all acquisition sources).
+  const { stillNeeded, material } = await getMaterialStillNeeded(planId, typeId);
+  if (!material) {
+    throw new Error('Material not found in plan');
+  }
+  if (stillNeeded <= 0) {
+    return { success: false, actual: 0, clamped: true, requested, reason: 'already_fully_acquired' };
+  }
+
+  const actual = Math.min(requested, stillNeeded);
+  const clamped = actual < requested;
+
+  // Resolve unit price: explicit unitPrice wins; else derive from totalValue.
+  let resolvedUnitPrice = null;
+  if (unitPrice != null && !isNaN(Number(unitPrice))) {
+    resolvedUnitPrice = Number(unitPrice);
+  } else if (totalValue != null && !isNaN(Number(totalValue)) && actual > 0) {
+    resolvedUnitPrice = Number(totalValue) / actual;
+  }
+
+  try {
+    const ledgerId = randomUUID();
+    db.prepare(`
+      INSERT INTO plan_material_ledger
+        (ledger_id, plan_id, type_id, event_type, quantity, method, unit_price, note, source_ref, created_at)
+      VALUES (?, ?, ?, 'acquired', ?, 'manual', ?, ?, NULL, ?)
+    `).run(ledgerId, planId, typeId, actual, resolvedUnitPrice, note, Date.now());
+
+    console.log(`[Plans] Manual acquisition: ${actual} of type ${typeId} for plan ${planId}${clamped ? ` (clamped from ${requested})` : ''}`);
+    return { success: true, actual, clamped, requested, ledgerId };
+  } catch (error) {
+    console.error('[Plans] Error adding manual item acquisition:', error);
+    throw error;
+  }
+}
+
+/**
+ * Edit a manual ledger entry's price/quantity/note IN PLACE (direct value edits
+ * on the row — no adjustment rows). Quantity edits on material acquisition rows
+ * are clamped to the still-needed amount.
  * @param {string} ledgerId
  * @param {Object} updates - { unitPrice, quantity, note }
- * @returns {Object} { success }
+ * @returns {Object} { success, clamped }
  */
-function updateLedgerEntry(ledgerId, updates = {}) {
+async function updateLedgerEntry(ledgerId, updates = {}) {
   const db = getCharacterDatabase();
 
   try {
@@ -6030,8 +6139,9 @@ function updateLedgerEntry(ledgerId, updates = {}) {
       throw new Error('Ledger entry not found');
     }
 
-    const now = Date.now();
-
+    // Manual ledger entries are edited IN PLACE (direct value edits), not by
+    // appending adjustment rows. (ESI-sourced rows are managed by match
+    // confirm/reject and shouldn't be edited here.)
     if (updates.unitPrice != null && !isNaN(updates.unitPrice)) {
       db.prepare('UPDATE plan_material_ledger SET unit_price = ? WHERE ledger_id = ?')
         .run(updates.unitPrice, ledgerId);
@@ -6040,20 +6150,26 @@ function updateLedgerEntry(ledgerId, updates = {}) {
       db.prepare('UPDATE plan_material_ledger SET note = ? WHERE ledger_id = ?')
         .run(updates.note, ledgerId);
     }
-    // Quantity edit (only meaningful for material quantity rows): append an
-    // adjustment row so the net changes without mutating history.
+
+    // Quantity edit (material acquisition rows only). Clamp to the still-needed
+    // amount, adding back THIS row's own current contribution (which the ledger
+    // net already includes), then update the row's quantity in place.
+    let clamped = false;
     if (updates.quantity != null && !isNaN(updates.quantity) && row.event_type !== 'cost') {
-      const delta = updates.quantity - row.quantity;
-      if (delta !== 0) {
-        db.prepare(`
-          INSERT INTO plan_material_ledger
-            (ledger_id, plan_id, type_id, event_type, quantity, method, unit_price, note, source_type, created_at)
-          VALUES (?, ?, ?, 'adjusted', ?, ?, ?, ?, 'manual', ?)
-        `).run(randomUUID(), row.plan_id, row.type_id, delta, row.method, row.unit_price, updates.note ?? row.note, now);
+      let target = Number(updates.quantity);
+      if (row.method === 'manual' && (!row.source_type || row.source_type === 'manual')) {
+        const { stillNeeded } = await getMaterialStillNeeded(row.plan_id, row.type_id);
+        const maxTarget = stillNeeded + (row.quantity || 0);
+        if (target > maxTarget) {
+          target = maxTarget;
+          clamped = true;
+        }
       }
+      db.prepare('UPDATE plan_material_ledger SET quantity = ? WHERE ledger_id = ?')
+        .run(target, ledgerId);
     }
 
-    return { success: true };
+    return { success: true, clamped };
   } catch (error) {
     console.error('[Plans] Error updating ledger entry:', error);
     throw error;
@@ -6081,6 +6197,86 @@ function deleteLedgerEntry(ledgerId) {
     return { success: true };
   } catch (error) {
     console.error('[Plans] Error deleting ledger entry:', error);
+    throw error;
+  }
+}
+
+/**
+ * Unlink / remove ANY ledger entry from the Ledger tab, keeping match state
+ * consistent:
+ *   - manual rows          → plain delete (deleteLedgerEntry)
+ *   - wallet_transaction   → unlink the parent transaction match (reverts the
+ *                            match to unmatched, removes its ledger + fee rows)
+ *   - industry_job         → unlink the parent job match
+ *   - wallet_journal (fee) → remove just that fee row (fees normally follow their
+ *                            parent; a standalone fee row is removed on its own)
+ * @param {string} planId
+ * @param {string} ledgerId
+ * @returns {Object} { success, action }
+ */
+function unlinkLedgerEntry(planId, ledgerId) {
+  const db = getCharacterDatabase();
+
+  try {
+    const row = db.prepare(
+      'SELECT source_type, source_id, corporation_id FROM plan_material_ledger WHERE ledger_id = ?'
+    ).get(ledgerId);
+    if (!row) {
+      throw new Error('Ledger entry not found');
+    }
+
+    // Manual (or no source) → plain delete.
+    if (!row.source_type || row.source_type === 'manual') {
+      db.prepare('DELETE FROM plan_material_ledger WHERE ledger_id = ?').run(ledgerId);
+      return { success: true, action: 'deleted' };
+    }
+
+    if (row.source_type === 'wallet_transaction') {
+      const { unlinkTransactionMatch } = require('./plan-matching');
+      // Disambiguate by is_corporation — transaction_id alone is not unique across
+      // personal vs corp wallets (composite wallet PK). The ledger row's
+      // corporation_id tells us which wallet this purchase came from.
+      const isCorporation = row.corporation_id != null ? 1 : 0;
+      const match = db.prepare(`
+        SELECT match_id FROM plan_transaction_matches
+        WHERE plan_id = ? AND transaction_id = ? AND is_corporation = ? AND status = 'confirmed'
+        LIMIT 1
+      `).get(planId, row.source_id, isCorporation);
+      if (match) {
+        unlinkTransactionMatch(match.match_id);
+      } else {
+        // Match already gone — just remove the orphaned ledger row.
+        db.prepare('DELETE FROM plan_material_ledger WHERE ledger_id = ?').run(ledgerId);
+      }
+      return { success: true, action: 'unlinked_transaction' };
+    }
+
+    if (row.source_type === 'industry_job') {
+      const { unlinkJobMatch } = require('./plan-matching');
+      const match = db.prepare(`
+        SELECT match_id FROM plan_job_matches
+        WHERE plan_id = ? AND job_id = ? AND status = 'confirmed'
+        LIMIT 1
+      `).get(planId, row.source_id);
+      if (match) {
+        unlinkJobMatch(match.match_id);
+      } else {
+        db.prepare('DELETE FROM plan_material_ledger WHERE ledger_id = ?').run(ledgerId);
+      }
+      return { success: true, action: 'unlinked_job' };
+    }
+
+    if (row.source_type === 'wallet_journal') {
+      // A fee row: remove just this row (its parent tx/job stays).
+      db.prepare('DELETE FROM plan_material_ledger WHERE ledger_id = ?').run(ledgerId);
+      return { success: true, action: 'removed_fee' };
+    }
+
+    // Unknown source — fall back to a scoped delete.
+    db.prepare('DELETE FROM plan_material_ledger WHERE ledger_id = ?').run(ledgerId);
+    return { success: true, action: 'deleted' };
+  } catch (error) {
+    console.error('[Plans] Error unlinking ledger entry:', error);
     throw error;
   }
 }
@@ -6178,8 +6374,11 @@ module.exports = {
   getMaterialTreeNodeDetail,
   getPlanLedger,
   addManualLedgerCost,
+  addManualItemAcquisition,
+  getMaterialStillNeeded,
   updateLedgerEntry,
   deleteLedgerEntry,
+  unlinkLedgerEntry,
   getTransactionDetail,
   getJournalDetail,
 };

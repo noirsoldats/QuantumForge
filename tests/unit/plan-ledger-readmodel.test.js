@@ -60,9 +60,9 @@ function buildSchema(db) {
     );
     CREATE TABLE plan_material_ledger (
       ledger_id TEXT PRIMARY KEY, plan_id TEXT NOT NULL, type_id INTEGER NOT NULL,
-      event_type TEXT NOT NULL CHECK(event_type IN ('acquired','deducted','adjusted','cost')),
+      event_type TEXT NOT NULL CHECK(event_type IN ('acquired','deducted','adjusted','cost','sold')),
       quantity REAL NOT NULL,
-      method TEXT NOT NULL CHECK(method IN ('manual','purchased','manufactured','allocated','cost')),
+      method TEXT NOT NULL CHECK(method IN ('manual','purchased','manufactured','allocated','cost','sold')),
       unit_price REAL, note TEXT, source_ref TEXT, source_type TEXT, source_id INTEGER,
       character_id INTEGER, corporation_id INTEGER, cost_category TEXT, created_at INTEGER NOT NULL
     );
@@ -128,6 +128,20 @@ describe('getPlanLedger', () => {
     expect(ledger.categories.marketFees.total).toBeCloseTo(15.5);
     expect(ledger.categories.other.total).toBeCloseTo(250);
     expect(ledger.totals.totalSpend).toBeCloseTo(1765.5);
+  });
+
+  test('product sales are a separate category and NOT counted as spend', async () => {
+    insLedger({ type_id: 34, event_type: 'acquired', quantity: 100, method: 'purchased', unit_price: 5, source_type: 'wallet_transaction', source_id: 1 });
+    // A confirmed sell: 20 @ 100 = 2000 revenue.
+    insLedger({ type_id: 34, event_type: 'sold', quantity: 20, method: 'sold', unit_price: 100, source_type: 'wallet_transaction', source_id: 2 });
+
+    const ledger = await mp.getPlanLedger('P1');
+
+    expect(ledger.categories.productSales.items).toHaveLength(1);
+    expect(ledger.categories.productSales.total).toBeCloseTo(2000);
+    expect(ledger.totals.productSales).toBeCloseTo(2000);
+    // Sales excluded from spend — only the 500 purchase counts.
+    expect(ledger.totals.totalSpend).toBeCloseTo(500);
   });
 
   test('cost rows (quantity=0) do not perturb per-type acquisition SUM(quantity)', () => {

@@ -225,8 +225,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     // Ledger
     getLedger: (planId) => ipcRenderer.invoke('plans:getLedger', planId),
     addLedgerCost: (planId, options) => ipcRenderer.invoke('plans:addLedgerCost', planId, options),
+    addItemAcquisition: (planId, typeId, options) => ipcRenderer.invoke('plans:addItemAcquisition', planId, typeId, options),
     updateLedgerEntry: (ledgerId, updates) => ipcRenderer.invoke('plans:updateLedgerEntry', ledgerId, updates),
     deleteLedgerEntry: (ledgerId) => ipcRenderer.invoke('plans:deleteLedgerEntry', ledgerId),
+    unlinkLedgerEntry: (planId, ledgerId) => ipcRenderer.invoke('plans:unlinkLedgerEntry', planId, ledgerId),
     getTransactionDetail: (transactionId, isCorp) => ipcRenderer.invoke('plans:getTransactionDetail', transactionId, isCorp),
     getJournalDetail: (journalId, isCorp) => ipcRenderer.invoke('plans:getJournalDetail', journalId, isCorp),
   },

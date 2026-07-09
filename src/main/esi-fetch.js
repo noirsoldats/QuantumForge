@@ -59,6 +59,10 @@ const ENDPOINT_POLICY = {
   corporation_blueprints:     { group: 'corporation', minIntervalMs: 5 * MINUTE, paginated: true },
   corporation_divisions:      { group: 'corporation', minIntervalMs: 5 * MINUTE, paginated: false },
 
+  // Player structure name/info (authed: needs esi-universe.read_structures.v1).
+  // Result is cached persistently by the caller, so this rarely fires.
+  structure:                  { group: 'universe', minIntervalMs: 1 * MINUTE,  paginated: false },
+
   // Universe / market (no per-character token)
   market_orders:              { group: 'market',   minIntervalMs: 5 * MINUTE,  paginated: true  },
   market_history:             { group: 'market',   minIntervalMs: 5 * MINUTE,  paginated: false },

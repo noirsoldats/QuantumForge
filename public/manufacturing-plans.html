@@ -276,6 +276,11 @@
               <div class="tab-header">
                 <h3>Spend Ledger</h3>
                 <div class="tab-actions">
+                  <button class="secondary-button tooltip" id="ledger-acquire-item-btn">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 7h-9M14 17H5"/><circle cx="17" cy="17" r="3"/><circle cx="7" cy="7" r="3"/></svg>
+                    Acquire Item
+                    <span class="tooltip-text">Record acquiring a quantity of a plan material (e.g. from stockpile)</span>
+                  </button>
                   <button class="secondary-button tooltip" id="ledger-add-cost-btn">
                     <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
                     Add Cost
@@ -565,6 +570,67 @@
       <div class="modal-footer">
         <button class="secondary-button" id="cancel-ledger-cost-btn">Cancel</button>
         <button class="primary-button" id="confirm-ledger-cost-btn">Add Cost</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Acquire Item Modal -->
+  <div id="ledger-acquire-item-modal" class="modal" style="display: none;" role="dialog" aria-modal="true" aria-labelledby="ledger-acquire-item-title">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2 id="ledger-acquire-item-title">Acquire Item</h2>
+        <button class="close-btn" id="close-ledger-acquire-item-btn" aria-label="Close dialog">&times;</button>
+      </div>
+      <div class="modal-body">
+        <label for="acquire-item-select">Item</label>
+        <select id="acquire-item-select" class="input-field">
+          <!-- populated with plan materials that still need quantity -->
+        </select>
+        <span class="input-help" id="acquire-item-still-needed"></span>
+
+        <label for="acquire-item-quantity">Quantity</label>
+        <input type="number" id="acquire-item-quantity" class="input-field" min="1" step="1" placeholder="0">
+
+        <label>Value</label>
+        <div class="acquire-value-toggle">
+          <label class="radio-inline"><input type="radio" name="acquire-value-mode" value="unit" checked> Unit price</label>
+          <label class="radio-inline"><input type="radio" name="acquire-value-mode" value="total"> Total value</label>
+        </div>
+        <input type="number" id="acquire-item-value" class="input-field" min="0" step="0.01" placeholder="0.00">
+        <span class="input-help" id="acquire-value-derived"></span>
+
+        <label for="acquire-item-note">Note (optional)</label>
+        <input type="text" id="acquire-item-note" class="input-field" placeholder="e.g. from stockpile">
+      </div>
+      <div class="modal-footer">
+        <button class="secondary-button" id="cancel-acquire-item-btn">Cancel</button>
+        <button class="primary-button" id="confirm-acquire-item-btn">Acquire</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Edit Ledger Entry Modal -->
+  <div id="ledger-edit-modal" class="modal" style="display: none;" role="dialog" aria-modal="true" aria-labelledby="ledger-edit-title">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2 id="ledger-edit-title">Edit Ledger Entry</h2>
+        <button class="close-btn" id="close-ledger-edit-btn" aria-label="Close dialog">&times;</button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="ledger-edit-id">
+
+        <div id="ledger-edit-quantity-group">
+          <label for="ledger-edit-quantity">Quantity</label>
+          <input type="number" id="ledger-edit-quantity" class="input-field" min="0" step="1">
+          <span class="input-help">Capped at the remaining need for this item.</span>
+        </div>
+
+        <label for="ledger-edit-price" id="ledger-edit-price-label">Unit price (ISK)</label>
+        <input type="number" id="ledger-edit-price" class="input-field" min="0" step="0.01">
+      </div>
+      <div class="modal-footer">
+        <button class="secondary-button" id="cancel-ledger-edit-btn">Cancel</button>
+        <button class="primary-button" id="confirm-ledger-edit-btn">Save</button>
       </div>
     </div>
   </div>

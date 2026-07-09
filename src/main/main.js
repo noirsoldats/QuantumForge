@@ -1468,7 +1468,12 @@ function setupIPCHandlers() {
     return addManualLedgerCost(planId, options);
   });
 
-  ipcMain.handle('plans:updateLedgerEntry', (event, ledgerId, updates) => {
+  ipcMain.handle('plans:addItemAcquisition', async (event, planId, typeId, options) => {
+    const { addManualItemAcquisition } = require('./manufacturing-plans');
+    return addManualItemAcquisition(planId, typeId, options);
+  });
+
+  ipcMain.handle('plans:updateLedgerEntry', async (event, ledgerId, updates) => {
     const { updateLedgerEntry } = require('./manufacturing-plans');
     return updateLedgerEntry(ledgerId, updates);
   });
@@ -1476,6 +1481,11 @@ function setupIPCHandlers() {
   ipcMain.handle('plans:deleteLedgerEntry', (event, ledgerId) => {
     const { deleteLedgerEntry } = require('./manufacturing-plans');
     return deleteLedgerEntry(ledgerId);
+  });
+
+  ipcMain.handle('plans:unlinkLedgerEntry', (event, planId, ledgerId) => {
+    const { unlinkLedgerEntry } = require('./manufacturing-plans');
+    return unlinkLedgerEntry(planId, ledgerId);
   });
 
   ipcMain.handle('plans:getTransactionDetail', (event, transactionId, isCorp) => {

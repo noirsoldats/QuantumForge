@@ -1618,6 +1618,87 @@ const migrations = [
     down: (db) => {
       console.log('[Migration 023] Rollback not implemented (ALTER DROP COLUMN unsupported on older SQLite)');
     }
+  },
+  {
+    id: '024_ledger_sold_event_type',
+    description: 'Rebuild plan_material_ledger: widen event_type/method CHECK to include \'sold\' (product-sale rows so they can be viewed/unlinked from the Ledger)',
+    up: (db) => {
+      // Table rebuild (SQLite can't ALTER a CHECK constraint). Adds 'sold' to
+      // both the event_type and method CHECK sets. Columns are unchanged.
+      console.log('[Migration 024] Ensuring plan_material_ledger allows \'sold\'...');
+
+      const tableExists = db.prepare(`
+        SELECT name FROM sqlite_master WHERE type='table' AND name='plan_material_ledger'
+      `).get();
+      if (!tableExists) {
+        console.log('[Migration 024] plan_material_ledger table does not exist, skipping');
+        return;
+      }
+
+      // Guard: if the current table definition already allows 'sold', skip.
+      const ddl = db.prepare(`
+        SELECT sql FROM sqlite_master WHERE type='table' AND name='plan_material_ledger'
+      `).get();
+      if (ddl && ddl.sql && ddl.sql.includes("'sold'")) {
+        console.log('[Migration 024] plan_material_ledger already allows \'sold\', skipping');
+        return;
+      }
+
+      db.pragma('foreign_keys = OFF');
+      try {
+        db.exec(`
+          BEGIN TRANSACTION;
+
+          CREATE TABLE plan_material_ledger_new (
+            ledger_id      TEXT    PRIMARY KEY,
+            plan_id        TEXT    NOT NULL,
+            type_id        INTEGER NOT NULL,
+            event_type     TEXT    NOT NULL CHECK(event_type IN ('acquired','deducted','adjusted','cost','sold')),
+            quantity       REAL    NOT NULL,
+            method         TEXT    NOT NULL CHECK(method IN ('manual','purchased','manufactured','allocated','cost','sold')),
+            unit_price     REAL,
+            note           TEXT,
+            source_ref     TEXT,
+            source_type    TEXT,
+            source_id      INTEGER,
+            character_id   INTEGER,
+            corporation_id INTEGER,
+            cost_category  TEXT,
+            created_at     INTEGER NOT NULL,
+            FOREIGN KEY (plan_id) REFERENCES manufacturing_plans(plan_id) ON DELETE CASCADE
+          );
+
+          INSERT INTO plan_material_ledger_new
+            (ledger_id, plan_id, type_id, event_type, quantity, method, unit_price, note,
+             source_ref, source_type, source_id, character_id, corporation_id, cost_category, created_at)
+          SELECT ledger_id, plan_id, type_id, event_type, quantity, method, unit_price, note,
+             source_ref, source_type, source_id, character_id, corporation_id, cost_category, created_at
+          FROM plan_material_ledger;
+
+          DROP TABLE plan_material_ledger;
+          ALTER TABLE plan_material_ledger_new RENAME TO plan_material_ledger;
+
+          CREATE INDEX idx_pml_plan    ON plan_material_ledger(plan_id);
+          CREATE INDEX idx_pml_type    ON plan_material_ledger(plan_id, type_id);
+          CREATE INDEX idx_pml_created ON plan_material_ledger(created_at);
+          CREATE UNIQUE INDEX idx_pml_source
+            ON plan_material_ledger(plan_id, source_type, source_id)
+            WHERE source_id IS NOT NULL;
+
+          COMMIT;
+        `);
+        db.pragma('foreign_keys = ON');
+        console.log('[Migration 024] Completed successfully');
+      } catch (error) {
+        db.exec('ROLLBACK');
+        db.pragma('foreign_keys = ON');
+        console.error('[Migration 024] Migration failed:', error);
+        throw error;
+      }
+    },
+    down: (db) => {
+      console.log('[Migration 024] Rollback not implemented (would require table recreation)');
+    }
   }
   // Add future migrations here
 ];

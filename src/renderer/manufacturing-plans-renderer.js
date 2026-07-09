@@ -184,6 +184,20 @@ function setupEventListeners() {
   document.getElementById('close-ledger-add-cost-btn').addEventListener('click', hideAddCostModal);
   document.getElementById('cancel-ledger-cost-btn').addEventListener('click', hideAddCostModal);
   document.getElementById('confirm-ledger-cost-btn').addEventListener('click', submitAddCost);
+  // Acquire Item modal
+  document.getElementById('ledger-acquire-item-btn').addEventListener('click', showAcquireItemModal);
+  document.getElementById('close-ledger-acquire-item-btn').addEventListener('click', hideAcquireItemModal);
+  document.getElementById('cancel-acquire-item-btn').addEventListener('click', hideAcquireItemModal);
+  document.getElementById('confirm-acquire-item-btn').addEventListener('click', submitAcquireItem);
+  document.getElementById('acquire-item-select').addEventListener('change', updateAcquireStillNeededHint);
+  document.getElementById('acquire-item-quantity').addEventListener('input', updateAcquireDerivedValue);
+  document.getElementById('acquire-item-value').addEventListener('input', updateAcquireDerivedValue);
+  document.querySelectorAll('input[name="acquire-value-mode"]').forEach(r =>
+    r.addEventListener('change', updateAcquireDerivedValue));
+  // Edit Ledger Entry modal
+  document.getElementById('close-ledger-edit-btn').addEventListener('click', hideLedgerEditModal);
+  document.getElementById('cancel-ledger-edit-btn').addEventListener('click', hideLedgerEditModal);
+  document.getElementById('confirm-ledger-edit-btn').addEventListener('click', submitLedgerEdit);
   document.getElementById('close-transaction-detail-btn').addEventListener('click', () => {
     document.getElementById('transaction-detail-modal').style.display = 'none';
   });
@@ -1334,7 +1348,6 @@ async function loadMaterials() {
                 <th>Price</th>
                 <th>Total Cost</th>
                 <th>Acquisition</th>
-                <th>Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -1346,10 +1359,22 @@ async function loadMaterials() {
       const volume = volumes[m.typeId] || 0;
       const totalM3 = volume * m.quantity;
 
-      // Use custom price if set, otherwise base price
-      const effectivePrice = m.customPrice !== null ? m.customPrice : m.basePrice;
-      const price = effectivePrice ? formatISK(effectivePrice) : 'N/A';
-      const total = effectivePrice ? formatISK(effectivePrice * m.quantity) : 'N/A';
+      // The Materials tab shows the PLAN ESTIMATE (override price if set, else the
+      // frozen market price) — this is what the whole plan is costed on. The
+      // ledger's actualized unit price is shown on hover for comparison, NOT here.
+      const estimatePrice = m.planOverridePrice !== null ? m.planOverridePrice : m.basePrice;
+      const price = estimatePrice !== null && estimatePrice !== undefined ? formatISK(estimatePrice) : 'N/A';
+      const total = estimatePrice !== null && estimatePrice !== undefined ? formatISK(estimatePrice * m.quantity) : 'N/A';
+
+      // Actualized ledger unit price (if any acquisition recorded a value).
+      const ledgerPrice = m.customPrice;
+      let priceTooltip = '';
+      if (ledgerPrice !== null && ledgerPrice !== undefined) {
+        const delta = estimatePrice != null ? ledgerPrice - estimatePrice : null;
+        const deltaStr = delta === null ? ''
+          : ` (${delta > 0 ? '+' : ''}${formatISK(delta)} vs estimate)`;
+        priceTooltip = `Ledger unit price: ${formatISK(ledgerPrice)}${deltaStr}`;
+      }
 
       // Acquisition status - build badges array
       const badges = [];
@@ -1420,38 +1445,14 @@ async function loadMaterials() {
           ` : ''}
           <td>${formatNumber(volume, 2)}</td>
           <td>${formatNumber(totalM3, 2)}</td>
-          <td class="price-cell" data-type-id="${m.typeId}" data-effective-price="${m.basePrice ?? ''}">
-            ${m.customPrice !== null ? '<span class="custom-price-indicator" title="Custom price set">⚙️</span> ' : ''}
+          <td class="price-cell${priceTooltip ? ' tooltip-cell' : ''}" data-type-id="${m.typeId}" data-effective-price="${m.basePrice ?? ''}">
             ${m.planOverridePrice !== null ? '<span class="plan-override-indicator" title="Plan-specific price override">🔒</span> ' : ''}
             ${price}
+            ${priceTooltip ? '<span class="ledger-price-indicator">📒</span>' : ''}
+            ${priceTooltip ? `<span class="tooltip-text"><div class="tooltip-line">${escapeHtml(priceTooltip)}</div></span>` : ''}
           </td>
           <td>${total}</td>
           <td>${acquisitionDisplay}</td>
-          <td>
-            ${m.manuallyAcquiredQuantity > 0 ? `
-              <button class="secondary-button small edit-acquisition-btn"
-                data-type-id="${m.typeId}"
-                data-material-name="${escapeHtml(name)}"
-                data-quantity-needed="${m.quantity}"
-                data-already-acquired="${totalAcquired}"
-                data-manual-quantity="${m.manuallyAcquiredQuantity}"
-                data-still-needed="${Math.max(0, m.quantity - totalAcquired)}">Edit Acquisition</button>
-              <button class="secondary-button small unmark-btn" data-type-id="${m.typeId}">Remove Manual</button>
-              ${m.manuallyAcquiredQuantity > m.quantity ? `
-                <button class="warning-button small cleanup-excess-btn"
-                  data-type-id="${m.typeId}"
-                  data-material-name="${escapeHtml(name)}"
-                  title="Reduce acquired quantity to match needed quantity">Cleanup Excess</button>
-              ` : ''}
-            ` : `
-              <button class="secondary-button small mark-acquired-btn"
-                data-type-id="${m.typeId}"
-                data-material-name="${escapeHtml(name)}"
-                data-quantity-needed="${m.quantity}"
-                data-already-acquired="${totalAcquired}"
-                data-still-needed="${Math.max(0, m.quantity - totalAcquired)}">Mark Acquired</button>
-            `}
-          </td>
         </tr>
       `;
     }
@@ -1503,43 +1504,8 @@ async function loadMaterials() {
     });
   });
 
-  container.querySelectorAll('.mark-acquired-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const typeId = parseInt(btn.dataset.typeId);
-      const materialName = btn.dataset.materialName;
-      const quantityNeeded = parseInt(btn.dataset.quantityNeeded);
-      const alreadyAcquired = parseInt(btn.dataset.alreadyAcquired);
-      const stillNeeded = parseInt(btn.dataset.stillNeeded);
-      showAcquireMaterialModal(typeId, materialName, quantityNeeded, alreadyAcquired, stillNeeded);
-    });
-  });
-
-  container.querySelectorAll('.unmark-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const typeId = parseInt(btn.dataset.typeId);
-      unmarkMaterialAcquired(typeId);
-    });
-  });
-
-  container.querySelectorAll('.cleanup-excess-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const typeId = parseInt(btn.dataset.typeId);
-      const materialName = btn.dataset.materialName;
-      cleanupExcessAcquisition(typeId, materialName);
-    });
-  });
-
-  container.querySelectorAll('.edit-acquisition-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const typeId = parseInt(btn.dataset.typeId);
-      const materialName = btn.dataset.materialName;
-      const quantityNeeded = parseInt(btn.dataset.quantityNeeded);
-      const alreadyAcquired = parseInt(btn.dataset.alreadyAcquired);
-      const manualQuantity = parseInt(btn.dataset.manualQuantity);
-      const stillNeeded = parseInt(btn.dataset.stillNeeded);
-      showAcquireMaterialModal(typeId, materialName, quantityNeeded, alreadyAcquired, stillNeeded, manualQuantity);
-    });
-  });
+  // Manual acquisition is now handled entirely from the Ledger tab ("Acquire Item").
+  // The Materials tab shows acquisition STATUS only (read-only badges + still-needed).
 
   container.querySelectorAll('.edit-price-btn').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -3518,11 +3484,39 @@ async function loadJobs() {
     const blueprintTypeIds = [...new Set(allMatches.map(m => m.planBlueprint?.blueprintTypeId).filter(Boolean))];
     const names = blueprintTypeIds.length > 0 ? await window.electronAPI.sde.getBlueprintNames(blueprintTypeIds) : {};
 
+    // Resolve facility IDs to names (NPC stations from SDE; player structures fall
+    // back to a labeled placeholder). Batched + deduped by facility/character/corp.
+    const facilityNameMap = new Map(); // facilityId -> resolved name
+    const facilityJobs = allMatches
+      .map(m => m.job)
+      .filter(j => j && j.facilityId);
+    const seen = new Set();
+    await Promise.all(facilityJobs.map(async (job) => {
+      if (seen.has(job.facilityId)) return;
+      seen.add(job.facilityId);
+      try {
+        const info = await window.electronAPI.location.resolve(job.facilityId, job.characterId, !!job.isCorporation);
+        const resolved = info && (info.fullPath || info.stationName);
+        if (resolved && resolved !== 'Unknown' && resolved !== 'Error') {
+          facilityNameMap.set(job.facilityId, resolved);
+        }
+      } catch (_) { /* leave unresolved → falls back to ID */ }
+    }));
+    const facilityLabel = (job) => {
+      if (!job || !job.facilityId) return 'Unknown';
+      return facilityNameMap.get(job.facilityId) || `Facility ${job.facilityId}`;
+    };
+
     let html = '';
+
+    // Most-recent-first by job start date.
+    const byJobStartDesc = (a, b) => (b.job?.startDate || 0) - (a.job?.startDate || 0);
+    const pendingJobsSorted = [...pendingJobMatches].sort(byJobStartDesc);
+    const confirmedJobsSorted = [...confirmedJobMatches].sort(byJobStartDesc);
 
     // Pending Matches Section
     html += '<div class="jobs-section">';
-    if (pendingJobMatches.length > 0) {
+    if (pendingJobsSorted.length > 0) {
       html += `
         <h3 class="section-header">Pending Job Matches</h3>
         <table>
@@ -3534,18 +3528,19 @@ async function loadJobs() {
               <th>Runs</th>
               <th>Status</th>
               <th>Facility</th>
+              <th>Started</th>
               <th>Confidence</th>
               <th>Actions</th>
             </tr>
           </thead>
           <tbody>
-            ${pendingJobMatches.map(match => {
+            ${pendingJobsSorted.map(match => {
               const blueprintName = match.planBlueprint?.blueprintTypeId
                 ? (names[match.planBlueprint.blueprintTypeId] || `Type ${match.planBlueprint.blueprintTypeId}`)
                 : 'Unknown';
               const confidence = (match.confidence * 100).toFixed(0);
               const confidenceClass = match.confidence >= 0.8 ? 'high' : match.confidence >= 0.5 ? 'medium' : 'low';
-              const facilityName = match.job?.facilityId || 'Unknown';
+              const facilityName = facilityLabel(match.job);
               const jobStatus = match.job?.status || 'unknown';
 
               return `
@@ -3555,7 +3550,8 @@ async function loadJobs() {
                   <td>${match.job?.jobId || 'N/A'}</td>
                   <td>${match.job?.runs || 'N/A'}</td>
                   <td>${jobStatus}</td>
-                  <td>${facilityName}</td>
+                  <td>${escapeHtml(facilityName)}</td>
+                  <td>${formatDateTime(match.job?.startDate)}</td>
                   <td><span class="confidence-badge ${confidenceClass}">${confidence}%</span></td>
                   <td>
                     <button class="secondary-button small" data-action="confirm-job">Confirm</button>
@@ -3577,7 +3573,7 @@ async function loadJobs() {
     html += '</div>';
 
     // Linked Jobs Section
-    if (confirmedJobMatches.length > 0) {
+    if (confirmedJobsSorted.length > 0) {
       html += `
         <div class="jobs-section">
           <h3 class="section-header">Linked Jobs</h3>
@@ -3590,16 +3586,17 @@ async function loadJobs() {
                 <th>Runs</th>
                 <th>Status</th>
                 <th>Facility</th>
+                <th>Started</th>
                 <th>Linked At</th>
                 <th>Actions</th>
               </tr>
             </thead>
             <tbody>
-              ${confirmedJobMatches.map(match => {
+              ${confirmedJobsSorted.map(match => {
                 const blueprintName = match.planBlueprint?.blueprintTypeId
                   ? (names[match.planBlueprint.blueprintTypeId] || `Type ${match.planBlueprint.blueprintTypeId}`)
                   : 'Unknown';
-                const facilityName = match.job?.facilityId || 'Unknown';
+                const facilityName = facilityLabel(match.job);
                 const jobStatus = match.job?.status || 'unknown';
                 const linkedDate = match.confirmedAt ? new Date(match.confirmedAt).toLocaleString() : 'Unknown';
 
@@ -3610,7 +3607,8 @@ async function loadJobs() {
                     <td>${match.job?.jobId || 'N/A'}</td>
                     <td>${match.job?.runs || 'N/A'}</td>
                     <td>${jobStatus}</td>
-                    <td>${facilityName}</td>
+                    <td>${escapeHtml(facilityName)}</td>
+                    <td>${formatDateTime(match.job?.startDate)}</td>
                     <td>${linkedDate}</td>
                     <td>
                       <button class="secondary-button small" data-action="unlink-job">Unlink</button>
@@ -3663,11 +3661,16 @@ async function loadTransactions() {
     const typeIds = [...new Set(allMatches.map(m => m.transaction?.typeId).filter(Boolean))];
     const names = typeIds.length > 0 ? await window.electronAPI.sde.getTypeNames(typeIds) : {};
 
+    // Most-recent-first by transaction date.
+    const byTxDateDesc = (a, b) => (b.transaction?.date || 0) - (a.transaction?.date || 0);
+    const pendingTxSorted = [...pendingTransactionMatches].sort(byTxDateDesc);
+    const confirmedTxSorted = [...confirmedTransactionMatches].sort(byTxDateDesc);
+
     let html = '';
 
     // Pending Matches Section
     html += '<div class="jobs-section">';
-    if (pendingTransactionMatches.length > 0) {
+    if (pendingTxSorted.length > 0) {
       html += `
         <h3 class="section-header">Pending Transaction Matches</h3>
         <table>
@@ -3676,6 +3679,7 @@ async function loadTransactions() {
               <th>Item</th>
               <th>Character</th>
               <th>Transaction ID</th>
+              <th>Date</th>
               <th>Quantity</th>
               <th>Price</th>
               <th>Total</th>
@@ -3685,7 +3689,7 @@ async function loadTransactions() {
             </tr>
           </thead>
           <tbody>
-            ${pendingTransactionMatches.map(match => {
+            ${pendingTxSorted.map(match => {
               const typeName = match.transaction?.typeId
                 ? (names[match.transaction.typeId] || `Type ${match.transaction.typeId}`)
                 : 'Unknown';
@@ -3701,6 +3705,7 @@ async function loadTransactions() {
                   <td>${escapeHtml(typeName)}</td>
                   <td>${escapeHtml(match.transaction?.characterName || 'Unknown')}</td>
                   <td>${match.transaction?.transactionId || 'N/A'}</td>
+                  <td>${formatDateTime(match.transaction?.date)}</td>
                   <td>${formatNumber(quantity)}</td>
                   <td>${formatISK(price)}</td>
                   <td>${formatISK(total)}</td>
@@ -3726,7 +3731,7 @@ async function loadTransactions() {
     html += '</div>';
 
     // Linked Transactions Section
-    if (confirmedTransactionMatches.length > 0) {
+    if (confirmedTxSorted.length > 0) {
       html += `
         <div class="jobs-section">
           <h3 class="section-header">Linked Transactions</h3>
@@ -3736,6 +3741,7 @@ async function loadTransactions() {
                 <th>Item</th>
                 <th>Character</th>
                 <th>Transaction ID</th>
+                <th>Date</th>
                 <th>Quantity</th>
                 <th>Price</th>
                 <th>Total</th>
@@ -3745,7 +3751,7 @@ async function loadTransactions() {
               </tr>
             </thead>
             <tbody>
-              ${confirmedTransactionMatches.map(match => {
+              ${confirmedTxSorted.map(match => {
                 const typeName = match.transaction?.typeId
                   ? (names[match.transaction.typeId] || `Type ${match.transaction.typeId}`)
                   : 'Unknown';
@@ -3760,6 +3766,7 @@ async function loadTransactions() {
                     <td>${escapeHtml(typeName)}</td>
                     <td>${escapeHtml(match.transaction?.characterName || 'Unknown')}</td>
                     <td>${match.transaction?.transactionId || 'N/A'}</td>
+                    <td>${formatDateTime(match.transaction?.date)}</td>
                     <td>${formatNumber(quantity)}</td>
                     <td>${formatISK(price)}</td>
                     <td>${formatISK(total)}</td>
@@ -4004,6 +4011,117 @@ async function submitAddCost() {
   }
 }
 
+// ── Acquire Item (manual quantity acquisition, capped at still-needed) ─────────
+
+// Cache of { typeId -> stillNeeded } for the currently-open acquire modal.
+let acquireStillNeededMap = {};
+
+async function showAcquireItemModal() {
+  if (!selectedPlanId) return;
+
+  try {
+    const materials = await window.electronAPI.plans.getMaterials(selectedPlanId, false);
+    const materialTypeIds = materials.map(m => m.typeId);
+    const names = materialTypeIds.length > 0
+      ? await window.electronAPI.sde.getTypeNames(materialTypeIds)
+      : {};
+
+    // Only materials that still need quantity.
+    acquireStillNeededMap = {};
+    const options = [];
+    for (const m of materials) {
+      const acquired = (m.manuallyAcquiredQuantity || 0) + (m.purchasedQuantity || 0) + (m.manufacturedQuantity || 0);
+      const stillNeeded = Math.max(0, (m.quantity || 0) - acquired);
+      if (stillNeeded > 0) {
+        acquireStillNeededMap[m.typeId] = stillNeeded;
+        options.push({ typeId: m.typeId, name: names[m.typeId] || `Type ${m.typeId}`, stillNeeded });
+      }
+    }
+
+    const select = document.getElementById('acquire-item-select');
+    if (options.length === 0) {
+      select.innerHTML = '<option value="">All materials fully acquired</option>';
+      showToast('All materials are already fully acquired for this plan', 'info');
+      return;
+    }
+    options.sort((a, b) => a.name.localeCompare(b.name));
+    select.innerHTML = options
+      .map(o => `<option value="${o.typeId}">${escapeHtml(o.name)}</option>`)
+      .join('');
+
+    document.getElementById('acquire-item-quantity').value = '';
+    document.getElementById('acquire-item-value').value = '';
+    document.getElementById('acquire-item-note').value = '';
+    document.querySelector('input[name="acquire-value-mode"][value="unit"]').checked = true;
+    document.getElementById('acquire-value-derived').textContent = '';
+    updateAcquireStillNeededHint();
+    document.getElementById('ledger-acquire-item-modal').style.display = 'flex';
+  } catch (error) {
+    showToast('Failed to open acquire dialog: ' + error.message, 'error');
+  }
+}
+
+function hideAcquireItemModal() {
+  document.getElementById('ledger-acquire-item-modal').style.display = 'none';
+}
+
+function updateAcquireStillNeededHint() {
+  const typeId = parseInt(document.getElementById('acquire-item-select').value);
+  const stillNeeded = acquireStillNeededMap[typeId] || 0;
+  const qtyInput = document.getElementById('acquire-item-quantity');
+  qtyInput.max = stillNeeded;
+  document.getElementById('acquire-item-still-needed').textContent =
+    stillNeeded > 0 ? `${formatNumber(stillNeeded)} still needed` : '';
+  updateAcquireDerivedValue();
+}
+
+// Live-preview the derived value (the "other" of unit price / total).
+function updateAcquireDerivedValue() {
+  const qty = parseFloat(document.getElementById('acquire-item-quantity').value) || 0;
+  const value = parseFloat(document.getElementById('acquire-item-value').value) || 0;
+  const mode = document.querySelector('input[name="acquire-value-mode"]:checked')?.value || 'unit';
+  const hint = document.getElementById('acquire-value-derived');
+  if (!qty || !value) { hint.textContent = ''; return; }
+  if (mode === 'unit') {
+    hint.textContent = `Total: ${formatISK(value * qty)}`;
+  } else {
+    hint.textContent = `Unit: ${formatISK(value / qty)}`;
+  }
+}
+
+async function submitAcquireItem() {
+  const typeId = parseInt(document.getElementById('acquire-item-select').value);
+  const quantity = parseInt(document.getElementById('acquire-item-quantity').value);
+  const valueRaw = document.getElementById('acquire-item-value').value;
+  const mode = document.querySelector('input[name="acquire-value-mode"]:checked')?.value || 'unit';
+  const note = document.getElementById('acquire-item-note').value.trim() || null;
+
+  if (!typeId) { showToast('Please select an item', 'warning'); return; }
+  if (!quantity || quantity <= 0) { showToast('Please enter a valid quantity', 'warning'); return; }
+
+  const opts = { quantity, note };
+  const value = valueRaw ? parseFloat(valueRaw) : null;
+  if (value != null && !isNaN(value)) {
+    if (mode === 'unit') opts.unitPrice = value;
+    else opts.totalValue = value;
+  }
+
+  try {
+    const result = await window.electronAPI.plans.addItemAcquisition(selectedPlanId, typeId, opts);
+    hideAcquireItemModal();
+    await loadLedger();
+    await loadOverview();
+    if (activeTab === 'materials') await loadMaterials();
+    if (result && result.clamped) {
+      showToast(`Acquired ${formatNumber(result.actual)} (clamped to remaining need)`, 'warning');
+    } else {
+      showToast(`Acquired ${formatNumber(result.actual)}`, 'success');
+    }
+  } catch (error) {
+    showToast('Failed to acquire item: ' + error.message, 'error');
+  }
+}
+
 async function loadLedger() {
   if (!selectedPlanId) return;
 
@@ -4026,8 +4144,11 @@ function renderLedger(ledger) {
   const container = document.getElementById('ledger-content');
   const { categories, totals, reconciliation } = ledger;
 
+  const productSales = categories.productSales || { items: [], total: 0 };
+
   const anyRows =
     categories.materialPurchases.items.length +
+    productSales.items.length +
     categories.jobInstallation.items.length +
     categories.marketFees.items.length +
     categories.other.items.length;
@@ -4044,6 +4165,7 @@ function renderLedger(ledger) {
   const summary = `
     <div class="ledger-summary">
       ${ledgerStatCard('Material Purchases', totals.materialPurchases)}
+      ${productSales.items.length > 0 ? ledgerStatCard('Product Sales', productSales.total, 'revenue') : ''}
       ${ledgerStatCard('Job Installation', totals.jobInstallation, categories.jobInstallation.estimated ? 'estimated' : null)}
       ${ledgerStatCard('Market Fees', totals.marketFees)}
       ${ledgerStatCard('Other', totals.other)}
@@ -4061,9 +4183,31 @@ function renderLedger(ledger) {
 
   container.innerHTML = summary +
     renderLedgerSection('Material Purchases', categories.materialPurchases.items, 'material') +
+    renderLedgerSection('Product Sales', productSales.items, 'material') +
     renderLedgerSection('Job Installation', categories.jobInstallation.items, 'job') +
     renderLedgerSection('Market Fees', categories.marketFees.items, 'fee') +
     renderLedgerSection('Other', categories.other.items, 'other');
+
+  wireLedgerActions(container);
+}
+
+// CSP-compliant delegated wiring for ledger row buttons (no inline onclick).
+function wireLedgerActions(container) {
+  container.querySelectorAll('[data-ledger-action]').forEach(btn => {
+    const action = btn.dataset.ledgerAction;
+    btn.addEventListener('click', () => {
+      if (action === 'tx-detail') {
+        openTransactionDetail(parseInt(btn.dataset.sourceId), btn.dataset.isCorp === '1');
+      } else if (action === 'journal-detail') {
+        openJournalDetail(parseInt(btn.dataset.sourceId), btn.dataset.isCorp === '1');
+      } else if (action === 'edit') {
+        const qty = btn.dataset.quantity === '' ? null : parseFloat(btn.dataset.quantity);
+        editLedgerEntry(btn.dataset.ledgerId, parseFloat(btn.dataset.amount), qty);
+      } else if (action === 'unlink') {
+        unlinkLedgerRow(btn.dataset.ledgerId, btn.dataset.sourceType);
+      }
+    });
+  });
 }
 
 function ledgerStatCard(label, amount, tag = null, emphasize = false) {
@@ -4090,23 +4234,31 @@ function renderLedgerSection(title, items, kind) {
       detailCell = item.estimated ? `<em>estimated</em>` : '';
     }
 
-    // Source / detail affordance.
+    // Source / detail affordance. Uses data-* + delegated wiring (CSP forbids inline onclick).
+    const corpAttr = item.corporationId ? '1' : '0';
     let sourceCell = '—';
     if (item.sourceType === 'wallet_transaction') {
-      sourceCell = `<button class="link-button" onclick="openTransactionDetail(${item.sourceId}, ${item.corporationId ? 'true' : 'false'})">ESI tx #${item.sourceId}</button>`;
+      sourceCell = `<button class="link-button" data-ledger-action="tx-detail" data-source-id="${item.sourceId}" data-is-corp="${corpAttr}">ESI tx #${item.sourceId}</button>`;
     } else if (item.sourceType === 'wallet_journal') {
-      sourceCell = `<button class="link-button" onclick="openJournalDetail(${item.sourceId}, ${item.corporationId ? 'true' : 'false'})">Fee #${item.sourceId}</button>`;
+      sourceCell = `<button class="link-button" data-ledger-action="journal-detail" data-source-id="${item.sourceId}" data-is-corp="${corpAttr}">Fee #${item.sourceId}</button>`;
     } else if (item.sourceType === 'industry_job') {
       sourceCell = `Job #${item.sourceId}`;
     } else if (item.sourceType === 'manual' || item.editable) {
       sourceCell = 'Manual';
     }
 
-    // Actions: editable rows get edit; manual rows get delete.
+    // Actions:
+    //  - manual rows       → Edit + Delete
+    //  - ESI-sourced rows  → Unlink (reverts the underlying match)
     const actions = [];
     if (item.editable && item.ledgerId) {
-      actions.push(`<button class="link-button" onclick="editLedgerEntry('${item.ledgerId}', ${item.unitPrice ?? item.amount ?? 0})">Edit</button>`);
-      actions.push(`<button class="link-button danger" onclick="deleteLedgerEntry('${item.ledgerId}')">Delete</button>`);
+      // Manual: quantity-bearing acquisition rows can edit qty; cost rows edit amount.
+      const isQtyRow = kind === 'material';
+      const qtyAttr = isQtyRow ? (item.quantity ?? 0) : '';
+      actions.push(`<button class="link-button" data-ledger-action="edit" data-ledger-id="${item.ledgerId}" data-amount="${item.unitPrice ?? item.amount ?? 0}" data-quantity="${qtyAttr}">Edit</button>`);
+      actions.push(`<button class="link-button danger" data-ledger-action="unlink" data-ledger-id="${item.ledgerId}" data-source-type="manual">Delete</button>`);
+    } else if (item.ledgerId && item.sourceType) {
+      actions.push(`<button class="link-button danger" data-ledger-action="unlink" data-ledger-id="${item.ledgerId}" data-source-type="${item.sourceType}">Unlink</button>`);
     }
 
     return `
@@ -4134,7 +4286,7 @@ function renderLedgerSection(title, items, kind) {
     </div>`;
 }
 
-// ── Ledger detail modals + CRUD (window-scoped for inline onclick) ─────────────
+// ── Ledger detail modals + CRUD (window-scoped; invoked via delegated wiring) ──
 
 window.openTransactionDetail = async function(transactionId, isCorp) {
   try {
@@ -4186,30 +4338,93 @@ window.openJournalDetail = async function(journalId, isCorp) {
   }
 };
 
-window.editLedgerEntry = async function(ledgerId, currentAmount) {
-  const input = prompt('New amount (ISK):', currentAmount);
-  if (input === null) return;
-  const amount = parseFloat(input);
-  if (isNaN(amount)) {
-    showToast('Please enter a valid number', 'warning');
-    return;
+// Edit a manual ledger row. For quantity-bearing acquisition rows, allow editing
+// unit price AND quantity (quantity is capped at still-needed server-side).
+// Open the Edit Ledger Entry modal. currentQuantity is null for cost rows
+// (amount-only) and a number for quantity-bearing material acquisition rows.
+window.editLedgerEntry = function(ledgerId, currentAmount, currentQuantity = null) {
+  document.getElementById('ledger-edit-id').value = ledgerId;
+
+  const qtyGroup = document.getElementById('ledger-edit-quantity-group');
+  const qtyInput = document.getElementById('ledger-edit-quantity');
+  const priceLabel = document.getElementById('ledger-edit-price-label');
+  const priceInput = document.getElementById('ledger-edit-price');
+
+  if (currentQuantity !== null) {
+    qtyGroup.style.display = '';
+    qtyInput.value = currentQuantity;
+    priceLabel.textContent = 'Unit price (ISK)';
+  } else {
+    // Cost row: no quantity, the value is a single amount.
+    qtyGroup.style.display = 'none';
+    qtyInput.value = '';
+    priceLabel.textContent = 'Amount (ISK)';
   }
+  priceInput.value = currentAmount != null ? currentAmount : '';
+
+  document.getElementById('ledger-edit-modal').style.display = 'flex';
+};
+
+function hideLedgerEditModal() {
+  document.getElementById('ledger-edit-modal').style.display = 'none';
+}
+
+async function submitLedgerEdit() {
+  const ledgerId = document.getElementById('ledger-edit-id').value;
+  const qtyGroupVisible = document.getElementById('ledger-edit-quantity-group').style.display !== 'none';
+  const priceRaw = document.getElementById('ledger-edit-price').value;
+  const qtyRaw = document.getElementById('ledger-edit-quantity').value;
+
+  const updates = {};
+  if (priceRaw.trim() !== '') {
+    const price = parseFloat(priceRaw);
+    if (isNaN(price) || price < 0) { showToast('Invalid price', 'warning'); return; }
+    updates.unitPrice = price;
+  }
+  if (qtyGroupVisible && qtyRaw.trim() !== '') {
+    const qty = parseInt(qtyRaw);
+    if (isNaN(qty) || qty < 0) { showToast('Invalid quantity', 'warning'); return; }
+    updates.quantity = qty;
+  }
+
+  if (Object.keys(updates).length === 0) { hideLedgerEditModal(); return; }
+
   try {
-    await window.electronAPI.plans.updateLedgerEntry(ledgerId, { unitPrice: amount });
+    const result = await window.electronAPI.plans.updateLedgerEntry(ledgerId, updates);
+    hideLedgerEditModal();
     await loadLedger();
-    showToast('Ledger entry updated', 'success');
+    if (activeTab === 'materials') await loadMaterials();
+    await loadOverview();
+    showToast(result && result.clamped ? 'Updated (quantity clamped to remaining need)' : 'Ledger entry updated',
+      result && result.clamped ? 'warning' : 'success');
   } catch (error) {
     showToast('Failed to update entry: ' + error.message, 'error');
   }
-};
+}
 
-window.deleteLedgerEntry = async function(ledgerId) {
+// Unlink/remove any ledger row. Manual rows delete outright; ESI-sourced rows
+// unlink their underlying match (with a confirm).
+window.unlinkLedgerRow = async function(ledgerId, sourceType) {
+  const isEsi = sourceType && sourceType !== 'manual';
+  if (isEsi) {
+    const label = sourceType === 'wallet_transaction' ? 'transaction match'
+      : sourceType === 'industry_job' ? 'job match'
+      : 'fee entry';
+    const confirmed = await showConfirmDialog(
+      `This will unlink the matched ${label} from this plan and remove its ledger entries. Continue?`,
+      'Unlink from Ledger', 'Unlink', 'Cancel'
+    );
+    if (!confirmed) return;
+  }
+
   try {
-    await window.electronAPI.plans.deleteLedgerEntry(ledgerId);
+    await window.electronAPI.plans.unlinkLedgerEntry(selectedPlanId, ledgerId);
     await loadLedger();
-    showToast('Cost removed', 'info');
+    if (activeTab === 'materials') await loadMaterials();
+    await loadOverview();
+    showToast(isEsi ? 'Unlinked from plan' : 'Entry removed', 'info');
   } catch (error) {
-    showToast('Failed to remove cost: ' + error.message, 'error');
+    showToast('Failed to remove entry: ' + error.message, 'error');
   }
 };
 
@@ -4920,6 +5135,13 @@ function formatNumber(value, decimals = 0) {
     minimumFractionDigits: decimals,
     maximumFractionDigits: decimals
   }).format(value);
+}
+
+// Format an epoch-ms timestamp for display (local date + time). Returns a dash
+// when there's no value.
+function formatDateTime(ms) {
+  if (ms === null || ms === undefined || isNaN(ms)) return '—';
+  return new Date(ms).toLocaleString();
 }
 
 function escapeHtml(text) {

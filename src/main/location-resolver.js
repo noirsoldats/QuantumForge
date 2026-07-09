@@ -194,16 +194,47 @@ async function resolveLocationInfo(locationId, characterId, isCorporation = fals
 
     // For assets/containers, we need to traverse the asset tree
     if (locationType === 'asset') {
-      // Fetch all assets for this character
-      const assets = getAssets(characterId, isCorporation);
+      // First: if this ID is a player STRUCTURE that isn't one of our own asset
+      // containers (e.g. an industry-job facility), resolve its name via ESI.
+      // The structure resolver caches in memory, so at most one call per
+      // structure per session; failures fall through to the asset traversal.
+      const assetsForCheck = getAssets(characterId, isCorporation) || [];
+      const isOwnContainer = assetsForCheck.some(a => a.itemId === locationId);
+      if (!isOwnContainer) {
+        try {
+          const { resolveStructure } = require('./esi-structures');
+          const structure = await resolveStructure(locationId, characterId);
+          if (structure && structure.name) {
+            let systemName = null;
+            if (structure.solarSystemId) {
+              try { systemName = await getSystemName(structure.solarSystemId); } catch (_) { /* ignore */ }
+            }
+            const result = {
+              systemName: systemName || 'Unknown System',
+              stationName: structure.name,
+              containerNames: [],
+              fullPath: structure.name,
+              locationType: 'structure',
+            };
+            locationInfoCache.set(cacheKey, result);
+            return result;
+          }
+        } catch (_) { /* fall through to asset traversal / placeholder */ }
+      }
+
+      // Reuse the assets we already fetched for the structure check above.
+      const assets = assetsForCheck;
 
       if (!assets || assets.length === 0) {
+        // Non-container ID with no assets to traverse — most likely a player
+        // structure we couldn't resolve (no docking access / no scope).
+        const label = `Player Structure (ID: ${locationId})`;
         const result = {
-          systemName: 'Unknown',
-          stationName: 'Unknown',
+          systemName: 'Unknown System',
+          stationName: label,
           containerNames: [],
-          fullPath: 'Unknown',
-          locationType: 'asset',
+          fullPath: label,
+          locationType: 'structure',
         };
         // Cache the result
         locationInfoCache.set(cacheKey, result);

@@ -550,6 +550,54 @@ describe('Database Schema Migrations', () => {
     });
   });
 
+  describe('Migration 024: plan_material_ledger allows sold', () => {
+    const migration = byId('024');
+
+    function makeLedger(checkClause) {
+      db.exec(`
+        CREATE TABLE manufacturing_plans (plan_id TEXT PRIMARY KEY);
+        INSERT INTO manufacturing_plans (plan_id) VALUES ('P1');
+        CREATE TABLE plan_material_ledger (
+          ledger_id TEXT PRIMARY KEY, plan_id TEXT NOT NULL, type_id INTEGER NOT NULL,
+          event_type TEXT NOT NULL CHECK(event_type IN (${checkClause.event})),
+          quantity REAL NOT NULL,
+          method TEXT NOT NULL CHECK(method IN (${checkClause.method})),
+          unit_price REAL, note TEXT, source_ref TEXT, source_type TEXT, source_id INTEGER,
+          character_id INTEGER, corporation_id INTEGER, cost_category TEXT, created_at INTEGER NOT NULL
+        );
+      `);
+    }
+
+    it('skips when the table does not exist', () => {
+      expect(() => migration.up(db)).not.toThrow();
+    });
+
+    it('widens the CHECK to allow sold and preserves rows', () => {
+      makeLedger({
+        event: `'acquired','deducted','adjusted','cost'`,
+        method: `'manual','purchased','manufactured','allocated','cost'`,
+      });
+      db.prepare(`INSERT INTO plan_material_ledger (ledger_id, plan_id, type_id, event_type, quantity, method, unit_price, created_at)
+        VALUES ('L1','P1',34,'acquired',100,'purchased',5,1)`).run();
+
+      migration.up(db);
+
+      // Existing row preserved.
+      expect(db.prepare('SELECT quantity FROM plan_material_ledger WHERE ledger_id = ?').get('L1').quantity).toBe(100);
+      // A 'sold' row is now permitted.
+      expect(() => db.prepare(`INSERT INTO plan_material_ledger (ledger_id, plan_id, type_id, event_type, quantity, method, unit_price, created_at)
+        VALUES ('S1','P1',34,'sold',10,'sold',9,2)`).run()).not.toThrow();
+    });
+
+    it('is idempotent (skips when sold already allowed)', () => {
+      makeLedger({
+        event: `'acquired','deducted','adjusted','cost','sold'`,
+        method: `'manual','purchased','manufactured','allocated','cost','sold'`,
+      });
+      expect(() => migration.up(db)).not.toThrow();
+    });
+  });
+
   describe('Migration system', () => {
     it('should have valid migration structure', () => {
       expect(migrations).toBeInstanceOf(Array);

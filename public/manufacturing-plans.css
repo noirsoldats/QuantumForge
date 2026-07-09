@@ -1078,6 +1078,23 @@ tr:hover {
   opacity: 1;
 }
 
+/* Tab-header and plan-header action buttons sit near the top of the window
+   (the tabs bar / window edge), so their tooltips must open BELOW the button
+   rather than above, where they'd be clipped or hidden behind the tabs bar. */
+.tab-actions .tooltip .tooltip-text,
+.plan-actions .tooltip .tooltip-text {
+  bottom: auto;
+  top: 125%;
+  z-index: 2000;
+}
+
+.tab-actions .tooltip .tooltip-text::after,
+.plan-actions .tooltip .tooltip-text::after {
+  top: auto;
+  bottom: 100%;
+  border-color: transparent transparent #1e1e2e transparent;
+}
+
 /* Tooltip wrapper for table cells */
 .tooltip-cell {
   position: relative;
@@ -1219,6 +1236,12 @@ td.price-cell .cell-input:focus {
 
 .plan-override-indicator {
   cursor: default;
+}
+
+.ledger-price-indicator {
+  cursor: help;
+  margin-left: 4px;
+  opacity: 0.85;
 }
 
 .blueprint-actions {
@@ -2887,6 +2910,26 @@ th .info-icon:hover {
 
 .detail-list dd {
   color: #dcddde;
+  margin: 0;
+}
+
+/* Acquire Item modal — value mode toggle */
+.acquire-value-toggle {
+  display: flex;
+  gap: 16px;
+  margin-bottom: 8px;
+}
+
+.acquire-value-toggle .radio-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: #dcddde;
+  cursor: pointer;
+}
+
+.acquire-value-toggle .radio-inline input {
   margin: 0;
 }
 

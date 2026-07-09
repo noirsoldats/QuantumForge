@@ -64,9 +64,9 @@ function buildSchema(db) {
     );
     CREATE TABLE plan_material_ledger (
       ledger_id TEXT PRIMARY KEY, plan_id TEXT NOT NULL, type_id INTEGER NOT NULL,
-      event_type TEXT NOT NULL CHECK(event_type IN ('acquired','deducted','adjusted','cost')),
+      event_type TEXT NOT NULL CHECK(event_type IN ('acquired','deducted','adjusted','cost','sold')),
       quantity REAL NOT NULL,
-      method TEXT NOT NULL CHECK(method IN ('manual','purchased','manufactured','allocated','cost')),
+      method TEXT NOT NULL CHECK(method IN ('manual','purchased','manufactured','allocated','cost','sold')),
       unit_price REAL, note TEXT, source_ref TEXT, source_type TEXT, source_id INTEGER,
       character_id INTEGER, corporation_id INTEGER, cost_category TEXT, created_at INTEGER NOT NULL
     );
@@ -175,6 +175,33 @@ describe('transaction ledger write-through', () => {
     expect(row.quantity).toBe(99);
     expect(row.unit_price).toBe(7.0);
     expect(row.corporation_id).toBe(555);
+  });
+});
+
+describe('product-sale ledger write-through', () => {
+  function seedConfirmableSellMatch() {
+    addTx({ transaction_id: 800, date: Date.now(), type_id: 34, quantity: 20, unit_price: 100, is_buy: 0 });
+    mockDb.prepare(`INSERT INTO plan_transaction_matches (match_id, plan_id, transaction_id, type_id, match_type, quantity, match_confidence, status)
+      VALUES ('MS','P1',800,34,'product_sell',20,0.9,'pending')`).run();
+  }
+
+  test('confirming a sell writes an event_type=sold row (not acquired/purchased)', () => {
+    seedConfirmableSellMatch();
+    pm.confirmTransactionMatch('MS');
+    const rows = ledgerRows().filter(r => r.source_type === 'wallet_transaction');
+    expect(rows).toHaveLength(1);
+    expect(rows[0].event_type).toBe('sold');
+    expect(rows[0].method).toBe('sold');
+    expect(rows[0].quantity).toBe(20);
+    expect(rows[0].unit_price).toBe(100);
+  });
+
+  test('a confirmed sell is unlinkable and reverts the match', () => {
+    seedConfirmableSellMatch();
+    pm.confirmTransactionMatch('MS');
+    pm.unlinkTransactionMatch('MS');
+    expect(ledgerRows().filter(r => r.source_type === 'wallet_transaction')).toHaveLength(0);
+    expect(mockDb.prepare(`SELECT COUNT(*) c FROM plan_transaction_matches WHERE match_id='MS'`).get().c).toBe(0);
   });
 });
 

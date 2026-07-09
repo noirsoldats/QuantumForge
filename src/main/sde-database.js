@@ -1167,16 +1167,26 @@ async function getLocationName(locationId) {
 }
 
 /**
- * Detect location type based on ID range
+ * Detect location type based on ID range.
+ * Ranges per the official EVE ID-ranges guide — see docs/eve-id-ranges.md.
  * @param {number} locationId - Location ID
- * @returns {string} Location type: 'asset', 'npc-station', 'structure', 'system', 'unknown'
+ * @returns {string} 'asset' | 'npc-station' | 'system' | 'unknown'
+ *   ('asset' = the >= 1 trillion "spawned items" pool: asset item_ids AND player
+ *   structures share this range and cannot be distinguished by ID alone.)
  */
 function detectLocationType(locationId) {
   if (locationId >= 1000000000000) {
-    return 'asset'; // Could be container or structure
-  } else if (locationId >= 60000000 && locationId <= 69999999) {
+    // Spawned/dynamic items: asset item_ids AND Upwell structures/citadels.
+    // Indistinguishable by range — callers resolve via ESI (structures) or the
+    // asset tree (containers).
+    return 'asset';
+  } else if (locationId >= 60000000 && locationId <= 60999999) {
+    // NPC stations only. (61M-63M outposts and 66M-69M station folders are NOT
+    // NPC stations and don't resolve via staStations.)
     return 'npc-station';
-  } else if (locationId >= 30000000 && locationId <= 39999999) {
+  } else if (locationId >= 30000000 && locationId <= 36999999) {
+    // Solar systems: known space (30M), wormhole (31M), abyssal (32M),
+    // void (34M), hidden (36M).
     return 'system';
   }
   return 'unknown';
