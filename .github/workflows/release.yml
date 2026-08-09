@@ -40,6 +40,15 @@ jobs:
           # Disable code signing if not configured
           CSC_IDENTITY_AUTO_DISCOVERY: false
 
+      # `dist/*.yml` rather than naming latest-mac.yml explicitly: the glob
+      # cannot silently drop a file if electron-builder's naming changes, and
+      # `if-no-files-found: error` still catches the case where nothing
+      # matches at all.
+      #
+      # Note a beta build does NOT emit an extra beta-mac.yml - for a GitHub
+      # publish, app-builder-lib only ever writes the `latest*` files
+      # (updateInfoBuilder.js short-circuits on provider === "github").
+      # Prerelease clients request beta.yml, 404, and fall back to latest.yml.
       - name: Upload artifacts
         uses: actions/upload-artifact@v7.0.1
         with:
@@ -49,7 +58,7 @@ jobs:
             dist/*.dmg.blockmap
             dist/*.zip
             dist/*.zip.blockmap
-            dist/latest-mac.yml
+            dist/*.yml
           retention-days: 7
           if-no-files-found: error
 
@@ -73,6 +82,7 @@ jobs:
       - name: Build (Linux)
         run: npx electron-builder --linux --publish never
 
+      # dist/*.yml — see the macOS job for why this is a glob.
       - name: Upload artifacts
         uses: actions/upload-artifact@v7.0.1
         with:
@@ -80,7 +90,7 @@ jobs:
           path: |
             dist/*.AppImage
             dist/*.deb
-            dist/latest-linux.yml
+            dist/*.yml
           retention-days: 7
           if-no-files-found: error
 
@@ -107,13 +117,14 @@ jobs:
         # CSC_LINK: ${{ secrets.WIN_CERTS }}
         # CSC_KEY_PASSWORD: ${{ secrets.WIN_CERTS_PASSWORD }}
 
+      # dist/*.yml — see the macOS job for why this is a glob.
       - name: Upload artifacts
         uses: actions/upload-artifact@v7.0.1
         with:
           name: windows-build
           path: |
             dist/*.exe
-            dist/latest.yml
+            dist/*.yml
           retention-days: 7
           if-no-files-found: error
 
@@ -143,10 +154,81 @@ jobs:
           echo "Generated checksums:"
           cat SHA256SUMS.txt
 
-      - name: Create GitHub Release
+      # A hyphenated tag (v0.12.0-beta.1) is a prerelease; v0.12.0 is not.
+      #
+      # This flag is the ONLY thing keeping a beta away from stable users.
+      # electron-updater clients on a stable version query GitHub's
+      # /releases/latest, which excludes prereleases; clients already running a
+      # prerelease read releases.atom, which includes everything. Publishing a
+      # beta WITHOUT this flag offers it to every user, and the update dialog
+      # does not say "beta" — they would simply accept it.
+      #
+      # Verify immediately after any prerelease publishes:
+      #   gh api repos/NoirSoldats/QuantumForge/releases/latest \
+      #     --jq '.tag_name, .prerelease'
+      # It must NOT report the beta tag.
+      - name: Determine release channel
+        id: channel
+        run: |
+          if [[ "${{ github.ref_name }}" == *-* ]]; then
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create GitHub Release (prerelease / beta)
+        if: steps.channel.outputs.prerelease == 'true'
         uses: softprops/action-gh-release@v3.0.0
         with:
           files: artifacts/*
+          prerelease: true
+          body: |
+            ## ⚠️ Beta Build — Not a Stable Release
+
+            This is a **pre-release for testers**. It contains a large rewrite of
+            the entire user interface, and it will **migrate your settings and
+            databases to a new format**.
+
+            **Please read [BETA-TESTING.md](https://github.com/NoirSoldats/QuantumForge/blob/${{ github.ref_name }}/BETA-TESTING.md) before installing.** It covers what to
+            test, where your automatic backup is written, and how to roll back.
+
+            ### Before you install
+
+            - Quantum Forge takes an **automatic backup** of your config and all
+              databases on first launch of this version, into a `backups/` folder
+              beside your data. Rolling back requires restoring it — see
+              BETA-TESTING.md.
+            - These builds are **unsigned**. macOS Gatekeeper and Windows
+              SmartScreen will both warn you. On macOS, right-click the app and
+              choose **Open**; on Windows, click **More info → Run anyway**.
+
+            ### Which file?
+
+            - **Windows**: `Quantum-Forge-Setup-*.exe`
+            - **macOS**: `Quantum-Forge-*.dmg` (universal — works on Intel and Apple Silicon)
+            - **Linux**: `Quantum-Forge-*.AppImage`
+
+            ### Reporting problems
+
+            Open an issue and include your log file:
+
+            - **Windows**: `%APPDATA%\Quantum Forge\logs\quantum-forge.log`
+            - **macOS**: `~/Library/Application Support/Quantum Forge/logs/quantum-forge.log`
+            - **Linux**: `~/.config/Quantum Forge/logs/quantum-forge.log`
+
+            ---
+
+            When the stable release ships, this build will offer you the update
+            automatically — you do not need to reinstall.
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create GitHub Release
+        if: steps.channel.outputs.prerelease == 'false'
+        uses: softprops/action-gh-release@v3.0.0
+        with:
+          files: artifacts/*
+          prerelease: false
           body: |
             ## What Should I Download?
 

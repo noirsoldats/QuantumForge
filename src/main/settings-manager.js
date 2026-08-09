@@ -23,6 +23,11 @@ const defaultSettings = {
     wizardVersion: null,
     wizardCompletedAt: null,
     skippedUpdateVersion: null,  // Version string that user chose to skip
+    // Last app version that completed startup. Read and written directly by
+    // startup-backup.js (NOT through this module - it runs before settings
+    // load, because loadSettings() migrates and persists as a side effect).
+    // Declared here so mergeWithDefaults keeps the key rather than dropping it.
+    lastRunVersion: null,
     auditModeEnabled: false,
   },
   accounts: {

@@ -437,6 +437,21 @@ app.whenReady().then(async () => {
       console.log('[App] Config migration complete');
     }
 
+    // Back up config and databases BEFORE any migration touches them.
+    //
+    // Placement is load-bearing. This must sit after the config folder
+    // migration above (so the files are in their final location) and before
+    // EVERYTHING below: initializeCharacterDatabase opens/creates the DB,
+    // runSchemaMigrations rewrites its schema, and loadSettings() persists
+    // the window-state key migration as a side effect of loading. Several of
+    // those are one-way, so a copy taken any later is not a rollback point.
+    //
+    // No progress callback: the splash window is not created until much later
+    // in startup, so there is nothing to report to yet.
+    setStartupPhase('pre-migration-backup');
+    const { backupBeforeMigration } = require('./startup-backup');
+    await backupBeforeMigration();
+
     // Initialize character database
     setStartupPhase('database-init');
     const { initializeCharacterDatabase } = require('./character-database');
