@@ -1,0 +1,374 @@
+<!--
+  Settings view markup.
+
+  NOT a standalone page - it is fetched and cloned by settings-renderer.js and
+  mounted into the application shell's #view-host. Styling comes from
+  settings.css, which index.html loads.
+
+  Every element id below is part of the settings-renderer.js contract. Do not
+  rename ids or the .tab-item / .tab-content / .sde-value /
+  .division-checkbox / .character-checkbox class hooks.
+-->
+<template id="settings-view-template">
+  <div id="settings-app" class="settings-body">
+    <nav class="settings-sidebar">
+      <h2>Settings</h2>
+      <ul class="settings-tabs">
+        <li class="tab-item active" data-tab="general">
+          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="12" cy="12" r="3"></circle>
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+          </svg>
+          <span>General</span>
+        </li>
+        <li class="tab-item" data-tab="accounts">
+          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"></path>
+            <circle cx="9" cy="7" r="4"></circle>
+            <path d="M22 21v-2a4 4 0 0 0-3-3.87"></path>
+            <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
+          </svg>
+          <span>Accounts</span>
+        </li>
+        <li class="tab-item" data-tab="industry">
+          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M2 20h20"></path>
+            <path d="M4 20V10l8-6 8 6v10"></path>
+            <path d="M9 20v-8h6v8"></path>
+          </svg>
+          <span>Industry</span>
+        </li>
+      </ul>
+    </nav>
+
+    <main class="settings-content qf-scroll">
+      <div class="settings-content-inner">
+
+        <!-- ============ General ============ -->
+        <div class="tab-content active" id="general-tab">
+          <div class="tab-header">
+            <h2>General Settings</h2>
+            <p>Configure general application preferences</p>
+          </div>
+
+          <div class="settings-section">
+            <h3>Application</h3>
+            <div class="setting-item">
+              <div class="setting-info">
+                <label>Auto-Update Character Data on Launch</label>
+                <span class="setting-description">Automatically refresh data when cache expires</span>
+              </div>
+              <div class="setting-checkboxes">
+                <label class="checkbox-label">
+                  <input type="checkbox" id="auto-update-skills" checked>
+                  <span>Skills</span>
+                </label>
+                <label class="checkbox-label">
+                  <input type="checkbox" id="auto-update-blueprints" checked>
+                  <span>Blueprints</span>
+                </label>
+                <label class="checkbox-label">
+                  <input type="checkbox" id="auto-update-assets" checked>
+                  <span>Assets</span>
+                </label>
+              </div>
+            </div>
+
+            <div class="setting-item">
+              <div class="setting-info">
+                <label for="theme-select">Theme</label>
+                <span class="setting-description">Choose your preferred theme</span>
+              </div>
+              <select class="setting-select" id="theme-select">
+                <option value="dark">Dark</option>
+                <option value="light">Light</option>
+                <option value="auto">Auto</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="settings-section">
+            <h3>Notifications</h3>
+            <!-- Desktop notifications are not implemented in this version, so the
+                 row is disabled and says so, rather than offering a control that
+                 silently does nothing. -->
+            <div class="setting-item is-disabled">
+              <div class="setting-info">
+                <label>Desktop Notifications</label>
+                <span class="setting-description">Not yet available &mdash; desktop notifications aren't implemented in this version.</span>
+              </div>
+              <label class="toggle">
+                <input type="checkbox" id="desktop-notifications" disabled>
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+            <div class="setting-item">
+              <div class="setting-info">
+                <label>Updates Notification</label>
+                <span class="setting-description">Show notifications when SDE updates are available</span>
+              </div>
+              <label class="toggle">
+                <input type="checkbox" id="updates-notification" checked>
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+          </div>
+
+          <div class="settings-section">
+            <h3>Diagnostics</h3>
+            <div class="setting-item">
+              <div class="setting-info">
+                <label>Audit Mode</label>
+                <span class="setting-description">Record pricing, material, and invention calculations for inspection in the Audit Log window. Useful for verifying which pricing method and Market Set were actually used.</span>
+              </div>
+              <label class="toggle">
+                <input type="checkbox" id="audit-mode-enabled">
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+            <div class="setting-item">
+              <div class="setting-info">
+                <label>Audit Log</label>
+                <span class="setting-description">View recorded calculations while Audit Mode is on</span>
+              </div>
+              <button class="secondary-button" id="open-audit-log">Open Audit Log</button>
+            </div>
+          </div>
+
+          <div class="settings-section">
+            <h3>Static Data Export (SDE)</h3>
+            <div class="sde-info-container">
+              <div class="sde-status-grid">
+                <div class="sde-status-item">
+                  <span class="sde-label">Source</span>
+                  <span class="sde-value" id="sde-source">Checking...</span>
+                </div>
+                <div class="sde-status-item">
+                  <span class="sde-label">Current Version</span>
+                  <span class="sde-value" id="sde-current-version">Checking...</span>
+                </div>
+                <div class="sde-status-item">
+                  <span class="sde-label">Latest Version</span>
+                  <span class="sde-value" id="sde-latest-version">Checking...</span>
+                </div>
+                <div class="sde-status-item">
+                  <span class="sde-label">Minimum Required</span>
+                  <span class="sde-value" id="sde-minimum-version">Loading...</span>
+                </div>
+                <div class="sde-status-item">
+                  <span class="sde-label">Status</span>
+                  <span class="sde-value" id="sde-status">Checking...</span>
+                </div>
+                <div class="sde-status-item">
+                  <span class="sde-label">Validation Status</span>
+                  <span class="sde-value" id="sde-validation-status">
+                    <span class="validation-indicator unknown" id="validation-indicator">
+                      <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <circle cx="12" cy="12" r="10"></circle>
+                        <line x1="12" y1="16" x2="12" y2="12"></line>
+                        <line x1="12" y1="8" x2="12.01" y2="8"></line>
+                      </svg>
+                      <span id="validation-text">Unknown</span>
+                    </span>
+                  </span>
+                </div>
+                <div class="sde-status-item">
+                  <span class="sde-label">Backup Available</span>
+                  <span class="sde-value" id="sde-backup-status">Checking...</span>
+                </div>
+              </div>
+
+              <!--
+                SDE buttons: the label lives in a <span>, NOT as a bare text node.
+                settings-renderer.js sets `.textContent` on these buttons while
+                working ("Checking...", "Validating..."), which previously wiped
+                the sibling SVG icon on first click. The renderer now targets the
+                span, so the icon survives.
+              -->
+              <div class="sde-actions">
+                <button class="primary-button" id="sde-update-btn" disabled>
+                  <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M21 2v6h-6"></path>
+                    <path d="M3 12a9 9 0 0 1 15-6.7L21 8"></path>
+                    <path d="M3 22v-6h6"></path>
+                    <path d="M21 12a9 9 0 0 1-15 6.7L3 16"></path>
+                  </svg>
+                  <span class="btn-label">Download &amp; Validate SDE</span>
+                </button>
+                <button class="secondary-button" id="sde-check-btn">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M21 2v6h-6"></path>
+                    <path d="M3 12a9 9 0 0 1 15-6.7L21 8"></path>
+                    <path d="M3 22v-6h6"></path>
+                    <path d="M21 12a9 9 0 0 1-15 6.7L3 16"></path>
+                  </svg>
+                  <span class="btn-label">Check for Updates</span>
+                </button>
+                <button class="secondary-button" id="sde-validate-btn">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <polyline points="20 6 9 17 4 12"></polyline>
+                  </svg>
+                  <span class="btn-label">Test Current SDE</span>
+                </button>
+                <button class="secondary-button" id="sde-restore-btn" disabled>
+                  <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <polyline points="1 4 1 10 7 10"></polyline>
+                    <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path>
+                  </svg>
+                  <span class="btn-label">Restore Previous SDE</span>
+                </button>
+              </div>
+
+              <div class="sde-progress" id="sde-progress" style="display: none;">
+                <div class="progress-bar-container">
+                  <div class="progress-bar" id="sde-progress-bar"></div>
+                </div>
+                <div class="progress-text" id="sde-progress-text">Initializing...</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="settings-section">
+            <h3>Industry Cost Indices</h3>
+            <div class="sde-info-container">
+              <div class="sde-status-grid">
+                <div class="sde-status-item">
+                  <span class="sde-label">Systems with Data</span>
+                  <span class="sde-value" id="cost-indices-count">Loading...</span>
+                </div>
+                <div class="sde-status-item">
+                  <span class="sde-label">Last Updated</span>
+                  <span class="sde-value" id="cost-indices-last-fetch">Never</span>
+                </div>
+                <div class="sde-status-item">
+                  <span class="sde-label">Cache Duration</span>
+                  <span class="sde-value">1 hour</span>
+                </div>
+              </div>
+
+              <div class="sde-actions">
+                <button class="primary-button" id="cost-indices-update-btn">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M21 2v6h-6"></path>
+                    <path d="M3 12a9 9 0 0 1 15-6.7L21 8"></path>
+                    <path d="M3 22v-6h6"></path>
+                    <path d="M21 12a9 9 0 0 1-15 6.7L3 16"></path>
+                  </svg>
+                  <span class="btn-label">Update Cost Indices</span>
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div class="settings-section">
+            <h3>About</h3>
+            <div class="sde-info-container">
+              <div class="sde-status-grid">
+                <div class="sde-status-item">
+                  <span class="sde-label">Application Version</span>
+                  <span class="sde-value" id="app-version">Loading...</span>
+                </div>
+                <div class="sde-status-item">
+                  <span class="sde-label">Electron Version</span>
+                  <span class="sde-value" id="electron-version">Loading...</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ============ Accounts ============ -->
+        <!-- Accounts follows the mockup: the Connect button sits in the page
+             header row, and the character cards are bare (each card is its own
+             elevated surface), not wrapped in a section panel. -->
+        <div class="tab-content" id="accounts-tab">
+          <div class="tab-header tab-header-with-action">
+            <div>
+              <h2>Account Settings</h2>
+              <p>Manage your Eve Online characters and accounts</p>
+            </div>
+            <button class="primary-button" id="connect-character-btn">
+              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <line x1="12" y1="5" x2="12" y2="19"></line>
+                <line x1="5" y1="12" x2="19" y2="12"></line>
+              </svg>
+              <span class="btn-label">Connect Character</span>
+            </button>
+          </div>
+
+          <h3 class="standalone-heading">Connected Characters</h3>
+
+          <div id="characters-list" class="characters-list">
+            <!-- Populated by settings-renderer.js -->
+          </div>
+          <div class="empty-state" id="empty-characters-state" style="display: none;">
+            <svg xmlns="http://www.w3.org/2000/svg" width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"></path>
+              <circle cx="9" cy="7" r="4"></circle>
+              <path d="M22 21v-2a4 4 0 0 0-3-3.87"></path>
+              <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
+            </svg>
+            <p>No characters connected yet</p>
+            <small>Click "Connect Character" to add your Eve Online characters</small>
+          </div>
+        </div>
+
+        <!-- ============ Industry ============ -->
+        <div class="tab-content" id="industry-tab">
+          <div class="tab-header">
+            <h2>Industry Settings</h2>
+            <p>Configure corporation divisions and reaction handling for manufacturing</p>
+          </div>
+
+          <div class="settings-section settings-section-titled">
+            <h3>Corporation Divisions</h3>
+            <p class="section-description">Select which corporation divisions to include for each character</p>
+            <div id="character-divisions-container"></div>
+          </div>
+
+          <div class="settings-section settings-section-titled">
+            <h3>Default Manufacturing Characters</h3>
+            <p class="section-description">Select which characters to use by default when creating manufacturing plans</p>
+            <div id="default-manufacturing-characters-container">
+              <!-- Populated by settings-renderer.js -->
+            </div>
+          </div>
+
+          <div class="settings-section settings-section-titled">
+            <h3>Reactions</h3>
+            <p class="section-description">Configure how reactions are handled in manufacturing calculations</p>
+
+            <div class="setting-item">
+              <div class="setting-info">
+                <label>Calculate Reactions as Intermediates</label>
+                <span class="setting-description">When enabled, reaction products will be calculated as intermediate materials rather than purchased from market</span>
+              </div>
+              <label class="toggle">
+                <input type="checkbox" id="reactions-as-intermediates">
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </main>
+  </div>
+
+  <!-- Validation Results Modal -->
+  <div id="validation-modal" class="modal" style="display: none;" role="dialog" aria-modal="true" aria-labelledby="validation-modal-title">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2 id="validation-modal-title">SDE Validation Results</h2>
+        <button class="modal-close" id="validation-modal-close" aria-label="Close dialog">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div id="validation-summary" class="validation-summary"></div>
+        <div id="validation-details" class="validation-details"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="secondary-button" id="validation-modal-ok">OK</button>
+      </div>
+    </div>
+  </div>
+  </template>

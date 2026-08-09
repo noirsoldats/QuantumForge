@@ -1,0 +1,541 @@
+/*
+ * What Can I Build? view.
+ *
+ * Shares its shape with Manufacturing Summary - filter card on top, results
+ * table below - but adds the three-level asset source tree and the on-hand
+ * percentage colouring that are unique to this screen.
+ */
+
+/* Binding rule 6a: `hidden` is only a browser-default display:none, so any
+   explicit display in this file would beat it. Catch-all for the whole view. */
+#wcib-view [hidden] { display: none !important; }
+
+.wcib-view {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 18px;
+  min-width: 0;
+}
+
+.wcib-spacer { flex: 1; }
+
+/* ------------------------------------------------------------------ card */
+
+.wcib-card {
+  background: var(--qf-bg-elevated);
+  border: 1px solid var(--qf-border);
+  border-radius: var(--qf-radius-lg);
+  overflow: hidden;
+}
+
+.wcib-card-accent { height: 2px; background: var(--qf-accent-gradient-h); }
+
+/* -------------------------------------------------------------- controls */
+
+.wcib-controls {
+  padding: 16px 18px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 16px 20px;
+}
+
+.wcib-panel { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+
+.wcib-panel-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.wcib-panel-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.wcib-label {
+  display: block;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--qf-text-faint);
+  font-weight: 700;
+  margin-bottom: 8px;
+}
+.wcib-panel-head .wcib-label { margin-bottom: 0; }
+
+.wcib-field { min-width: 0; }
+.wcib-field-grow { flex: 1; min-width: 240px; }
+.wcib-field-set { min-width: 180px; }
+
+.wcib-hint {
+  margin: 6px 0 0;
+  font-size: 11px;
+  color: var(--qf-text-faint);
+  line-height: 1.4;
+}
+
+.wcib-link {
+  background: none;
+  border: none;
+  padding: 0;
+  font-family: inherit;
+  font-size: 11px;
+  color: var(--qf-accent);
+  cursor: pointer;
+}
+.wcib-link:hover { color: var(--qf-accent-bright); }
+
+.wcib-dot { font-size: 11px; color: var(--qf-text-faint); }
+
+.wcib-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  background: none;
+  border: none;
+  padding: 2px;
+  color: var(--qf-text-muted);
+  cursor: pointer;
+}
+.wcib-icon-btn:hover { color: var(--qf-accent); }
+
+/* Binding rule 4: --qf-surface-sunken, not --qf-surface, so inputs read as
+   fields against the elevated card rather than as "no background". */
+.wcib-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 12px;
+  font-size: var(--qf-text-sm);
+  background: var(--qf-surface-sunken);
+  border: 1px solid var(--qf-border);
+  border-radius: var(--qf-radius-md);
+  color: var(--qf-text-primary);
+  font-family: inherit;
+}
+.wcib-input-mono { font-family: var(--qf-font-mono); }
+.wcib-input:focus { outline: none; border-color: var(--qf-border-active); }
+
+/* ----------------------------------------------------------- asset tree */
+
+.wcib-asset-tree {
+  border: 1px solid var(--qf-border);
+  border-radius: var(--qf-radius-md);
+  background: var(--qf-surface-sunken);
+  padding: 6px;
+  max-height: 240px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.wcib-asset-char { display: flex; flex-direction: column; }
+
+.wcib-asset-char-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 6px;
+  font-size: var(--qf-text-sm);
+  color: var(--qf-text-heading);
+  font-weight: 600;
+}
+
+.wcib-expand {
+  display: inline-flex;
+  align-items: center;
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--qf-text-faint);
+  cursor: pointer;
+}
+.wcib-expand svg { transition: transform 0.15s ease; }
+.wcib-expand.is-open svg { transform: rotate(90deg); }
+
+.wcib-avatar {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.wcib-asset-children {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-left: 22px;
+}
+
+.wcib-asset-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 4px 6px;
+  font-size: 12px;
+  color: var(--qf-text-primary);
+  cursor: pointer;
+  border-radius: var(--qf-radius-sm);
+}
+.wcib-asset-row:hover { background: var(--qf-surface); }
+
+/* The corp row is a LABEL, not a selectable source - clicking it expands.
+   Corp assets are chosen per division, so a corp-level tick would either
+   duplicate them or read as enabled while contributing nothing. */
+.wcib-asset-corp { cursor: pointer; }
+.wcib-corp-label { color: var(--qf-text-muted); }
+
+.wcib-asset-divisions {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-left: 22px;
+}
+
+.wcib-asset-empty {
+  padding: 12px;
+  font-size: 12px;
+  color: var(--qf-text-faint);
+  text-align: center;
+}
+
+/* --------------------------------------------------------------- chips */
+
+.wcib-chip-row { display: flex; gap: 6px; flex-wrap: wrap; }
+.wcib-chip-wrap { flex-wrap: wrap; }
+
+/* Binding rule 1: the selected state is box-shadow only and background-color
+   stays constant - a toggled background does not clear reliably on a chip
+   highlighted on its first paint. */
+.wcib-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 11px;
+  border-radius: var(--qf-radius-pill);
+  border: 1px solid var(--qf-border);
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  font-family: inherit;
+  background-color: transparent;
+  color: var(--qf-text-muted);
+  box-shadow: none;
+}
+.wcib-chip.is-on {
+  border-color: var(--qf-border-active);
+  color: var(--qf-accent);
+  box-shadow: inset 0 0 0 200px var(--qf-accent-dim);
+}
+
+/* Blueprint and character filters are SEGMENTS, not pills: square corners
+   separate "pick one scope" from "toggle many tags". */
+.wcib-chip-seg {
+  padding: 6px 12px;
+  border-radius: var(--qf-radius-sm);
+}
+
+.wcib-char-select { margin-top: 8px; }
+
+/* ------------------------------------------------------------- checkbox */
+
+.wcib-check {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: var(--qf-text-sm);
+  color: var(--qf-text-primary);
+  cursor: pointer;
+}
+.wcib-check-title { display: block; font-weight: 500; }
+.wcib-check-hint {
+  display: block;
+  font-size: 11px;
+  color: var(--qf-text-faint);
+  line-height: 1.35;
+  margin-top: 2px;
+}
+
+/* ------------------------------------------------------------ threshold */
+
+.wcib-threshold-row { display: flex; align-items: center; gap: 10px; }
+
+.wcib-range { flex: 1; min-width: 0; accent-color: var(--qf-accent); }
+
+.wcib-threshold-num { display: flex; align-items: center; gap: 4px; }
+.wcib-threshold-num .wcib-input { width: 62px; text-align: center; padding: 5px 6px; }
+.wcib-suffix { font-size: 12px; color: var(--qf-text-muted); }
+
+/* -------------------------------------------------------- controls foot */
+
+/* The Calculate button becomes Cancel mid-run, matching Manufacturing
+   Summary. It stays ENABLED - a disabled button swallows clicks, so a
+   "cancel" the user cannot press is worse than no cancel at all. Both states
+   set the same properties so neither can leave a value behind. */
+#wcib-calculate {
+  background-color: var(--qf-accent);
+  border-color: var(--qf-accent);
+}
+#wcib-calculate.is-cancel {
+  background-color: var(--qf-error);
+  border-color: var(--qf-error);
+}
+
+.wcib-controls-foot {
+  padding: 15px 18px 16px;
+  display: flex;
+  align-items: flex-end;
+  gap: 14px;
+  flex-wrap: wrap;
+  border-top: 1px solid var(--qf-border-subtle);
+}
+
+/* ---------------------------------------------------------------- warning */
+
+.wcib-warning {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 12px;
+  font-size: var(--qf-text-sm);
+  border-radius: var(--qf-radius-md);
+  color: var(--qf-warning);
+  background: var(--qf-warning-dim);
+  border: 1px solid var(--qf-warning);
+}
+
+/* Stale (not merely warn) reads as an error - prices that old make the profit
+   columns misleading. Both branches set every property, so neither state can
+   leave a value behind (binding rule 3). */
+.wcib-warning.is-stale {
+  color: var(--qf-error);
+  background: var(--qf-error-dim);
+  border-color: var(--qf-error);
+}
+
+/* --------------------------------------------------------------- progress */
+
+.wcib-progress {
+  background: var(--qf-bg-elevated);
+  border: 1px solid var(--qf-border);
+  border-radius: var(--qf-radius-md);
+  padding: 12px 16px;
+}
+
+.wcib-progress-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: var(--qf-text-sm);
+  color: var(--qf-text-muted);
+  margin-bottom: 8px;
+}
+.wcib-progress-count { font-family: var(--qf-font-mono); font-size: 12px; }
+
+.wcib-progress-track {
+  height: 4px;
+  background: var(--qf-surface-sunken);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.wcib-progress-fill {
+  height: 100%;
+  width: 0;
+  background: var(--qf-accent-gradient-h);
+  transition: width 0.2s ease;
+}
+
+/* ------------------------------------------------------------ empty state */
+
+.wcib-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 48px 24px;
+  text-align: center;
+  background: var(--qf-bg-elevated);
+  border: 1px solid var(--qf-border);
+  border-radius: var(--qf-radius-lg);
+}
+
+.wcib-empty-icon { color: var(--qf-text-faint); }
+.wcib-empty-title { font-size: var(--qf-text-lg); font-weight: 600; color: var(--qf-text-heading); }
+.wcib-empty-text { font-size: var(--qf-text-sm); color: var(--qf-text-muted); max-width: 460px; }
+
+/* ---------------------------------------------------------------- results */
+
+#wcib-results {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
+
+.wcib-results-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.wcib-results-title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--qf-text-heading);
+}
+
+.wcib-pill {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--qf-text-faint);
+  background: var(--qf-surface);
+  border: 1px solid var(--qf-border);
+  border-radius: var(--qf-radius-pill);
+  padding: 2px 9px;
+}
+
+.wcib-search-wrap { width: 220px; position: relative; display: flex; align-items: center; }
+.wcib-search { padding-right: 28px; }
+.wcib-search-clear {
+  position: absolute;
+  right: 8px;
+  background: none;
+  border: none;
+  color: var(--qf-text-faint);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 2px;
+}
+.wcib-search-clear:hover { color: var(--qf-text-primary); }
+
+/* Horizontal scroll ONLY - the table grows to full height and scrolls with
+   the main view rather than trapping a second scrollbar inside the card. */
+.wcib-table-scroll { overflow-x: auto; }
+
+.wcib-table { width: 100%; border-collapse: collapse; min-width: max-content; }
+
+/* NOT position:sticky - a sticky header pins to its nearest SCROLLING
+   ancestor, which is now the view host, so it would float over the filters. */
+.wcib-th {
+  padding: 9px 11px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--qf-text-faint);
+  font-weight: 700;
+  white-space: nowrap;
+  background: var(--qf-bg-elevated);
+  border-bottom: 1px solid var(--qf-border);
+  text-align: left;
+}
+.wcib-th.is-numeric { text-align: right; }
+.wcib-th.is-center { text-align: center; }
+.wcib-th.sortable { cursor: pointer; user-select: none; }
+.wcib-th.sortable:hover { color: var(--qf-text-muted); }
+.wcib-th.is-active { color: var(--qf-accent); }
+
+.wcib-sort-icon { opacity: 0.6; font-size: 9px; }
+
+.wcib-td {
+  padding: 8px 11px;
+  font-size: var(--qf-text-sm);
+  color: var(--qf-text-primary);
+  white-space: nowrap;
+  border-bottom: 1px solid var(--qf-border-subtle);
+}
+.wcib-td.is-numeric { text-align: right; font-family: var(--qf-font-mono); }
+.wcib-td.is-center { text-align: center; }
+
+.wcib-row { background-color: transparent; box-shadow: none; }
+.wcib-row.is-selected { box-shadow: inset 0 0 0 200px var(--qf-accent-dim); }
+
+.wcib-muted { color: var(--qf-text-faint); }
+
+/* Both text columns truncate with a full-text tooltip; without a cap they
+   size to their longest value and push the numbers off-screen. */
+.wcib-item-name {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--qf-text-heading);
+  font-weight: 500;
+  max-width: 260px;
+}
+
+.wcib-category {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--qf-text-muted);
+  max-width: 120px;
+}
+
+/* Profit sign. Both branches set colour, so switching always resets. */
+.wcib-profit { color: var(--qf-success); }
+.wcib-profit.is-negative { color: var(--qf-error); }
+
+/* ------------------------------------------------- on-hand percentage ---
+ *
+ * The headline figure of this screen: how close the hangar is to covering
+ * one full run. Banded rather than a gradient so the eye can group rows.
+ */
+.wcib-percent {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 46px;
+  padding: 2px 7px;
+  border-radius: var(--qf-radius-sm);
+  font-size: 11px;
+  font-weight: 700;
+  font-family: var(--qf-font-mono);
+}
+.wcib-percent.is-full    { color: var(--qf-success); background: var(--qf-success-dim); }
+.wcib-percent.is-high    { color: #a3e635; background: rgba(163, 230, 53, 0.15); }
+.wcib-percent.is-partial { color: var(--qf-warning); background: var(--qf-warning-dim); }
+.wcib-percent.is-low     { color: var(--qf-error); background: var(--qf-error-dim); }
+
+/* ------------------------------------------------------------ columns modal */
+
+.wcib-columns-hint { margin: 0 0 10px; font-size: 12px; color: var(--qf-text-muted); }
+
+.wcib-columns-list {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  max-height: 380px;
+  overflow-y: auto;
+}
+
+.wcib-column-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 6px 9px;
+  border: 1px solid var(--qf-border);
+  border-radius: var(--qf-radius-sm);
+  background: var(--qf-surface-sunken);
+  font-size: var(--qf-text-sm);
+  color: var(--qf-text-primary);
+  cursor: grab;
+}
+.wcib-column-row.is-dragging { opacity: 0.4; }
+.wcib-column-row.is-drop-target { border-color: var(--qf-accent); }
+
+.wcib-column-grip { color: var(--qf-text-faint); cursor: grab; user-select: none; }
+.wcib-column-label { cursor: pointer; }
+
+/* --------------------------------------------------------- plan modal */
+
+.wcib-plan-modal { width: 460px; max-width: 100%; }
+.wcib-plan-summary { margin: 0 0 14px; font-size: var(--qf-text-sm); color: var(--qf-text-muted); }

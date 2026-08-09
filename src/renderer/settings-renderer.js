@@ -2,7 +2,24 @@
 
 console.log('Settings window initialized');
 
+
 let currentSettings = {};
+
+/**
+ * Toast helper.
+ *
+ * This file still uses alert() in many places (a pre-existing issue tracked in
+ * the UI overhaul plan). New code uses the shared toast instead: under the
+ * application shell an alert() is modal and freezes the whole window.
+ */
+function showToast(message, type = 'info') {
+  if (window.QFToast) {
+    window.QFToast.show(message, type);
+  } else {
+    console[type === 'error' ? 'error' : 'log']('[settings]', message);
+  }
+}
+
 
 // Load settings when window opens
 async function loadSettings() {
@@ -46,7 +63,7 @@ function populateSettings() {
   }
 
   const desktopNotifications = document.getElementById('desktop-notifications');
-  if (desktopNotifications) {
+  if (desktopNotifications && !desktopNotifications.disabled) {
     desktopNotifications.checked = currentSettings.general?.desktopNotifications !== false;
   }
 
@@ -87,7 +104,14 @@ async function saveSetting(category, key, value) {
   }
 }
 
-document.addEventListener('DOMContentLoaded', async () => {
+/**
+ * Main init for the Settings screen.
+ *
+ * Extracted from a DOMContentLoaded handler so the shell can mount Settings as
+ * a native view into a live document, where that event has long since fired.
+ * Called by initSettingsView() below.
+ */
+async function initSettingsMain() {
   // Load settings first
   await loadSettings();
 
@@ -229,7 +253,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     connectCharacterBtn.addEventListener('click', async () => {
       console.log('Connect Character clicked');
       connectCharacterBtn.disabled = true;
-      connectCharacterBtn.textContent = 'Authenticating...';
+      QFUI.setButtonLabel(connectCharacterBtn, 'Authenticating...');
 
       try {
         const result = await window.electronAPI.esi.authenticate();
@@ -245,19 +269,16 @@ document.addEventListener('DOMContentLoaded', async () => {
         alert('An error occurred during authentication. Please try again.');
       } finally {
         connectCharacterBtn.disabled = false;
-        connectCharacterBtn.innerHTML = `
-          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <line x1="12" y1="5" x2="12" y2="19"></line>
-            <line x1="5" y1="12" x2="19" y2="12"></line>
-          </svg>
-          Connect Character
-        `;
+        // Restore only the label - the icon in the markup is left intact
+        // rather than re-emitting markup from JS (which used to overwrite any
+        // changes made to the button in the HTML).
+        QFUI.setButtonLabel(connectCharacterBtn, 'Connect Character');
       }
     });
   }
 
   console.log('Settings handlers initialized');
-});
+}
 
 // Load and display characters
 async function loadCharacters() {
@@ -279,9 +300,23 @@ async function loadCharacters() {
       if (emptyState) emptyState.style.display = 'flex';
     } else {
       if (emptyState) emptyState.style.display = 'none';
+
+      // Corporation names are not stored locally. One deduped, session-cached
+      // call covers every character; failure falls back to the bare ID.
+      let corpNames = {};
+      try {
+        corpNames = await window.electronAPI.esi.resolveCorporationNames(
+          characters.map(c => c.corporationId)
+        ) || {};
+      } catch (error) {
+        console.error('Error resolving corporation names:', error);
+      }
+
       charactersList.innerHTML = characters.map(char =>
-        createCharacterCard(char, char.characterId === defaultCharacterId)
+        createCharacterCard(char, char.characterId === defaultCharacterId, corpNames)
       ).join('');
+
+      QFUI.attachPortraitFallbacks(charactersList);
 
       // Add event handlers
       characters.forEach(char => {
@@ -291,8 +326,7 @@ async function loadCharacters() {
         const assetsBtn = document.getElementById(`assets-${char.characterId}`);
         if (assetsBtn) {
           assetsBtn.addEventListener('click', () => {
-            console.log('Opening assets window for character:', char.characterId);
-            window.electronAPI.assets.openWindow(char.characterId);
+            window.electronAPI.window.openView('assets', { characterId: char.characterId });
           });
         }
 
@@ -301,7 +335,7 @@ async function loadCharacters() {
         if (skillsBtn) {
           skillsBtn.addEventListener('click', () => {
             console.log('Opening skills window for character:', char.characterId);
-            window.electronAPI.skills.openWindow(char.characterId);
+            window.electronAPI.window.openView('skills', { characterId: char.characterId });
           });
         }
 
@@ -310,7 +344,7 @@ async function loadCharacters() {
         if (blueprintsBtn) {
           blueprintsBtn.addEventListener('click', () => {
             console.log('Opening blueprints window for character:', char.characterId);
-            window.electronAPI.blueprints.openWindow(char.characterId);
+            window.electronAPI.window.openView('blueprints', { characterId: char.characterId });
           });
         }
 
@@ -322,15 +356,16 @@ async function loadCharacters() {
           });
         }
 
-        // Default button handler
+        // Default button handler.
+        //
+        // Clicking the CURRENT default is a no-op: "characters exist but none
+        // is default" is not a supported state (every tool that resolves
+        // skills, blueprints or pricing would need its own fallback), so the
+        // way to change it is to make a different character default.
         const defaultBtn = document.getElementById(`default-${char.characterId}`);
-        if (defaultBtn) {
+        if (defaultBtn && !isDefault) {
           defaultBtn.addEventListener('click', () => {
-            if (isDefault) {
-              clearDefaultCharacter();
-            } else {
-              setDefaultCharacter(char.characterId);
-            }
+            setDefaultCharacter(char.characterId);
           });
         }
       });
@@ -340,22 +375,73 @@ async function loadCharacters() {
   }
 }
 
+/**
+ * Describe a character's authorisation state for the card's status line.
+ * Returns a label plus a semantic colour token.
+ * @param {Object} character
+ * @returns {{ text: string, tone: 'success'|'warning'|'error' }}
+ */
+function getCharacterAuthStatus(character) {
+  const expiresAt = character.expiresAt || character.tokenExpiry;
+  if (!expiresAt) {
+    return { text: 'Authorized', tone: 'success' };
+  }
+
+  const msLeft = new Date(expiresAt).getTime() - Date.now();
+  if (Number.isNaN(msLeft)) {
+    return { text: 'Authorized', tone: 'success' };
+  }
+  if (msLeft <= 0) {
+    // Tokens refresh automatically; an expired one is not an error state.
+    return { text: 'Token expired - refreshing on next use', tone: 'warning' };
+  }
+
+  const minutes = Math.round(msLeft / 60000);
+  if (minutes <= 20) {
+    return { text: `Token expires in ${minutes}m`, tone: 'warning' };
+  }
+
+  const scopeCount = Array.isArray(character.scopes) ? character.scopes.length : 0;
+  return {
+    text: scopeCount ? `Authorized - ${scopeCount} scopes` : 'Authorized',
+    tone: 'success',
+  };
+}
+
 // Create character card HTML
-function createCharacterCard(character, isDefault = false) {
+function createCharacterCard(character, isDefault = false, corpNames = {}) {
+  const status = getCharacterAuthStatus(character);
+  // Resolved name when ESI could supply one; the bare ID otherwise, so a
+  // rate-limited or deleted corporation still identifies the character.
+  const corpLine = corpNames[character.corporationId]
+    || (character.corporationId
+      ? `Corporation ${character.corporationId}`
+      : 'Corporation unknown');
+
   return `
     <div class="character-card ${isDefault ? 'default-character' : ''}" data-character-id="${character.characterId}">
-      ${isDefault ? '<div class="default-badge">Default</div>' : ''}
-      <img
-        src="${character.portrait}?size=128"
-        alt="${character.characterName}"
-        class="character-portrait"
-        onerror="this.src='data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%22128%22 height=%22128%22%3E%3Crect fill=%22%232d2d44%22 width=%22128%22 height=%22128%22/%3E%3C/svg%3E'"
-      />
+      <div class="character-portrait-wrap">
+        <img
+          src="${character.portrait}?size=128"
+          alt="${character.characterName}"
+          class="character-portrait"
+          data-fallback="portrait"
+        />
+        ${isDefault ? `
+        <span class="character-default-star" title="Default character">
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="currentColor" stroke="none" aria-hidden="true">
+            <path d="M12 2l2.9 6.3 6.9.7-5.1 4.6 1.4 6.8L12 17.8 5.9 20.4l1.4-6.8L2.2 9l6.9-.7z"></path>
+          </svg>
+        </span>` : ''}
+      </div>
       <div class="character-info">
-        <div class="character-name">${character.characterName}</div>
-        <div class="character-details">
-          <span class="character-id">ID: ${character.characterId}</span>
-          <span>Added: ${new Date(character.addedAt).toLocaleDateString()}</span>
+        <div class="character-name-row">
+          <span class="character-name">${character.characterName}</span>
+          ${isDefault ? '<span class="default-badge">Default</span>' : ''}
+        </div>
+        <div class="character-corp">${corpLine}</div>
+        <div class="character-status character-status-${status.tone}">
+          <span class="character-status-dot"></span>${status.text}
         </div>
       </div>
       <div class="character-actions">
@@ -381,25 +467,19 @@ function createCharacterCard(character, isDefault = false) {
           Blueprints
         </button>
         <button
-          class="icon-button ${isDefault ? 'active' : ''}"
+          class="text-button text-button-accent ${isDefault ? 'active' : ''}"
           id="default-${character.characterId}"
-          title="${isDefault ? 'Clear Default Character' : 'Set as Default Character'}"
+          title="${isDefault ? 'This is the default character' : 'Set as Default Character'}"
+          ${isDefault ? 'disabled' : ''}
         >
-          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="${isDefault ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon>
-          </svg>
+          ${isDefault ? 'Default' : 'Set Default'}
         </button>
         <button
-          class="icon-button danger"
+          class="text-button text-button-danger"
           id="remove-${character.characterId}"
           title="Remove Character"
         >
-          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <polyline points="3 6 5 6 21 6"></polyline>
-            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
-            <line x1="10" y1="11" x2="10" y2="17"></line>
-            <line x1="14" y1="11" x2="14" y2="17"></line>
-          </svg>
+          Remove
         </button>
       </div>
     </div>
@@ -505,6 +585,12 @@ async function renderCharacterDivisionSection(character) {
     const settings = await window.electronAPI.divisions.getSettings(characterId);
     const { enabledDivisions, divisionNames, hasCustomNames } = settings;
 
+    // Blueprint DIVISIONS are a separate axis stored alongside the asset ones.
+    // The per-character "use blueprints from" toggle lives in Default
+    // Manufacturing Characters, beside its asset counterpart - not here.
+    const blueprintSettings = await window.electronAPI.divisions.getBlueprintSettings(characterId);
+    const blueprintDivisions = blueprintSettings.enabledDivisions || [];
+
     // Build selected divisions summary for header
     let selectedSummary = 'None selected';
     if (enabledDivisions.length > 0) {
@@ -520,10 +606,16 @@ async function renderCharacterDivisionSection(character) {
         <div class="character-division-header" id="division-header-${characterId}">
           <div class="character-division-header-left">
             <span class="expand-toggle" id="expand-toggle-${characterId}">
-              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <polyline points="6 9 12 15 18 9"></polyline>
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="18 15 12 9 6 15"></polyline>
               </svg>
             </span>
+            <img
+              src="${character.portrait}?size=64"
+              alt=""
+              class="division-character-portrait"
+              data-fallback="portrait"
+            />
             <span class="character-name">${character.characterName}</span>
           </div>
           <div class="character-division-summary" id="division-summary-${characterId}">
@@ -531,7 +623,9 @@ async function renderCharacterDivisionSection(character) {
             <span class="summary-value">${selectedSummary}</span>
           </div>
         </div>
-        <div class="character-division-content" id="division-content-${characterId}" style="display: none;">
+        <!-- Expanded by default, matching the mockup. toggleCharacterDivisions
+             reads this inline style, so it must stay inline. -->
+        <div class="character-division-content" id="division-content-${characterId}" style="display: block;">
           ${!hasCustomNames ? `
             <div class="info-banner">
               <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -543,7 +637,7 @@ async function renderCharacterDivisionSection(character) {
             </div>
           ` : ''}
           <div class="divisions-grid" id="divisions-grid-${characterId}">
-            ${renderDivisionCheckboxes(characterId, enabledDivisions, divisionNames)}
+            ${renderDivisionCheckboxes(characterId, enabledDivisions, divisionNames, blueprintDivisions)}
           </div>
           <div class="division-actions">
             <button class="secondary-button" id="fetch-divisions-${characterId}">
@@ -559,6 +653,7 @@ async function renderCharacterDivisionSection(character) {
     `;
 
     containerEl.insertAdjacentHTML('beforeend', sectionHTML);
+    QFUI.attachPortraitFallbacks(containerEl);
 
     // Set up event listeners
     setupCharacterDivisionListeners(characterId);
@@ -577,24 +672,51 @@ async function renderCharacterDivisionSection(character) {
 /**
  * Render division checkboxes HTML (returns HTML string)
  */
-function renderDivisionCheckboxes(characterId, enabledDivisions, divisionNames) {
-  let html = '';
+function renderDivisionCheckboxes(
+  characterId,
+  enabledDivisions,
+  divisionNames,
+  blueprintDivisions = []
+) {
+  // Two INDEPENDENT axes per division: assets and blueprints. A corp may keep
+  // BPOs in a library division while materials live in a production division,
+  // so enabling one must never imply the other.
+  let html = `
+    <div class="division-item division-item-head">
+      <span class="division-name"></span>
+      <span class="division-axis-label" title="Use this division's assets">Assets</span>
+      <span class="division-axis-label" title="Use this division's blueprints">Blueprints</span>
+    </div>
+  `;
+
   for (let divId = 1; divId <= 7; divId++) {
-    const isChecked = enabledDivisions.includes(divId);
+    const assetsChecked = enabledDivisions.includes(divId);
+    const blueprintsChecked = blueprintDivisions.includes(divId);
     const divName = divisionNames[divId] || `Division ${divId}`;
 
     html += `
       <div class="division-item">
-        <label class="division-label">
+        <span class="division-name">
+          ${divName}
+          ${divisionNames[divId] ? '<span class="custom-name-badge">Custom</span>' : ''}
+        </span>
+        <label class="division-axis" title="Use ${divName} assets">
           <input
             type="checkbox"
             class="division-checkbox"
             data-character="${characterId}"
             data-division="${divId}"
-            ${isChecked ? 'checked' : ''}
+            ${assetsChecked ? 'checked' : ''}
           />
-          <span class="division-name">${divName}</span>
-          ${divisionNames[divId] ? '<span class="custom-name-badge">Custom</span>' : ''}
+        </label>
+        <label class="division-axis" title="Use ${divName} blueprints">
+          <input
+            type="checkbox"
+            class="division-blueprint-checkbox"
+            data-character="${characterId}"
+            data-division="${divId}"
+            ${blueprintsChecked ? 'checked' : ''}
+          />
         </label>
       </div>
     `;
@@ -606,10 +728,18 @@ function renderDivisionCheckboxes(characterId, enabledDivisions, divisionNames) 
  * Set up checkbox and fetch button listeners for a character
  */
 function setupCharacterDivisionListeners(characterId) {
-  // Division checkbox listeners
+  // Division checkbox listeners - ASSET axis
   const checkboxes = document.querySelectorAll(`#divisions-grid-${characterId} .division-checkbox`);
   checkboxes.forEach(checkbox => {
     checkbox.addEventListener('change', handleDivisionToggle);
+  });
+
+  // Division checkbox listeners - BLUEPRINT axis (independent of the above)
+  const blueprintCheckboxes = document.querySelectorAll(
+    `#divisions-grid-${characterId} .division-blueprint-checkbox`
+  );
+  blueprintCheckboxes.forEach(checkbox => {
+    checkbox.addEventListener('change', handleBlueprintDivisionToggle);
   });
 
   // Fetch button listener
@@ -634,7 +764,7 @@ function toggleCharacterDivisions(characterId) {
     // Collapse
     contentEl.style.display = 'none';
     toggleIcon.innerHTML = `
-      <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
         <polyline points="6 9 12 15 18 9"></polyline>
       </svg>
     `;
@@ -642,7 +772,7 @@ function toggleCharacterDivisions(characterId) {
     // Expand
     contentEl.style.display = 'block';
     toggleIcon.innerHTML = `
-      <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
         <polyline points="18 15 12 9 6 15"></polyline>
       </svg>
     `;
@@ -694,6 +824,78 @@ async function handleDivisionToggle(event) {
     // Revert checkbox
     checkbox.checked = !isChecked;
     alert('An error occurred while updating division settings.');
+  }
+}
+
+/**
+ * Toggle a corp division as a BLUEPRINT source.
+ *
+ * Deliberately separate from handleDivisionToggle: the two axes are
+ * independent, so this must never touch the asset divisions.
+ */
+async function handleBlueprintDivisionToggle(event) {
+  const checkbox = event.target;
+  const characterId = parseInt(checkbox.getAttribute('data-character'), 10);
+  const divisionId = parseInt(checkbox.getAttribute('data-division'), 10);
+  const isChecked = checkbox.checked;
+
+  try {
+    const settings = await window.electronAPI.divisions.getBlueprintSettings(characterId);
+    let divisions = settings.enabledDivisions || [];
+
+    if (isChecked) {
+      if (!divisions.includes(divisionId)) divisions.push(divisionId);
+    } else {
+      divisions = divisions.filter(id => id !== divisionId);
+    }
+    divisions.sort((a, b) => a - b);
+
+    const success = await window.electronAPI.divisions.updateBlueprintDivisions(
+      characterId,
+      divisions
+    );
+
+    if (!success) {
+      // Revert so the checkbox never shows a state that was not saved.
+      checkbox.checked = !isChecked;
+      showToast('Failed to update blueprint divisions.', 'error');
+      return;
+    }
+    console.log(`Updated blueprint divisions for character ${characterId}:`, divisions);
+  } catch (error) {
+    console.error('Error toggling blueprint division:', error);
+    checkbox.checked = !isChecked;
+    showToast('An error occurred while updating blueprint divisions.', 'error');
+  }
+}
+
+/**
+ * Toggle whether a character's PERSONAL blueprints are used at all.
+ *
+ * Corp divisions are gated separately - turning this off does not clear them,
+ * so re-enabling the character restores their previous division selection.
+ */
+async function handleUseBlueprintsFromToggle(event) {
+  const checkbox = event.target;
+  const characterId = parseInt(checkbox.getAttribute('data-character'), 10);
+  const isChecked = checkbox.checked;
+
+  try {
+    const success = await window.electronAPI.divisions.setUseBlueprintsFrom(
+      characterId,
+      isChecked
+    );
+
+    if (!success) {
+      checkbox.checked = !isChecked;
+      showToast('Failed to update blueprint source.', 'error');
+      return;
+    }
+    console.log(`Character ${characterId} blueprint source: ${isChecked ? 'on' : 'off'}`);
+  } catch (error) {
+    console.error('Error toggling blueprint source:', error);
+    checkbox.checked = !isChecked;
+    showToast('An error occurred while updating the blueprint source.', 'error');
   }
 }
 
@@ -800,25 +1002,58 @@ async function loadDefaultManufacturingCharacters() {
       return;
     }
 
-    // Get current default manufacturing characters
+    // Get current default manufacturing characters (the ASSET axis)
     const defaultCharacterIds = await window.electronAPI.industry.getDefaultManufacturingCharacters();
 
-    // Render checkboxes
-    let html = '<div class="default-characters-grid">';
+    // ...and the BLUEPRINT axis, which is stored separately per character.
+    const blueprintSettings = {};
+    for (const character of characters) {
+      blueprintSettings[character.characterId] =
+        await window.electronAPI.divisions.getBlueprintSettings(character.characterId);
+    }
+
+    // Two INDEPENDENT axes per character, matching the division grid above:
+    // which characters' assets count, and which characters' blueprints supply
+    // ME/TE. A character can be one without being the other.
+    let html = `
+      <div class="default-characters-grid">
+        <div class="character-checkbox-item character-checkbox-head">
+          <span class="character-checkbox-name"></span>
+          <span class="division-axis-label" title="Use this character's assets">Assets</span>
+          <span class="division-axis-label" title="Use this character's blueprints">Blueprints</span>
+        </div>
+    `;
 
     for (const character of characters) {
-      const isChecked = defaultCharacterIds.includes(character.characterId);
+      const assetsChecked = defaultCharacterIds.includes(character.characterId);
+      const blueprintsChecked = !!(blueprintSettings[character.characterId] || {}).useBlueprintsFrom;
 
       html += `
         <div class="character-checkbox-item">
-          <label class="character-checkbox-label">
+          <span class="character-checkbox-name">
+            <img
+              src="${character.portrait}?size=64"
+              alt=""
+              class="mfg-character-portrait"
+              data-fallback="portrait"
+            />
+            <span>${character.characterName}</span>
+          </span>
+          <label class="division-axis" title="Use ${character.characterName}'s assets">
             <input
               type="checkbox"
               class="character-checkbox"
               data-character-id="${character.characterId}"
-              ${isChecked ? 'checked' : ''}
+              ${assetsChecked ? 'checked' : ''}
             />
-            <span class="character-checkbox-name">${character.characterName}</span>
+          </label>
+          <label class="division-axis" title="Use ${character.characterName}'s blueprints">
+            <input
+              type="checkbox"
+              class="character-blueprints-checkbox"
+              data-character="${character.characterId}"
+              ${blueprintsChecked ? 'checked' : ''}
+            />
           </label>
         </div>
       `;
@@ -826,11 +1061,18 @@ async function loadDefaultManufacturingCharacters() {
 
     html += '</div>';
     containerEl.innerHTML = html;
+    QFUI.attachPortraitFallbacks(containerEl);
 
-    // Add event listeners to checkboxes
+    // Asset axis
     const checkboxes = containerEl.querySelectorAll('.character-checkbox');
     checkboxes.forEach(checkbox => {
       checkbox.addEventListener('change', handleDefaultManufacturingCharacterToggle);
+    });
+
+    // Blueprint axis - independent of the asset checkboxes above.
+    const blueprintCheckboxes = containerEl.querySelectorAll('.character-blueprints-checkbox');
+    blueprintCheckboxes.forEach(checkbox => {
+      checkbox.addEventListener('change', handleUseBlueprintsFromToggle);
     });
 
   } catch (error) {
@@ -1065,7 +1307,7 @@ async function checkSdeUpdate() {
   const checkBtn = document.getElementById('sde-check-btn');
   if (checkBtn) {
     checkBtn.disabled = true;
-    checkBtn.textContent = 'Checking...';
+    QFUI.setButtonLabel(checkBtn, 'Checking...');
   }
 
   try {
@@ -1073,7 +1315,7 @@ async function checkSdeUpdate() {
   } finally {
     if (checkBtn) {
       checkBtn.disabled = false;
-      checkBtn.textContent = 'Check for Updates';
+      QFUI.setButtonLabel(checkBtn, 'Check for Updates');
     }
   }
 }
@@ -1088,8 +1330,10 @@ async function downloadSde() {
   if (updateBtn) updateBtn.disabled = true;
   if (progressContainer) progressContainer.style.display = 'flex';
 
-  // Listen for progress updates
-  window.electronAPI.sde.onProgress((progress) => {
+  // Listen for progress updates. Hold the disposer so we remove only OUR
+  // handler - removeProgressListener() nukes every listener on the channel,
+  // including other views'.
+  const disposeProgress = window.electronAPI.sde.onProgress((progress) => {
     if (progressBar && progressText) {
       progressBar.style.width = `${progress.percent || 0}%`;
 
@@ -1147,7 +1391,7 @@ async function downloadSde() {
     if (progressContainer) progressContainer.style.display = 'none';
     if (progressBar) progressBar.style.width = '0%';
   } finally {
-    window.electronAPI.sde.removeProgressListener();
+    disposeProgress();
     if (updateBtn) updateBtn.disabled = false;
   }
 }
@@ -1158,8 +1402,8 @@ async function validateCurrentSde() {
 
   if (validateBtn) {
     validateBtn.disabled = true;
-    const originalText = validateBtn.textContent;
-    validateBtn.textContent = 'Validating...';
+    const originalText = QFUI.getButtonLabel(validateBtn);
+    QFUI.setButtonLabel(validateBtn, 'Validating...');
 
     try {
       const result = await window.electronAPI.sde.validateCurrent();
@@ -1174,7 +1418,7 @@ async function validateCurrentSde() {
       alert(`Validation failed: ${error.message}`);
     } finally {
       validateBtn.disabled = false;
-      validateBtn.textContent = originalText;
+      QFUI.setButtonLabel(validateBtn, originalText);
     }
   }
 }
@@ -1192,8 +1436,8 @@ async function restoreBackupSde() {
 
   if (restoreBtn) {
     restoreBtn.disabled = true;
-    const originalText = restoreBtn.textContent;
-    restoreBtn.textContent = 'Restoring...';
+    const originalText = QFUI.getButtonLabel(restoreBtn);
+    QFUI.setButtonLabel(restoreBtn, 'Restoring...');
 
     try {
       const result = await window.electronAPI.sde.restoreBackup();
@@ -1211,7 +1455,7 @@ async function restoreBackupSde() {
       alert(`Restore failed: ${error.message}`);
     } finally {
       restoreBtn.disabled = false;
-      restoreBtn.textContent = originalText;
+      QFUI.setButtonLabel(restoreBtn, originalText);
     }
   }
 }
@@ -1234,9 +1478,11 @@ function showValidationResults(results) {
           : '<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="15" y1="9" x2="9" y2="15"></line><line x1="9" y1="9" x2="15" y2="15"></line></svg>'
         }
       </div>
-      <h3>${results.passed ? 'Validation Passed' : 'Validation Failed'}</h3>
-      <p>${results.summary}</p>
-      ${results.executionTime ? `<small>Completed in ${results.executionTime}ms</small>` : ''}
+      <div class="validation-summary-text">
+        <h3>${results.passed ? 'Validation Passed' : 'Validation Failed'}</h3>
+        <p>${results.summary}</p>
+        ${results.executionTime ? `<small>Completed in ${results.executionTime}ms</small>` : ''}
+      </div>
     </div>
   `;
 
@@ -1370,24 +1616,14 @@ async function updateCostIndices() {
   if (!updateBtn) return;
 
   updateBtn.disabled = true;
-  updateBtn.innerHTML = `
-    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-      <path d="M21 2v6h-6M3 12a9 9 0 0 1 15-6.7L21 8M3 22v-6h6M21 12a9 9 0 0 1-15 6.7L3 16"/>
-    </svg>
-    Updating...
-  `;
+  QFUI.setButtonLabel(updateBtn, 'Updating...');
 
   try {
     const result = await window.electronAPI.costIndices.fetch();
 
     if (result.success) {
-      // Show success state
-      updateBtn.innerHTML = `
-        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <polyline points="20 6 9 17 4 12"></polyline>
-        </svg>
-        Updated!
-      `;
+      // Show success state (label only - the icon stays put)
+      QFUI.setButtonLabel(updateBtn, 'Updated!');
 
       // Reload status
       await loadCostIndicesStatus();
@@ -1400,45 +1636,21 @@ async function updateCostIndices() {
       // Reset button after 2 seconds
       setTimeout(() => {
         updateBtn.disabled = false;
-        updateBtn.innerHTML = `
-          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M21 2v6h-6"></path>
-            <path d="M3 12a9 9 0 0 1 15-6.7L21 8"></path>
-            <path d="M3 22v-6h6"></path>
-            <path d="M21 12a9 9 0 0 1-15 6.7L3 16"></path>
-          </svg>
-          Update Cost Indices
-        `;
+        QFUI.setButtonLabel(updateBtn, 'Update Cost Indices');
       }, 2000);
     } else {
       // Show error
       alert(`Failed to update cost indices: ${result.error}`);
 
       updateBtn.disabled = false;
-      updateBtn.innerHTML = `
-        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M21 2v6h-6"></path>
-          <path d="M3 12a9 9 0 0 1 15-6.7L21 8"></path>
-          <path d="M3 22v-6h6"></path>
-          <path d="M21 12a9 9 0 0 1-15 6.7L3 16"></path>
-        </svg>
-        Update Cost Indices
-      `;
+      QFUI.setButtonLabel(updateBtn, 'Update Cost Indices');
     }
   } catch (error) {
     console.error('Error updating cost indices:', error);
     alert(`Error updating cost indices: ${error.message}`);
 
     updateBtn.disabled = false;
-    updateBtn.innerHTML = `
-      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-        <path d="M21 2v6h-6"></path>
-        <path d="M3 12a9 9 0 0 1 15-6.7L21 8"></path>
-        <path d="M3 22v-6h6"></path>
-        <path d="M21 12a9 9 0 0 1-15 6.7L3 16"></path>
-      </svg>
-      Update Cost Indices
-    `;
+    QFUI.setButtonLabel(updateBtn, 'Update Cost Indices');
   }
 }
 
@@ -1451,13 +1663,96 @@ function initializeCostIndicesControls() {
   }
 }
 
-// Call this when settings window loads
-if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', () => {
-    initializeSdeControls();
-    initializeCostIndicesControls();
-  });
-} else {
+/* ============================================================
+   View lifecycle
+
+   Settings is a NATIVE shell view: the shell mounts it directly into
+   #view-host, with no iframe. This is the pattern every remaining screen
+   follows, so keep the contract intact:
+
+     - init(container, ctx): wire everything; register disposable resources
+       on `ctx` so the router tears them down on unmount.
+     - destroy():            release anything ctx does not cover.
+
+   Module-level state is reset on each mount, since the module is evaluated
+   once but the view may be mounted many times.
+   ============================================================ */
+
+let settingsTemplateCache = null;
+
+/**
+ * Fetch the Settings markup from public/settings.view.html.
+ *
+ * The markup lives in its own file rather than inline in index.html, so the
+ * view's structure stays readable and separate from the dashboard. Fetched once
+ * and cached; each mount gets a fresh clone.
+ *
+ * @returns {Promise<DocumentFragment|null>}
+ */
+async function loadSettingsTemplate() {
+  if (!settingsTemplateCache) {
+    try {
+      const html = await fetch('settings.view.html').then((r) => r.text());
+      const parsed = new DOMParser().parseFromString(html, 'text/html');
+      const tpl = parsed.getElementById('settings-view-template');
+      if (!tpl) {
+        console.error('[settings] template not found in settings.view.html');
+        return null;
+      }
+      settingsTemplateCache = tpl.content;
+    } catch (error) {
+      console.error('[settings] failed to load template:', error);
+      return null;
+    }
+  }
+  return document.importNode(settingsTemplateCache, true);
+}
+
+/** Reset per-mount state so a remount does not inherit the previous one. */
+function resetSettingsState() {
+  currentSettings = {};
+  sdeUpdateStatus = null;
+}
+
+/**
+ * Mount the Settings view.
+ * @param {HTMLElement} container  The shell's view container.
+ * @param {Object} [ctx]           ViewContext; tracked resources are auto-disposed.
+ */
+async function initSettingsView(container, ctx) {
+  resetSettingsState();
+
+  // Inject the markup, fetched from settings.view.html on first mount.
+  if (container && !container.querySelector('#settings-app')) {
+    const fragment = await loadSettingsTemplate();
+    if (fragment) container.appendChild(fragment);
+  }
+
+  await initSettingsMain();
   initializeSdeControls();
   initializeCostIndicesControls();
+
+  // The SDE progress subscription is created per-download inside downloadSde()
+  // and disposed in its own `finally`, so there is nothing to track here. If a
+  // future long-lived subscription is added, register it as:
+  //   ctx.track(window.electronAPI.<ns>.on<Event>(handler));
+  void ctx;
 }
+
+/** Unmount: release anything the ViewContext does not own. */
+function destroySettingsView() {
+  // The SDE progress subscription is registered on ctx and disposed by the
+  // router; nothing else here holds a resource.
+  resetSettingsState();
+}
+
+// Settings is a native shell view - the ONLY way it renders. There is no
+// standalone-window path.
+window.QFShell.router.register('settings', {
+  title: 'Settings',
+  poppable: false, // configuration, not a working surface to place side by side
+  mount(container, params, ctx) {
+    initSettingsView(container, ctx);
+    return { destroy: destroySettingsView };
+  },
+});

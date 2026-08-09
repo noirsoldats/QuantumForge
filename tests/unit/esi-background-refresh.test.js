@@ -27,11 +27,23 @@ jest.mock('../../src/main/esi-wallet', () => ({
   saveWalletJournal: jest.fn(),
 }));
 
+jest.mock('../../src/main/esi-server-status', () => ({
+  fetchServerStatus: jest.fn(),
+}));
+
+// The scheduler asks the gate when its endpoints are next due. Mocked so the
+// tests exercise the real scheduling path rather than its DB-error fallback.
+jest.mock('../../src/main/esi-status-tracker', () => ({
+  getNextEligibleAt: jest.fn(() => null),
+}));
+
 let refresh;
 let getCharacters;
 let fetchCharacterIndustryJobs, fetchCorporationIndustryJobs, saveIndustryJobs;
 let fetchCharacterWalletTransactions, saveWalletTransactions;
 let fetchCorporationWalletTransactions, fetchCharacterWalletJournal, fetchCorporationWalletJournal, saveWalletJournal;
+let fetchServerStatus;
+let getNextEligibleAt;
 
 beforeEach(() => {
   jest.resetModules();
@@ -43,6 +55,8 @@ beforeEach(() => {
   ({ fetchCharacterWalletTransactions, saveWalletTransactions,
      fetchCorporationWalletTransactions, fetchCharacterWalletJournal,
      fetchCorporationWalletJournal, saveWalletJournal } = require('../../src/main/esi-wallet'));
+  ({ fetchServerStatus } = require('../../src/main/esi-server-status'));
+  ({ getNextEligibleAt } = require('../../src/main/esi-status-tracker'));
   refresh = require('../../src/main/esi-background-refresh');
 
   // Sensible default happy-path fetcher responses.
@@ -52,6 +66,10 @@ beforeEach(() => {
   fetchCharacterWalletJournal.mockResolvedValue({ entries: [], lastUpdated: 1 });
   fetchCorporationWalletTransactions.mockResolvedValue({ transactions: [], lastUpdated: 1 });
   fetchCorporationWalletJournal.mockResolvedValue({ entries: [], lastUpdated: 1 });
+  fetchServerStatus.mockResolvedValue({ success: true, players: 30000 });
+  // clearAllMocks wipes the factory's default, so restate it: "nothing
+  // tracked yet", which sends the scheduler to its heartbeat fallback.
+  getNextEligibleAt.mockReturnValue(null);
 });
 
 describe('buildCorporationCharacterMap', () => {
@@ -69,11 +87,71 @@ describe('buildCorporationCharacterMap', () => {
 });
 
 describe('runRefreshCycle', () => {
-  test('no-op when there are no authenticated characters', async () => {
+  test('skips per-character work when there are no authenticated characters', async () => {
     getCharacters.mockReturnValue([]);
     const summary = await refresh.runRefreshCycle();
     expect(summary.characterCount).toBe(0);
     expect(fetchCharacterIndustryJobs).not.toHaveBeenCalled();
+  });
+
+  describe('global (unauthenticated) tasks', () => {
+    test('server status is fetched by the cycle, not by any window', async () => {
+      // It used to be driven by a per-window footer timer, so N windows meant
+      // N fetch cycles and closing the last window stopped it entirely.
+      getCharacters.mockReturnValue([{ characterId: 1, corporationId: 100 }]);
+
+      const summary = await refresh.runRefreshCycle();
+
+      expect(fetchServerStatus).toHaveBeenCalledTimes(1);
+      expect(summary.global).toEqual([
+        { task: 'server_status', result: '30000 players' },
+      ]);
+    });
+
+    test('runs even with NO characters connected', async () => {
+      // Server status needs no auth, and a fresh install still has a footer.
+      getCharacters.mockReturnValue([]);
+
+      const summary = await refresh.runRefreshCycle();
+
+      expect(fetchServerStatus).toHaveBeenCalledTimes(1);
+      expect(summary.global).toHaveLength(1);
+    });
+
+    test('a rate-limited fetch reports cached rather than failing', async () => {
+      fetchServerStatus.mockResolvedValue({ success: true, cached: true, data: {} });
+      getCharacters.mockReturnValue([]);
+
+      const summary = await refresh.runRefreshCycle();
+
+      expect(summary.global[0].result).toBe('cached');
+      expect(summary.errors).toHaveLength(0);
+    });
+
+    test('a failed fetch is recorded as an error, not thrown', async () => {
+      fetchServerStatus.mockResolvedValue({ success: false, error: 'ESI down' });
+      getCharacters.mockReturnValue([{ characterId: 1, corporationId: 100 }]);
+
+      const summary = await refresh.runRefreshCycle();
+
+      expect(summary.errors).toContainEqual(
+        expect.objectContaining({ task: 'server_status', error: 'ESI down' })
+      );
+      // ...and the rest of the cycle still ran.
+      expect(fetchCharacterIndustryJobs).toHaveBeenCalled();
+    });
+
+    test('a throwing global task does not abort the cycle', async () => {
+      fetchServerStatus.mockRejectedValue(new Error('network'));
+      getCharacters.mockReturnValue([{ characterId: 1, corporationId: 100 }]);
+
+      const summary = await refresh.runRefreshCycle();
+
+      expect(summary.errors).toContainEqual(
+        expect.objectContaining({ task: 'server_status' })
+      );
+      expect(fetchCharacterIndustryJobs).toHaveBeenCalled();
+    });
   });
 
   test('fetches personal + corp endpoints for each character (deduped corp)', async () => {
@@ -191,35 +269,138 @@ describe('runRefreshCycle', () => {
 });
 
 describe('start/stop lifecycle', () => {
+  // The cycle is self-scheduling: the next timer is set AFTER the current pass
+  // resolves, so the tests have to let that pass settle before asserting.
+  const settle = () => new Promise((resolve) => setImmediate(resolve));
+
   beforeEach(() => {
-    jest.useFakeTimers();
     getCharacters.mockReturnValue([]); // keep cycles cheap
   });
 
   afterEach(() => {
     refresh.stopBackgroundRefresh();
-    jest.useRealTimers();
   });
 
-  test('start schedules an interval; getGlobalRefreshStatus reflects active', () => {
-    const setIntervalSpy = jest.spyOn(global, 'setInterval');
+  test('start schedules the next cycle once the first one finishes', async () => {
     refresh.startBackgroundRefresh();
-    expect(setIntervalSpy).toHaveBeenCalledTimes(1);
+    await settle();
+
+    const status = refresh.getGlobalRefreshStatus();
+    expect(status.active).toBe(true);
+    expect(status.nextTickAt).toBeGreaterThan(Date.now());
+  });
+
+  test('start is idempotent - one live timer', async () => {
+    refresh.startBackgroundRefresh();
+    await settle();
+    const first = refresh.getGlobalRefreshStatus().nextTickAt;
+
+    refresh.startBackgroundRefresh();
+    await settle();
+
+    // Still exactly one scheduled tick, not two stacked.
     expect(refresh.getGlobalRefreshStatus().active).toBe(true);
+    expect(refresh.getGlobalRefreshStatus().nextTickAt).toBeGreaterThanOrEqual(first);
   });
 
-  test('start is idempotent (clear-then-set, one live interval)', () => {
-    const clearIntervalSpy = jest.spyOn(global, 'clearInterval');
+  test('stop clears the timer', async () => {
     refresh.startBackgroundRefresh();
-    refresh.startBackgroundRefresh();
-    // Second start clears the first interval before setting a new one.
-    expect(clearIntervalSpy).toHaveBeenCalled();
-    expect(refresh.getGlobalRefreshStatus().active).toBe(true);
+    await settle();
+    refresh.stopBackgroundRefresh();
+
+    expect(refresh.getGlobalRefreshStatus().active).toBe(false);
   });
 
-  test('stop clears the interval', () => {
+  test('stopping mid-cycle does not schedule another tick', async () => {
+    // Otherwise a cycle in flight when the app quits would resurrect the timer.
     refresh.startBackgroundRefresh();
     refresh.stopBackgroundRefresh();
+    await settle();
+
     expect(refresh.getGlobalRefreshStatus().active).toBe(false);
+  });
+
+  test('the delay is clamped to the configured bounds', async () => {
+    refresh.startBackgroundRefresh();
+    await settle();
+
+    const { nextTickAt, minTickMs, maxTickMs } = refresh.getGlobalRefreshStatus();
+    const delay = nextTickAt - Date.now();
+    // Nothing is tracked in this suite, so it falls back to the heartbeat.
+    expect(delay).toBeGreaterThan(minTickMs - 1000);
+    expect(delay).toBeLessThanOrEqual(maxTickMs);
+  });
+
+  describe('dynamic scheduling', () => {
+    const settleAsync = () => new Promise((resolve) => setImmediate(resolve));
+
+    test('sleeps until the soonest endpoint is actually due', async () => {
+      // A fixed period delayed 1-minute endpoints to 5 and wasted every other
+      // tick on 5-minute ones. The gate decides now.
+      getNextEligibleAt.mockReturnValue(Date.now() + 63 * 1000);
+
+      refresh.startBackgroundRefresh();
+      await settleAsync();
+
+      const delay = refresh.getGlobalRefreshStatus().nextTickAt - Date.now();
+      expect(delay).toBeGreaterThan(55 * 1000);
+      expect(delay).toBeLessThan(70 * 1000);
+    });
+
+    test('asks only about endpoints THIS cycle fetches', async () => {
+      // Most tracked endpoints are fetched on demand by their own screens;
+      // waking for those would burn a pass that fetches nothing.
+      refresh.startBackgroundRefresh();
+      await settleAsync();
+
+      const types = getNextEligibleAt.mock.calls[0][0];
+      expect(types).toContain('server_status');
+      expect(types).toContain('industry_jobs');
+      expect(types).not.toContain('market_orders');
+      expect(types).not.toContain('assets');
+    });
+
+    test('an overdue deadline still waits the minimum', async () => {
+      // getNextEligibleAt filters these out, but the clamp is the backstop:
+      // a perpetually-due endpoint must not spin the cycle back to back.
+      getNextEligibleAt.mockReturnValue(Date.now() - 60 * 60 * 1000);
+
+      refresh.startBackgroundRefresh();
+      await settleAsync();
+
+      const { nextTickAt, minTickMs } = refresh.getGlobalRefreshStatus();
+      expect(nextTickAt - Date.now()).toBeGreaterThan(minTickMs - 1000);
+    });
+
+    test('a far-future deadline is capped by the heartbeat', async () => {
+      // A newly-added character must be picked up without waiting 30 minutes.
+      getNextEligibleAt.mockReturnValue(Date.now() + 30 * 60 * 1000);
+
+      refresh.startBackgroundRefresh();
+      await settleAsync();
+
+      const { nextTickAt, maxTickMs } = refresh.getGlobalRefreshStatus();
+      expect(nextTickAt - Date.now()).toBeLessThanOrEqual(maxTickMs);
+    });
+
+    test('nothing tracked yet falls back to the heartbeat', async () => {
+      getNextEligibleAt.mockReturnValue(null);
+
+      refresh.startBackgroundRefresh();
+      await settleAsync();
+
+      const { nextTickAt, maxTickMs } = refresh.getGlobalRefreshStatus();
+      expect(nextTickAt - Date.now()).toBeGreaterThan(maxTickMs - 2000);
+    });
+
+    test('a gate failure does not stop the loop', async () => {
+      getNextEligibleAt.mockImplementation(() => { throw new Error('db gone'); });
+
+      refresh.startBackgroundRefresh();
+      await settleAsync();
+
+      // Still scheduled, on the fallback cadence.
+      expect(refresh.getGlobalRefreshStatus().active).toBe(true);
+    });
   });
 });

@@ -606,17 +606,21 @@ async function fetchMarketData() {
   elements.nextBtn.disabled = true;
 
   // Fetch Market Prices FIRST (required for adjusted market prices data)
+  // Released in `finally` via the disposer `onFetchProgress` returns. The old
+  // `removeFetchProgressListener()` called `removeAllListeners`, which tears
+  // down EVERY listener on the channel - including other windows' - and it was
+  // also skipped whenever the try block threw before reaching it.
+  let disposeProgress = null;
+
   try {
     updateFetchStatus('market-prices', 'in-progress', 'Fetching market orders...');
 
-    // Listen for progress updates
-    window.electronAPI.market.onFetchProgress((progress) => {
+    disposeProgress = window.electronAPI.market.onFetchProgress((progress) => {
       updateFetchStatus('market-prices', 'in-progress',
         `Fetching page ${progress.currentPage}/${progress.totalPages}...`);
     });
 
     const result = await window.electronAPI.market.manualRefresh(regionId);
-    window.electronAPI.market.removeFetchProgressListener();
 
     if (result.success) {
       wizardState.marketPricesFetched = true;
@@ -626,9 +630,10 @@ async function fetchMarketData() {
     }
   } catch (error) {
     console.error('Market prices fetch error:', error);
-    window.electronAPI.market.removeFetchProgressListener();
     updateFetchStatus('market-prices', 'error', 'Failed (can retry later)');
     wizardState.marketPricesFetched = false;
+  } finally {
+    if (disposeProgress) disposeProgress();
   }
 
   // Fetch Market Adjusted Prices (independent of market prices)
@@ -1093,6 +1098,13 @@ function updateUI() {
     } else if (stepNum < step) {
       progressStep.classList.add('completed');
     }
+  });
+
+  // The connector lines fill in behind you, so the rail reads as a track
+  // rather than eight disconnected dots. Line N sits BEFORE step N+1, so it is
+  // complete once that step has been passed.
+  document.querySelectorAll('.progress-line').forEach((line, index) => {
+    line.classList.toggle('completed', index + 1 < step);
   });
 
   // Update navigation buttons

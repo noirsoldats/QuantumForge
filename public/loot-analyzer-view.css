@@ -1,0 +1,504 @@
+/*
+ * Loot Analyzer view.
+ *
+ * Row highlighting is the load-bearing part of this screen: each row is washed
+ * in the colour of its recommended action. See the "row result colouring"
+ * block below - the Item Name column is position:sticky with its OWN
+ * background, so a row-level wash is painted over by that cell unless it is
+ * layered explicitly.
+ */
+
+/* Binding rule 6a: `hidden` is only a browser-default display:none, so any
+   explicit display in this file would beat it. Catch-all for the whole view. */
+#la-view [hidden] { display: none !important; }
+
+.la-view {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 18px;
+  min-width: 0;
+}
+
+.la-spacer { flex: 1; }
+
+/* ------------------------------------------------------------------ card */
+
+.la-card {
+  background: var(--qf-bg-elevated);
+  border: 1px solid var(--qf-border);
+  border-radius: var(--qf-radius-lg);
+  overflow: hidden;
+}
+
+.la-card-accent { height: 2px; background: var(--qf-accent-gradient-h); }
+
+.la-input-body {
+  padding: 16px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+/* ----------------------------------------------------------------- fields */
+
+.la-field { min-width: 0; }
+.la-field-narrow { max-width: 220px; }
+.la-field-wide { grid-column: 1 / -1; }
+
+.la-field-label {
+  display: block;
+  font-size: 11px;
+  color: var(--qf-text-muted);
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+
+.la-optional {
+  font-weight: 400;
+  color: var(--qf-text-faint);
+}
+
+/* Binding rule 4: --qf-surface-sunken, not --qf-surface, so inputs read as
+   fields against the elevated card rather than as "no background". */
+.la-input,
+.la-textarea {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 12px;
+  font-size: var(--qf-text-sm);
+  background: var(--qf-surface-sunken);
+  border: 1px solid var(--qf-border);
+  border-radius: var(--qf-radius-md);
+  color: var(--qf-text-primary);
+  font-family: inherit;
+}
+.la-input-mono { font-family: var(--qf-font-mono); }
+.la-input:focus,
+.la-textarea:focus { outline: none; border-color: var(--qf-border-active); }
+.la-input:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.la-textarea { resize: vertical; min-height: 96px; line-height: 1.5; }
+
+.la-market-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 14px;
+  align-items: start;
+}
+
+.la-hub-select { margin-top: 8px; }
+
+/* ---------------------------------------------------------------- warning */
+
+.la-warning {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 12px;
+  font-size: var(--qf-text-sm);
+  border-radius: var(--qf-radius-md);
+  color: var(--qf-warning);
+  background: var(--qf-warning-dim);
+  border: 1px solid var(--qf-warning);
+}
+
+/* Stale (not merely warn) reads as an error - the prices are old enough that
+   acting on them is a real risk. Both branches set every property so neither
+   state can leave a value behind (binding rule 3). */
+.la-warning.is-stale {
+  color: var(--qf-error);
+  background: var(--qf-error-dim);
+  border-color: var(--qf-error);
+}
+
+/* ----------------------------------------------------------------- config */
+
+.la-config {
+  border: 1px solid var(--qf-border);
+  border-radius: var(--qf-radius-md);
+  background: var(--qf-surface-sunken);
+}
+
+.la-config-head {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 10px 13px;
+  cursor: pointer;
+  list-style: none;
+  font-size: var(--qf-text-sm);
+  color: var(--qf-text-heading);
+  font-weight: 600;
+}
+.la-config-head::-webkit-details-marker { display: none; }
+
+.la-config-chevron {
+  color: var(--qf-text-faint);
+  transition: transform 0.15s ease;
+  flex-shrink: 0;
+}
+.la-config[open] .la-config-chevron { transform: rotate(90deg); }
+
+.la-config-yield {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--qf-accent);
+  font-family: var(--qf-font-mono);
+}
+
+.la-config-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 14px;
+  padding: 0 13px 14px;
+}
+
+.la-actions { display: flex; }
+
+/* ------------------------------------------------------------- unresolved */
+
+.la-unresolved {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 13px;
+  font-size: var(--qf-text-sm);
+  color: var(--qf-warning);
+  background: var(--qf-warning-dim);
+  border: 1px solid var(--qf-warning);
+  border-radius: var(--qf-radius-md);
+}
+
+/* ------------------------------------------------------------ empty state */
+
+.la-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 48px 24px;
+  text-align: center;
+  background: var(--qf-bg-elevated);
+  border: 1px solid var(--qf-border);
+  border-radius: var(--qf-radius-lg);
+}
+
+.la-empty-icon { color: var(--qf-text-faint); }
+.la-empty-title { font-size: var(--qf-text-lg); font-weight: 600; color: var(--qf-text-heading); }
+.la-empty-text { font-size: var(--qf-text-sm); color: var(--qf-text-muted); max-width: 420px; }
+
+/* ---------------------------------------------------------------- results */
+
+/* A bordered card in its own right, per the mockup - not a bare heading row.
+   The gap below it comes from #results-section, which stacks this and the
+   table card with the same rhythm as the rest of the view. */
+.la-results-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 12px 18px;
+  background: var(--qf-bg-elevated);
+  border: 1px solid var(--qf-border);
+  border-radius: var(--qf-radius-md);
+}
+
+.la-results-label {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--qf-text-faint);
+  font-weight: 700;
+}
+
+.la-results-yield {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--qf-accent);
+  font-family: var(--qf-font-mono);
+}
+
+/* The summary bar and the table are two separate cards, so they need the
+   same 16px rhythm the rest of the view uses. Without this they sat almost
+   flush against each other. */
+#results-section {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
+
+.la-total-label { font-size: 12.5px; color: var(--qf-text-muted); }
+
+.la-total-value {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--qf-success);
+  font-family: var(--qf-font-mono);
+  cursor: help;
+}
+
+/* Horizontal scroll ONLY. The table grows to its full height and scrolls with
+   the main view, rather than trapping a second scrollbar inside the card -
+   which made the outer bar stop short and left the table awkward to read.
+   The sticky header still works, anchored to the scroll container above. */
+.la-table-scroll { overflow-x: auto; }
+
+.la-table { width: 100%; border-collapse: collapse; min-width: max-content; }
+
+/*
+ * NOT position:sticky.
+ *
+ * A sticky header sticks to its nearest SCROLLING ancestor. Now that the
+ * table no longer owns a vertical scrollbar, that ancestor is the view host -
+ * so a sticky header would float over the input panel while the user scrolls
+ * past it. The first column stays sticky because it pins against this
+ * container's HORIZONTAL scroll, which is still here.
+ */
+.la-th {
+  padding: 9px 11px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--qf-text-faint);
+  font-weight: 700;
+  text-align: left;
+  white-space: nowrap;
+  background: var(--qf-bg-elevated);
+  border-bottom: 1px solid var(--qf-border);
+}
+.la-th.is-numeric { text-align: right; }
+.la-th.is-center { text-align: center; }
+.la-th.sortable { cursor: pointer; user-select: none; }
+.la-th.sortable:hover { color: var(--qf-text-muted); }
+.la-th.is-active { color: var(--qf-accent); }
+
+.la-sort-icon { opacity: 0.6; font-size: 9px; }
+
+.la-td {
+  padding: 8px 11px;
+  font-size: var(--qf-text-sm);
+  color: var(--qf-text-primary);
+  white-space: nowrap;
+  border-bottom: 1px solid var(--qf-border-subtle);
+}
+.la-td.is-numeric { text-align: right; font-family: var(--qf-font-mono); }
+.la-td.is-center { text-align: center; }
+
+.la-muted { color: var(--qf-text-faint); }
+
+/*
+ * Sticky first column.
+ *
+ * It carries its own background so it can slide under the other cells. That
+ * is exactly why the row wash below has to be layered ON TOP of this rather
+ * than set on the row - a plain row background is painted over here.
+ */
+.la-th.col-name {
+  position: sticky;
+  left: 0;
+  text-align: left;
+  font-family: var(--qf-font-sans);
+  min-width: 170px;
+  background: var(--qf-bg-elevated);
+  z-index: 3;
+}
+
+.la-td.col-name {
+  position: sticky;
+  left: 0;
+  text-align: left;
+  font-family: var(--qf-font-sans);
+  min-width: 170px;
+  background: var(--qf-bg-base);
+  z-index: 1;
+  color: var(--qf-text-heading);
+  font-weight: 500;
+}
+
+/* ------------------------------------------------ row result colouring ---
+ *
+ * The recommended action for each row is shown as a full-row wash plus a
+ * left accent bar. Colours are identical to the un-ported screen and the
+ * mockup: green = reprocess, cyan = sell in market 1, purple = sell in
+ * market 2. `unknown` is deliberately unstyled.
+ *
+ * DEPARTURE FROM BINDING RULE 1 (box-shadow highlights), deliberate:
+ * that rule exists for TOGGLED highlights - hover and keyboard selection -
+ * where a background set on a row hot from its first paint fails to clear.
+ * These classes are assigned once per render from data and are never
+ * toggled on a live element, and an inset box-shadow cannot layer beneath
+ * the sticky name cell's own background. Hence background + gradient.
+ */
+
+.la-row-reprocess .la-td { background: rgba(74, 222, 128, 0.10); }
+.la-row-sell-m1 .la-td   { background: rgba(34, 211, 238, 0.20); }
+.la-row-sell-m2 .la-td   { background: rgba(157, 127, 255, 0.24); }
+
+/* Left accent bar - first cell only, or every column would be striped. */
+.la-row-reprocess .la-td.col-name { border-left: 4px solid var(--qf-success); }
+.la-row-sell-m1 .la-td.col-name   { border-left: 4px solid #22d3ee; }
+.la-row-sell-m2 .la-td.col-name   { border-left: 4px solid var(--qf-accent-bright); }
+
+/*
+ * The sticky name cell paints its own opaque background, so the wash has to
+ * be composited over it with a gradient. Dropping these three rules leaves
+ * the first column un-tinted while every other column is washed - the exact
+ * regression this file exists to prevent.
+ */
+.la-row-reprocess .la-td.col-name {
+  background: linear-gradient(rgba(74, 222, 128, 0.10), rgba(74, 222, 128, 0.10)), var(--qf-bg-base);
+}
+.la-row-sell-m1 .la-td.col-name {
+  background: linear-gradient(rgba(34, 211, 238, 0.20), rgba(34, 211, 238, 0.20)), var(--qf-bg-base);
+}
+.la-row-sell-m2 .la-td.col-name {
+  background: linear-gradient(rgba(157, 127, 255, 0.24), rgba(157, 127, 255, 0.24)), var(--qf-bg-base);
+}
+
+/* Hover has to be restated per action, otherwise the generic hover below
+   would wash the row's action colour away. */
+.la-table tbody tr:hover .la-td { background: rgba(100, 180, 255, 0.05); }
+.la-table tbody tr:hover .la-td.col-name {
+  background: linear-gradient(rgba(100, 180, 255, 0.05), rgba(100, 180, 255, 0.05)), var(--qf-bg-base);
+}
+
+.la-row-reprocess:hover .la-td { background: rgba(74, 222, 128, 0.16); }
+.la-row-sell-m1:hover .la-td   { background: rgba(34, 211, 238, 0.28); }
+.la-row-sell-m2:hover .la-td   { background: rgba(157, 127, 255, 0.32); }
+
+.la-row-reprocess:hover .la-td.col-name {
+  background: linear-gradient(rgba(74, 222, 128, 0.16), rgba(74, 222, 128, 0.16)), var(--qf-bg-base);
+}
+.la-row-sell-m1:hover .la-td.col-name {
+  background: linear-gradient(rgba(34, 211, 238, 0.28), rgba(34, 211, 238, 0.28)), var(--qf-bg-base);
+}
+.la-row-sell-m2:hover .la-td.col-name {
+  background: linear-gradient(rgba(157, 127, 255, 0.32), rgba(157, 127, 255, 0.32)), var(--qf-bg-base);
+}
+
+/* ------------------------------------------------------------ action pill */
+
+.la-action {
+  display: inline-flex;
+  align-items: center;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  border-radius: var(--qf-radius-pill);
+  padding: 2px 9px;
+  border: 1px solid;
+}
+.la-action.is-reprocess { color: #34d399; background: rgba(52, 211, 153, 0.15); border-color: rgba(52, 211, 153, 0.35); }
+.la-action.is-sell-m1   { color: #22d3ee; background: rgba(34, 211, 238, 0.15); border-color: rgba(34, 211, 238, 0.35); }
+.la-action.is-sell-m2   { color: #9d7fff; background: rgba(157, 127, 255, 0.15); border-color: rgba(157, 127, 255, 0.35); }
+.la-action.is-unknown   { color: #9ca3af; background: rgba(255, 255, 255, 0.05); border-color: rgba(255, 255, 255, 0.15); }
+
+/* -------------------------------------------------------------- SVR badge */
+
+.la-svr {
+  display: inline-flex;
+  align-items: center;
+  font-size: 11px;
+  font-weight: 700;
+  border-radius: var(--qf-radius-sm);
+  padding: 1px 7px;
+  font-family: var(--qf-font-mono);
+  color: var(--qf-text-faint);
+  background: var(--qf-surface);
+}
+/* Three tiers, matching the un-ported screen: >=100/day is high, >=10 medium,
+   below that low. `unknown` keeps the muted base above. */
+.la-svr.is-high   { color: var(--qf-success); background: var(--qf-success-dim); }
+.la-svr.is-medium { color: var(--qf-warning); background: var(--qf-warning-dim); }
+.la-svr.is-low    { color: var(--qf-error); background: var(--qf-error-dim); }
+
+.la-pct-up   { color: var(--qf-success); }
+.la-pct-down { color: var(--qf-error); }
+
+/* ------------------------------------------------------------ ore modal */
+
+.la-ore-modal { max-width: 900px; width: 92vw; }
+
+/* Everything acting on the whole skill set sits in the footer bar: character
+   loading left, bulk actions and Save right. */
+.la-ore-footer {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  flex-wrap: wrap;
+}
+
+.la-ore-footer-group {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.la-ore-character { min-width: 200px; max-width: 240px; }
+
+.la-ore-cols {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 20px;
+}
+
+.la-ore-section { margin-bottom: 16px; }
+
+.la-ore-section-title {
+  margin: 0 0 9px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--qf-text-faint);
+  font-weight: 700;
+}
+
+.la-ore-grid { display: flex; flex-direction: column; gap: 8px; }
+
+.la-ore-row {
+  display: grid;
+  grid-template-columns: 1fr 64px;
+  align-items: center;
+  gap: 8px;
+}
+.la-ore-row label { font-size: var(--qf-text-sm); color: var(--qf-text-primary); }
+
+.la-ore-input { text-align: center; padding: 5px 6px; }
+
+.la-ore-hint {
+  grid-column: 1 / -1;
+  font-size: 10.5px;
+  color: var(--qf-text-faint);
+  line-height: 1.35;
+}
+.la-ore-hint:empty { display: none; }
+
+/* --------------------------------------------------------------- loading */
+
+.la-loading {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  background: var(--qf-scrim);
+  z-index: 40;
+}
+
+.la-spinner {
+  width: 30px;
+  height: 30px;
+  border: 3px solid var(--qf-border);
+  border-top-color: var(--qf-accent);
+  border-radius: 50%;
+  animation: la-spin 0.8s linear infinite;
+}
+
+@keyframes la-spin { to { transform: rotate(360deg); } }
+
+.la-loading-text { font-size: var(--qf-text-sm); color: var(--qf-text-muted); }

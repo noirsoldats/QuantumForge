@@ -1,5 +1,8 @@
 const { getMarketDatabase } = require('./market-database');
-const { fetchMarketData, getCachedMarketOrders, getCachedMarketHistory } = require('./esi-market');
+const {
+  fetchMarketData, fetchMarketOrders, fetchMarketHistory,
+  getCachedMarketOrders, getCachedMarketHistory,
+} = require('./esi-market');
 const { fetchFuzzworkHistory } = require('./fuzzwork-market');
 
 /**
@@ -227,9 +230,13 @@ function calculateMedian(values) {
  * @param {string} priceType - 'buy' or 'sell'
  * @param {number} quantity - Quantity needed
  * @param {Object} settings - Market settings
+ * @param {Object} [options]
+ * @param {boolean} [options.skipHistory=false] - Price from the order book alone,
+ *   never fetching market history. See the note at the history fetch below.
  * @returns {Promise<Object>} Price calculation result
  */
-async function calculateRealisticPrice(typeId, regionId, locationId, priceType, quantity, settings = {}) {
+async function calculateRealisticPrice(typeId, regionId, locationId, priceType, quantity, settings = {}, options = {}) {
+  const { skipHistory = false } = options || {};
   // Validate typeId
   if (!typeId || typeId === 0 || isNaN(typeId)) {
     console.error(`[calculateRealisticPrice] Invalid typeId: ${typeId}. Stack trace:`, new Error().stack);
@@ -270,14 +277,59 @@ async function calculateRealisticPrice(typeId, regionId, locationId, priceType, 
   let orders = getCachedMarketOrders(regionId, typeId);
   let history = getCachedMarketHistory(regionId, typeId);
 
-  console.log(`[Price Calc] Initial orders: ${orders ? orders.length : 0}, history: ${history ? history.length : 0}`);
+  // History is a SANITY CHECK, not a price source: it supplies the 7/30-day
+  // averages used to reject order-book candidates that are wildly off, and it
+  // feeds the confidence rating. Every branch below tolerates an empty array
+  // (`avgPrice7d === 0` short-circuits the validity filter).
+  //
+  // For a valuation over a whole asset hangar that check is not worth its cost:
+  // history is fetched ONE TYPE AT A TIME, and it expires daily at 11:05 UTC.
+  // A 1,300-type hangar therefore means up to 1,300 sequential ESI calls before
+  // a single row renders, every day, however warm the cache was yesterday. (On
+  // the reporting machine: 1,308 of 1,308 types needed a live fetch in one
+  // region and 577 of 1,308 in the other, against a 330 MB cache.)
+  // The order book alone gives a perfectly good "what is this worth" number.
+  //
+  // Callers that price a handful of items for a manufacturing decision - where
+  // being 50% wrong on one material matters - leave this off and keep the check.
+  //
+  // NOT honoured for the 'historical' method, which uses history as its PRIMARY
+  // price source rather than as a check - skipping the fetch there would return
+  // 0 instead of a price. The caller asked for a historical price; give them one.
+  // Named priceMethod, not `method` - that identifier is already taken further
+  // down for the method actually USED (which can differ, e.g. a fallback to
+  // 'historical' when the order book is empty).
+  const priceMethod = settings.priceMethod || 'hybrid';
+  const wantsHistoricalPrice = priceMethod === 'historical';
 
-  // If no cached data, fetch from ESI
-  if (!orders || orders.length === 0 || !history || history.length === 0) {
+  // A method that never READS history should not pay to fetch it.
+  //
+  // 'immediate', 'vwap' and 'percentile' price purely from the order book and
+  // touch history only as a fallback when there are NO orders at all - and that
+  // fallback still works, because an empty history yields avgPrice7d === 0,
+  // which the branches already handle. 'hybrid' is excluded: it uses the 7-day
+  // average to validate its candidates, so dropping history there would
+  // silently change the price it picks, not just the confidence.
+  //
+  // This is what makes the whole-screen valuations cheap without every caller
+  // having to opt in: with a market set on 'immediate' (the common case), a
+  // Manufacturing Summary or Assets pass makes ZERO history calls.
+  const ORDER_BOOK_ONLY_METHODS = new Set(['immediate', 'vwap', 'percentile']);
+  const methodIgnoresHistory = ORDER_BOOK_ONLY_METHODS.has(priceMethod);
+
+  const historyDeferred = (skipHistory || methodIgnoresHistory) && !wantsHistoricalPrice;
+
+  if (historyDeferred) {
+    if (!orders || orders.length === 0) {
+      const marketOrders = await fetchMarketOrders(regionId, typeId);
+      orders = marketOrders || [];
+    }
+    history = history || [];
+  } else if (!orders || orders.length === 0 || !history || history.length === 0) {
+    // If no cached data, fetch from ESI
     const marketData = await fetchMarketData(regionId, typeId);
     orders = marketData.orders;
     history = marketData.history;
-    console.log(`[Price Calc] After fetch - orders: ${orders ? orders.length : 0}, history: ${history ? history.length : 0}`);
   }
 
   // Filter orders by location if specified
@@ -285,6 +337,26 @@ async function calculateRealisticPrice(typeId, regionId, locationId, priceType, 
     const beforeFilter = orders.length;
     orders = orders.filter(o => o.location_id === locationId);
     console.log(`[Price Calc] Location filter: ${beforeFilter} → ${orders.length} orders`);
+  }
+
+  // DEFERRED, not abandoned: an order-book-only method falls back to the
+  // historical average when there are no orders, and that fallback must be
+  // FRESH. Relying on whatever happened to be cached would return 0 when the
+  // cache is empty, or a stale price forever - the fallback would silently
+  // degrade instead of updating.
+  //
+  // So the fetch is skipped only while it is speculative. The moment it is
+  // actually needed - no orders left after the location filter - it happens.
+  // For the common case (a liquid item with orders) that is still zero history
+  // calls, which is the whole point.
+  //
+  // Checked AFTER the location filter, because a global order book can be
+  // non-empty while the chosen station has nothing.
+  let historyWasSkipped = historyDeferred;
+  if (historyDeferred && orders.length === 0) {
+    console.log(`[Price Calc] No orders for type ${typeId}; fetching history for the fallback`);
+    history = await fetchMarketHistory(regionId, typeId);
+    historyWasSkipped = false;
   }
 
   // Calculate historical averages
@@ -331,9 +403,10 @@ async function calculateRealisticPrice(typeId, regionId, locationId, priceType, 
 
   console.log(`[Price Calc] Relevant orders (is_buy=${isBuy}): ${relevantOrders.length}, Immediate price: ${immediatePrice}`);
 
-  // Determine which method to use
-  const requestedMethod = settings.priceMethod || 'hybrid';
-  console.log(`[Price Calc] Requested method: ${requestedMethod}`);
+  // `priceMethod` is resolved once, up where the history-fetch decision is
+  // made - the two must agree, or a method could skip the fetch and then be
+  // dispatched somewhere that needs it.
+  const requestedMethod = priceMethod;
 
   switch (requestedMethod) {
     case 'immediate':
@@ -467,6 +540,11 @@ async function calculateRealisticPrice(typeId, regionId, locationId, priceType, 
       quantityFilled: vwapResult.quantityFilled,
       quantityRequested: quantity,
       historicalDays: history.length,
+      // 0 historicalDays means "not consulted", not "no data available":
+      // order-book-only methods skip the fetch while it is speculative.
+      // FALSE once the fallback actually needed history and fetched it, so this
+      // reports what happened rather than what was intended.
+      historySkipped: historyWasSkipped,
     },
   };
 }

@@ -1,0 +1,605 @@
+/* ============================================
+   Quantum Forge - Main Dashboard
+
+   Ported from `Main Dashboard (1a).dc.html`. Mounts into the application
+   shell's #view-host as the default view of the `main` window.
+   ============================================ */
+
+#dashboard-view {
+  padding: 24px 28px 30px;
+}
+
+.dash-inner {
+  max-width: 1200px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+/* ---- Greeting ---- */
+
+.dash-greeting {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.dash-greeting h1 {
+  margin: 0;
+  font-size: 26px;
+  font-weight: var(--qf-weight-bold);
+  letter-spacing: var(--qf-tracking-tight);
+  /* Accent-gradient text fill, per the mockup. */
+  background: var(--qf-accent-gradient);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.dash-greeting p {
+  margin: 7px 0 0;
+  font-size: 13px;
+  color: var(--qf-text-muted);
+}
+
+/* ---- Status tiles ---- */
+
+.dash-tiles {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 14px;
+}
+
+@media (max-width: 1100px) {
+  .dash-tiles { grid-template-columns: repeat(2, 1fr); }
+}
+
+@media (max-width: 620px) {
+  .dash-tiles { grid-template-columns: 1fr; }
+}
+
+.dash-tile {
+  position: relative;
+  background: var(--qf-bg-elevated);
+  border: 1px solid var(--qf-border);
+  border-radius: var(--qf-radius-lg);
+  overflow: hidden;
+}
+
+/* Top hairline. Defaults to the accent gradient; a state class swaps it for a
+   flat semantic colour. Both branches set background-image AND background-color
+   so neither can stick when the state changes. */
+.dash-tile-bar {
+  height: 3px;
+  background-image: var(--qf-accent-gradient-h);
+  background-color: transparent;
+}
+
+.dash-tile.is-warning {
+  border-color: rgba(255, 152, 0, 0.4);
+}
+
+.dash-tile.is-warning .dash-tile-bar {
+  background-image: none;
+  background-color: var(--qf-warning);
+}
+
+.dash-tile.is-error {
+  border-color: rgba(239, 68, 68, 0.4);
+}
+
+.dash-tile.is-error .dash-tile-bar {
+  background-image: none;
+  background-color: var(--qf-error);
+}
+
+.dash-tile-body {
+  padding: 15px 16px;
+}
+
+.dash-tile-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--qf-accent);
+}
+
+.dash-tile.is-warning .dash-tile-head { color: var(--qf-warning); }
+.dash-tile.is-error   .dash-tile-head { color: var(--qf-error); }
+.dash-tile.is-ok      .dash-tile-head { color: var(--qf-success); }
+
+.dash-tile-head span {
+  font-size: 11px;
+  font-weight: var(--qf-weight-bold);
+  text-transform: uppercase;
+  letter-spacing: var(--qf-tracking-label);
+  color: var(--qf-text-faint);
+}
+
+.dash-tile-value {
+  margin-top: 10px;
+  font-family: var(--qf-font-mono);
+  font-size: 24px;
+  font-weight: var(--qf-weight-bold);
+  color: var(--qf-text-heading);
+}
+
+.dash-tile.is-warning .dash-tile-value { color: var(--qf-warning); }
+.dash-tile.is-error   .dash-tile-value { color: var(--qf-error); }
+.dash-tile.is-fresh   .dash-tile-value { color: var(--qf-accent); }
+
+.dash-tile-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 8px;
+  font-size: 11.5px;
+  color: var(--qf-text-muted);
+}
+
+.dash-tile-action {
+  padding: 0;
+  background: none;
+  border: none;
+  color: var(--qf-accent);
+  font-family: var(--qf-font-sans);
+  font-size: 11px;
+  font-weight: var(--qf-weight-semibold);
+  cursor: pointer;
+}
+
+.dash-tile-action:hover { color: var(--qf-accent-bright); }
+
+.dash-tile-action:focus-visible {
+  outline: none;
+  box-shadow: var(--qf-focus-ring);
+  border-radius: var(--qf-radius-sm);
+}
+
+/* ---- In-tile refresh progress ---- */
+
+.dash-tile-progress {
+  margin-top: 10px;
+}
+
+.dash-tile-progress[hidden] {
+  display: none;
+}
+
+.dash-progress-track {
+  height: 4px;
+  background: var(--qf-surface-sunken);
+  border-radius: var(--qf-radius-pill);
+  overflow: hidden;
+}
+
+.dash-progress-fill {
+  width: 0;
+  height: 100%;
+  background: var(--qf-accent-gradient-h);
+  border-radius: var(--qf-radius-pill);
+  transition: width var(--qf-transition-base);
+}
+
+/* Indeterminate: we know a refresh is running but not how far along. */
+.dash-tile-progress.is-indeterminate .dash-progress-fill {
+  width: 35%;
+  animation: dashIndeterminate 1.1s ease-in-out infinite;
+}
+
+@keyframes dashIndeterminate {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(340%); }
+}
+
+.dash-progress-label {
+  display: block;
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--qf-text-muted);
+}
+
+.dash-tile-note {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  font-size: 11.5px;
+  color: var(--qf-text-muted);
+}
+
+.dash-tile-note.is-warning { color: var(--qf-warning); }
+
+.dash-tile-note.is-warning::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+/* ---- Status line with pulsing dot ---- */
+
+.dash-tile-status {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-top: 10px;
+}
+
+.dash-tile-status-label {
+  font-size: 20px;
+  font-weight: var(--qf-weight-bold);
+  color: var(--qf-text-heading);
+}
+
+.dash-tile.is-ok      .dash-tile-status-label { color: var(--qf-success); }
+.dash-tile.is-warning .dash-tile-status-label { color: var(--qf-warning); }
+.dash-tile.is-error   .dash-tile-status-label { color: var(--qf-error); }
+
+.dash-pulse {
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  background-color: var(--qf-text-faint);
+  animation: dashPulse 2.4s ease-in-out infinite;
+}
+
+.dash-tile.is-ok      .dash-pulse { background-color: var(--qf-success); box-shadow: 0 0 8px var(--qf-success); }
+.dash-tile.is-warning .dash-pulse { background-color: var(--qf-warning); box-shadow: 0 0 8px var(--qf-warning); }
+.dash-tile.is-error   .dash-pulse { background-color: var(--qf-error);   box-shadow: 0 0 8px var(--qf-error); }
+
+@keyframes dashPulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.4; }
+}
+
+/* ---- ESI endpoint rows ---- */
+
+.dash-endpoints {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 9px;
+}
+
+.dash-endpoint {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 11px;
+}
+
+.dash-endpoint-name { color: var(--qf-text-muted); }
+
+.dash-endpoint-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.dash-endpoint-state::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.dash-endpoint-state.is-ok      { color: var(--qf-success); }
+.dash-endpoint-state.is-warning { color: var(--qf-warning); }
+.dash-endpoint-state.is-error   { color: var(--qf-error); }
+
+/* ---- Tools ---- */
+
+.dash-section-title {
+  margin: 0 0 12px;
+  font-size: 15px;
+  font-weight: var(--qf-weight-semibold);
+  color: var(--qf-text-heading);
+}
+
+.dash-tools {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 14px;
+}
+
+@media (max-width: 1100px) {
+  .dash-tools { grid-template-columns: repeat(2, 1fr); }
+}
+
+@media (max-width: 620px) {
+  .dash-tools { grid-template-columns: 1fr; }
+}
+
+.qf-tool-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  background: var(--qf-bg-elevated);
+  border: 1px solid var(--qf-border);
+  border-radius: var(--qf-radius-lg);
+  overflow: hidden;
+  cursor: pointer;
+  text-align: left;
+  padding: 0;
+  font-family: var(--qf-font-sans);
+  transition: transform var(--qf-transition-fast),
+              border-color var(--qf-transition-fast),
+              box-shadow var(--qf-transition-fast);
+}
+
+.qf-tool-card:hover {
+  transform: translateY(-3px);
+  border-color: var(--qf-border-active);
+  box-shadow: var(--qf-shadow-lg), 0 0 22px var(--qf-accent-glow);
+}
+
+.qf-tool-card:focus-visible {
+  outline: none;
+  border-color: var(--qf-border-active);
+  box-shadow: var(--qf-focus-ring);
+}
+
+.qf-tool-card-bar {
+  height: 3px;
+  background: var(--qf-accent-gradient-h);
+}
+
+.qf-tool-card-body {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  padding: 15px 16px 13px;
+}
+
+.qf-tool-card-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.qf-tool-icon {
+  display: inline-flex;
+  color: var(--qf-text-muted);
+  opacity: 0.7;
+  transition: color var(--qf-transition-fast), opacity var(--qf-transition-fast);
+}
+
+.qf-tool-card:hover .qf-tool-icon {
+  color: var(--qf-accent);
+  opacity: 1;
+}
+
+.qf-tool-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: var(--qf-radius-pill);
+  border: 1px solid rgba(255, 152, 0, 0.4);
+  background: var(--qf-warning-dim);
+  color: var(--qf-warning);
+  font-size: 10px;
+  font-weight: var(--qf-weight-bold);
+}
+
+/* `display: inline-flex` above beats the default [hidden] rule, so an empty
+   badge would still paint as a bare circle. Restore it explicitly. */
+.qf-tool-badge[hidden] {
+  display: none;
+}
+
+.qf-tool-name {
+  margin-top: 12px;
+  font-size: 14px;
+  font-weight: var(--qf-weight-semibold);
+  color: var(--qf-text-heading);
+}
+
+.qf-tool-desc {
+  margin-top: 4px;
+  font-size: 11.5px;
+  line-height: var(--qf-leading-snug);
+  color: var(--qf-text-muted);
+}
+
+/* Pushes the stat line to the card's bottom edge regardless of description
+   length, so the row of cards keeps a consistent baseline. */
+.qf-tool-spacer { flex: 1; min-height: 12px; }
+
+.qf-tool-stat {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--qf-text-faint);
+}
+
+.qf-tool-stat::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+/* No stat text yet - suppress the leading dot rather than showing a bare mark. */
+.qf-tool-stat:empty {
+  display: none;
+}
+
+.qf-tool-stat.is-ok      { color: var(--qf-success); }
+.qf-tool-stat.is-warning { color: var(--qf-warning); }
+
+/* ---- Legacy settings button: the rail owns navigation now ---- */
+
+#settings-btn[hidden] { display: none; }
+
+/* ---- Character avatar (docked in the title bar's trailing slot) ----
+   styles.css pins `.character-avatar-container` with `position: fixed; top: 20px`
+   for the old floating avatar, which puts it outside the 42px bar. Scope by the
+   slot id so the docked copy is laid out by flex instead, while the legacy rule
+   still applies on unported pages. */
+
+#titlebar-trailing .character-avatar-container {
+  position: relative;
+  top: auto;
+  right: auto;
+  z-index: auto;
+  display: flex;
+  align-items: center;
+  -webkit-app-region: no-drag;
+}
+
+/* Overlapping stack, per the mockup: the default character leads with a gold
+   ring and the rest tuck behind it. */
+#titlebar-trailing .character-avatar-stack {
+  display: flex;
+  align-items: center;
+}
+
+#titlebar-trailing .character-avatar-item {
+  position: relative;
+}
+
+#titlebar-trailing .character-avatar-item.is-stacked {
+  margin-left: -10px;
+}
+
+/* Stacking order: the default character sits ON TOP, with each subsequent
+   avatar tucked further behind as it falls to the right. Without an explicit
+   z-index, DOM order wins and later avatars would cover the default. The
+   descending value is set per item by renderer.js (--qf-stack-order). */
+#titlebar-trailing .character-avatar-item {
+  z-index: var(--qf-stack-order, 1);
+}
+
+/* Hovering or opening a menu lifts that avatar above the whole stack, so the
+   overlap never blocks a click or clips an open menu. */
+#titlebar-trailing .character-avatar-item:hover,
+#titlebar-trailing .character-avatar-item:focus-within,
+#titlebar-trailing .character-avatar-item.is-open {
+  z-index: 100;
+}
+
+/* styles.css sets `.character-avatar-icon { position: fixed; width: 44px }` for
+   the old floating avatar. Scope by the titlebar slot so these win without
+   touching the legacy rule (still used by unported pages). */
+#titlebar-trailing .character-avatar-icon {
+  position: static;
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  overflow: hidden;
+  background: linear-gradient(135deg, #3a3a5a, #242438);
+  /* Non-default characters get a plain border; the gold ring marks the default. */
+  border: 2px solid var(--qf-border);
+  border-radius: 50%;
+  cursor: pointer;
+  transition: box-shadow var(--qf-transition-fast), border-color var(--qf-transition-fast);
+}
+
+#titlebar-trailing .character-avatar-icon.is-default {
+  border-color: var(--qf-gold);
+}
+
+#titlebar-trailing .character-avatar-icon:hover {
+  transform: none;
+  border-color: var(--qf-border-active);
+  box-shadow: 0 0 10px var(--qf-accent-glow);
+}
+
+#titlebar-trailing .character-avatar-icon.is-default:hover {
+  border-color: var(--qf-gold);
+  box-shadow: 0 0 10px rgba(255, 215, 0, 0.4);
+}
+
+#titlebar-trailing .character-avatar-icon:focus-visible {
+  outline: none;
+  box-shadow: var(--qf-focus-ring);
+}
+
+#titlebar-trailing .character-avatar-icon img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* Dropdown hangs below the avatar, above everything else. */
+#titlebar-trailing .character-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: var(--qf-z-modal);
+  min-width: 190px;
+  padding: 5px;
+  background: rgba(30, 30, 46, 0.98);
+  border: 1px solid var(--qf-border-active);
+  border-radius: var(--qf-radius-md);
+  box-shadow: var(--qf-shadow-lg);
+  backdrop-filter: blur(var(--qf-blur));
+}
+
+#titlebar-trailing .character-menu-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px 6px;
+  border-bottom: 1px solid var(--qf-border-subtle);
+  margin-bottom: 4px;
+  font-size: 12.5px;
+  font-weight: var(--qf-weight-semibold);
+  color: var(--qf-text-heading);
+}
+
+#titlebar-trailing .character-menu-default {
+  padding: 1px 6px;
+  background-color: rgba(255, 215, 0, 0.12);
+  border: 1px solid rgba(255, 215, 0, 0.35);
+  border-radius: var(--qf-radius-pill);
+  color: var(--qf-gold);
+  font-size: 9px;
+  font-weight: var(--qf-weight-bold);
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+}
+
+#titlebar-trailing .character-menu-item-accent {
+  border-top: 1px solid var(--qf-border-subtle);
+  margin-top: 4px;
+  padding-top: 9px;
+  color: var(--qf-accent);
+}
+
+#titlebar-trailing .character-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding: 8px 10px;
+  background: transparent;
+  border: none;
+  border-radius: var(--qf-radius-sm);
+  color: var(--qf-text-primary);
+  font-family: var(--qf-font-sans);
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color var(--qf-transition-fast), color var(--qf-transition-fast);
+}
+
+#titlebar-trailing .character-menu-item:hover {
+  background-color: var(--qf-surface-hover);
+  color: var(--qf-accent);
+}

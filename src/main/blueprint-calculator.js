@@ -20,6 +20,45 @@ function getSDEPath() {
 }
 
 /**
+ * Shared read-only SDE connection.
+ *
+ * The functions below all take an optional `db` and open their own when none
+ * is passed. That is fine for a one-off call and terrible in a loop: the
+ * Manufacturing Summary calls getInventionData() once per T1 blueprint, so a
+ * large blueprint list opened and closed hundreds of connections, each of
+ * which re-reads the file header and rebuilds SQLite's page cache.
+ *
+ * The SDE is static and read-only at runtime, so a single handle is safe to
+ * share. It is opened lazily and MUST be closed before the file is replaced -
+ * see closeSharedDatabase(), which the SDE updater calls.
+ */
+let sharedDb = null;
+
+function getSharedDatabase() {
+    if (sharedDb && sharedDb.open) return sharedDb;
+    sharedDb = new Database(getSDEPath(), {readonly: true});
+    return sharedDb;
+}
+
+/**
+ * Close the shared connection.
+ *
+ * Called before the SDE file is deleted or replaced. Holding an open handle
+ * to a swapped-out file yields stale reads on some platforms and blocks the
+ * delete outright on Windows.
+ */
+function closeSharedDatabase() {
+    if (sharedDb) {
+        try {
+            if (sharedDb.open) sharedDb.close();
+        } catch (error) {
+            console.error('[blueprint-calculator] Error closing shared SDE connection:', error);
+        }
+        sharedDb = null;
+    }
+}
+
+/**
  * Generate cache key for material tree calculations
  * @param {number} blueprintTypeId - Blueprint type ID
  * @param {number} runs - Number of runs
@@ -46,10 +85,12 @@ function getMaterialCacheKey(blueprintTypeId, runs, meLevel, facility, character
  */
 function getBlueprintMaterials(blueprintTypeId, activityId = 1, db = null) {
     try {
-        const ownConnection = !db;
+        // Falls back to the shared read-only handle rather than opening a new
+        // connection per call. ownConnection stays false so the shared handle
+        // is never closed by a caller that merely borrowed it.
+        const ownConnection = false;
         if (!db) {
-            const dbPath = getSDEPath();
-            db           = new Database(dbPath, {readonly: true});
+            db = getSharedDatabase();
         }
 
         // Activity ID 1 is manufacturing
@@ -77,10 +118,12 @@ function getBlueprintMaterials(blueprintTypeId, activityId = 1, db = null) {
  */
 function getBlueprintProduct(blueprintTypeId, db = null) {
     try {
-        const ownConnection = !db;
+        // Falls back to the shared read-only handle rather than opening a new
+        // connection per call. ownConnection stays false so the shared handle
+        // is never closed by a caller that merely borrowed it.
+        const ownConnection = false;
         if (!db) {
-            const dbPath = getSDEPath();
-            db           = new Database(dbPath, {readonly: true});
+            db = getSharedDatabase();
         }
 
         // Activity ID 1 is manufacturing
@@ -112,10 +155,12 @@ function getTypeName(typeId, db = null) {
     }
 
     try {
-        const ownConnection = !db;
+        // Falls back to the shared read-only handle rather than opening a new
+        // connection per call. ownConnection stays false so the shared handle
+        // is never closed by a caller that merely borrowed it.
+        const ownConnection = false;
         if (!db) {
-            const dbPath = getSDEPath();
-            db           = new Database(dbPath, {readonly: true});
+            db = getSharedDatabase();
         }
 
         const result = db.prepare(`
@@ -221,10 +266,12 @@ function calculateMaterialQuantity(baseQuantity, meLevel, runs, facility = null,
  */
 function getBlueprintForProduct(typeId, db = null) {
     try {
-        const ownConnection = !db;
+        // Falls back to the shared read-only handle rather than opening a new
+        // connection per call. ownConnection stays false so the shared handle
+        // is never closed by a caller that merely borrowed it.
+        const ownConnection = false;
         if (!db) {
-            const dbPath = getSDEPath();
-            db           = new Database(dbPath, {readonly: true});
+            db = getSharedDatabase();
         }
 
         // Find blueprint that produces this product
@@ -244,51 +291,128 @@ function getBlueprintForProduct(typeId, db = null) {
 }
 
 /**
- * Get owned blueprint ME level from character blueprints
- * @param {number} characterId - Character ID
- * @param {number} blueprintTypeId - Blueprint type ID
- * @returns {number} ME level (0-10), defaults to 0 if not owned
+ * Blueprint sources currently enabled, with a self-healing fallback.
+ *
+ * Every bootstrap path is supposed to leave at least one character enabled
+ * (see settings-manager: first character auto-enrols, character removal
+ * promotes a successor, plans snapshot the global sources). This is the
+ * backstop for anything those paths miss - without it a user whose state
+ * slipped through gets ME 0 everywhere with nothing on screen to explain it.
+ *
+ * The fallback deliberately covers only the "nothing at all is enabled" case.
+ * A user who has enabled SOME character has made a choice, and their other
+ * characters stay excluded.
+ *
+ * @returns {{characterIds: number[], divisionsByCharacter: Object}}
  */
-function getOwnedBlueprintME(characterId, blueprintTypeId) {
+function getEffectiveBlueprintSources() {
+    const { getBlueprintSources, loadSettings } = require('./settings-manager');
+
+    const sources = getBlueprintSources();
+    if (sources.characterIds.length > 0) return sources;
+
     try {
-        // Import settings-manager functions
-        const {getBlueprints, getEffectiveBlueprintValues} = require('./settings-manager');
+        const settings = loadSettings();
+        const defaultCharacterId = settings
+            && settings.accounts
+            && settings.accounts.defaultCharacterId;
 
-        if (!characterId) {
-            return 0;
+        if (defaultCharacterId) {
+            console.warn(
+                '[Blueprint Sources] No character is enabled as a blueprint source; ' +
+                `falling back to the default character (${defaultCharacterId}). ` +
+                'Enable one in Settings > Industry to silence this.'
+            );
+            // Corp divisions are NOT inferred here - corp blueprints stay opt-in.
+            return { characterIds: [defaultCharacterId], divisionsByCharacter: {} };
         }
-
-        // Get blueprints for this character
-        const blueprints = getBlueprints(characterId);
-
-        if (!blueprints || blueprints.length === 0) {
-            return 0;
-        }
-
-        // Find blueprint by typeId
-        // Note: ESI stores as typeId, but check both typeId and type_id for compatibility
-        const blueprint = blueprints.find(bp => bp.typeId === blueprintTypeId || bp.type_id === blueprintTypeId);
-
-        if (!blueprint) {
-            return 0;
-        }
-
-        // Get effective values (includes overrides)
-        const effectiveValues = getEffectiveBlueprintValues(blueprint.itemId);
-
-        if (effectiveValues && effectiveValues.materialEfficiency !== undefined) {
-            return effectiveValues.materialEfficiency;
-        }
-
-        // Fallback to base ME value
-        // materialEfficiency comes from ESI, material_efficiency might be from manual entry
-        return blueprint.materialEfficiency !== undefined ? blueprint.materialEfficiency : (blueprint.material_efficiency || 0);
     } catch (error) {
-        console.error('Error getting owned blueprint ME:', error);
-        console.error('Stack trace:', error.stack);
-        return 0;
+        console.error('[Blueprint Sources] Fallback to default character failed:', error);
+    }
+
+    return sources;
+}
+
+/**
+ * Find the best owned blueprint of a type across the enabled sources.
+ *
+ * Replaces a lookup that took `blueprints.find(...)` over one character's rows,
+ * which had three problems:
+ *   - corp blueprints were silently in scope (same character_id, is_corporation
+ *     = 1, nothing filtering them)
+ *   - `.find()` returns the first row in TABLE ORDER, so which copy won could
+ *     change after a re-fetch
+ *   - BPOs and BPCs ranked equally, so a 1-run ME 2 BPC could beat an ME 10 BPO
+ *
+ * Ranking: BPO before BPC, then highest ME. A BPO is reusable; a BPC's runs are
+ * consumed, so adopting a BPC's ME implies a job that may not be repeatable.
+ *
+ * @param {number} blueprintTypeId
+ * @param {Object} [sources] {characterIds, divisionsByCharacter}; defaults to
+ *   the enabled sources
+ * @returns {{me, te, itemId, characterId, isCopy, isCorporation}|null} null when
+ *   no enabled source owns this blueprint - callers decide the default, so a
+ *   legitimate ME 0 is never confused with "not owned"
+ */
+function resolveOwnedBlueprint(blueprintTypeId, sources = null) {
+    try {
+        const { getBlueprints, getEffectiveBlueprintValues } = require('./settings-manager');
+        const { isInEnabledDivision } = require('./corp-divisions');
+
+        const effective = sources || getEffectiveBlueprintSources();
+        if (!effective.characterIds || effective.characterIds.length === 0) return null;
+
+        const candidates = [];
+
+        for (const characterId of effective.characterIds) {
+            const owned = getBlueprints(characterId) || [];
+
+            for (const bp of owned) {
+                const typeId = bp.typeId !== undefined ? bp.typeId : bp.type_id;
+                if (typeId !== blueprintTypeId) continue;
+
+                // Corp blueprints must sit in an enabled division. Personal
+                // blueprints are unconditional once the character is enabled.
+                if (bp.isCorporation) {
+                    const divisions = (effective.divisionsByCharacter || {})[characterId] || [];
+                    if (!isInEnabledDivision(bp.locationFlag, divisions)) continue;
+                }
+
+                // Overrides win over the ESI values, same as before.
+                const overrides = getEffectiveBlueprintValues(bp.itemId);
+                const me = overrides && overrides.materialEfficiency !== undefined
+                    ? overrides.materialEfficiency
+                    : (bp.materialEfficiency !== undefined ? bp.materialEfficiency : 0);
+                const te = overrides && overrides.timeEfficiency !== undefined
+                    ? overrides.timeEfficiency
+                    : (bp.timeEfficiency !== undefined ? bp.timeEfficiency : 0);
+
+                candidates.push({
+                    me: me || 0,
+                    te: te || 0,
+                    itemId: bp.itemId,
+                    characterId,
+                    isCopy: !!bp.isCopy,
+                    isCorporation: !!bp.isCorporation,
+                });
+            }
+        }
+
+        if (candidates.length === 0) return null;
+
+        candidates.sort((a, b) => {
+            // BPO (isCopy false) outranks BPC regardless of ME.
+            if (a.isCopy !== b.isCopy) return a.isCopy ? 1 : -1;
+            return b.me - a.me;
+        });
+
+        return candidates[0];
+    } catch (error) {
+        console.error('[Blueprint Sources] Error resolving owned blueprint:', error);
+        return null;
     }
 }
+
 
 /**
  * Get product group ID from SDE
@@ -298,10 +422,12 @@ function getOwnedBlueprintME(characterId, blueprintTypeId) {
  */
 function getProductGroupId(productTypeId, db = null) {
     try {
-        const ownConnection = !db;
+        // Falls back to the shared read-only handle rather than opening a new
+        // connection per call. ownConnection stays false so the shared handle
+        // is never closed by a caller that merely borrowed it.
+        const ownConnection = false;
         if (!db) {
-            const dbPath = getSDEPath();
-            db           = new Database(dbPath, {readonly: true});
+            db = getSharedDatabase();
         }
 
         const result = db.prepare(`
@@ -387,8 +513,13 @@ async function calculateBlueprintMaterials(blueprintTypeId, runs = 1, meLevel = 
         const subBlueprintId = getBlueprintForProduct(material.typeID, db);
 
         if (subBlueprintId && useIntermediates) {
-            // This is an intermediate component - get its ME if owned
-            const subME = characterId ? getOwnedBlueprintME(characterId, subBlueprintId) : 0;
+            // This is an intermediate component - get its ME if owned.
+            //
+            // Not gated on `characterId`: which characters supply blueprints is
+            // configuration now, so a calculation with no character still
+            // resolves against the enabled sources.
+            const ownedSub = resolveOwnedBlueprint(subBlueprintId);
+            const subME = ownedSub ? ownedSub.me : 0;
 
             // Recursively calculate materials for this component
             const subCalculation = await calculateBlueprintMaterials(
@@ -671,10 +802,12 @@ function getAllReactions(limit = null) {
 function getInventionData(blueprintTypeId, db = null) {
     console.log('[Invention] getInventionData called for blueprintTypeId:', blueprintTypeId);
     try {
-        const ownConnection = !db;
+        // Falls back to the shared read-only handle rather than opening a new
+        // connection per call. ownConnection stays false so the shared handle
+        // is never closed by a caller that merely borrowed it.
+        const ownConnection = false;
         if (!db) {
-            const dbPath = getSDEPath();
-            db           = new Database(dbPath, {readonly: true});
+            db = getSharedDatabase();
         }
 
         // Check if this blueprint can be used for invention (activityID = 8)
@@ -799,10 +932,12 @@ function getInventionData(blueprintTypeId, db = null) {
  */
 function getAllDecryptors(db = null) {
     try {
-        const ownConnection = !db;
+        // Falls back to the shared read-only handle rather than opening a new
+        // connection per call. ownConnection stays false so the shared handle
+        // is never closed by a caller that merely borrowed it.
+        const ownConnection = false;
         if (!db) {
-            const dbPath = getSDEPath();
-            db           = new Database(dbPath, {readonly: true});
+            db = getSharedDatabase();
         }
 
         // Decryptors are in groupID 1304
@@ -1141,9 +1276,9 @@ async function calculateManufacturingCost(inventedBlueprintTypeId, meLevel, runs
  */
 function calculateManufacturingTime(inventedBlueprintTypeId, teLevel, runs, facility, db = null) {
     try {
-        const ownConnection = !db;
+        const ownConnection = false;
         if (!db) {
-            db = new Database(getSDEPath(), {readonly: true});
+            db = getSharedDatabase();
         }
 
         // Get base manufacturing time from SDE (activityID = 1 is manufacturing)
@@ -1201,17 +1336,20 @@ function calculateManufacturingTime(inventedBlueprintTypeId, teLevel, runs, faci
  * @param {number} productPrice - Price of the manufactured product (for EIV calculation)
  * @param {Object} skills - Character skills for invention
  * @param {Object} facility - Facility configuration for cost bonuses and system cost index
- * @param {string} optimizationStrategy - Strategy for selecting best decryptor ('invention-only', 'total-per-item', 'total-full-bpc', 'time-optimized', 'custom-volume')
- * @param {number} customVolume - Number of items to manufacture (used with 'custom-volume' strategy)
+ * @param {string} optimizationStrategy - Strategy for selecting best decryptor ('invention-only', 'total-per-item', 'total-full-bpc', 'time-optimized')
+ * @param {Object} marketSet - Market set used to price invention materials
  * @returns {Promise<Object>} Best decryptor analysis with comparison
  */
-async function findBestDecryptor(inventionData, materialPrices, productPrice, skills = {}, facility = null, optimizationStrategy = 'total-per-item', customVolume = 1, marketSet = null) {
-    console.log(`[findBestDecryptor] Called with optimizationStrategy: ${optimizationStrategy}, customVolume: ${customVolume}`);
+async function findBestDecryptor(inventionData, materialPrices, productPrice, skills = {}, facility = null, optimizationStrategy = 'total-per-item', marketSet = null) {
+    console.log(`[findBestDecryptor] Called with optimizationStrategy: ${optimizationStrategy}`);
 
-    // Create single database connection for all calculations
-    const sdeDb = new Database(getSDEPath(), {readonly: true});
+    // Shared handle: this runs once per speculative T2, so opening a private
+    // connection here meant one open/close per candidate blueprint. The
+    // module owns it, so there is nothing to close here - the try/finally
+    // that used to wrap this function existed only to close the connection.
+    const sdeDb = getSharedDatabase();
 
-    try {
+    {
         const decryptors      = getAllDecryptors(sdeDb);
         const baseProbability         = inventionData.baseProbability;
         const inventedBlueprintTypeId = inventionData.product?.typeID || inventionData.products?.[0]?.typeID;
@@ -1273,9 +1411,6 @@ async function findBestDecryptor(inventionData, materialPrices, productPrice, sk
                     break;
                 case 'time-optimized':
                     optimizationMetric = mfgTimePerItem; // Lower is better
-                    break;
-                case 'custom-volume':
-                    optimizationMetric = (invCost.costPerRun * customVolume) + (mfgCostPerItem * customVolume);
                     break;
                 default:
                     optimizationMetric = invCost.costPerRun + mfgCostPerItem;
@@ -1357,9 +1492,6 @@ async function findBestDecryptor(inventionData, materialPrices, productPrice, sk
             allOptions:           allOptions,
             optimizationStrategy: optimizationStrategy
         };
-    } finally {
-        // Always close the database connection
-        sdeDb.close();
     }
 }
 
@@ -1379,7 +1511,8 @@ module.exports = {
     getTypeName,
     calculateMaterialQuantity,
     getBlueprintForProduct,
-    getOwnedBlueprintME,
+    resolveOwnedBlueprint,
+    getEffectiveBlueprintSources,
     calculateBlueprintMaterials,
     searchBlueprints,
     getAllBlueprints,
@@ -1396,5 +1529,9 @@ module.exports = {
     calculateManufacturingTime,
     calculateManufacturingCost,
     // Cache management
-    clearMaterialCache
+    clearMaterialCache,
+    // Shared SDE connection - closeSharedDatabase MUST be called before the
+    // SDE file is deleted or replaced.
+    getSharedDatabase,
+    closeSharedDatabase
 };

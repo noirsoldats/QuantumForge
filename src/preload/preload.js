@@ -1,5 +1,27 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
+/**
+ * Subscribe to a main-process channel and return an unsubscribe function.
+ *
+ * EVERY `on*` method below must use this. The application shell mounts and
+ * unmounts views repeatedly within one document, so a subscription without a
+ * disposer accumulates: mounting a view twice means its handler fires twice per
+ * event. This leak used to be masked because every navigation destroyed the
+ * document and took its listeners with it - that is no longer true.
+ *
+ * Note this removes only the handler it created, unlike `removeAllListeners`,
+ * which would also tear down other views' handlers on the same channel.
+ *
+ * @param {string} channel
+ * @param {Function} callback  Receives the payload (not the IpcRendererEvent).
+ * @returns {() => void} unsubscribe
+ */
+function subscribe(channel, callback) {
+  const handler = (_event, ...args) => callback(...args);
+  ipcRenderer.on(channel, handler);
+  return () => ipcRenderer.removeListener(channel, handler);
+}
+
 // Expose protected methods that allow the renderer process to use
 // the ipcRenderer without exposing the entire object
 contextBridge.exposeInMainWorld('electronAPI', {
@@ -35,10 +57,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
     removeCharacter: (characterId) => ipcRenderer.invoke('esi:removeCharacter', characterId),
     refreshToken: (characterId) => ipcRenderer.invoke('esi:refreshToken', characterId),
     getCharacter: (characterId) => ipcRenderer.invoke('esi:getCharacter', characterId),
+    // id -> name for the ids that resolve; unresolvable ones are omitted.
+    resolveCorporationNames: (corporationIds) =>
+      ipcRenderer.invoke('esi:resolveCorporationNames', corporationIds),
     setDefaultCharacter: (characterId) => ipcRenderer.invoke('esi:setDefaultCharacter', characterId),
     getDefaultCharacter: () => ipcRenderer.invoke('esi:getDefaultCharacter'),
     clearDefaultCharacter: () => ipcRenderer.invoke('esi:clearDefaultCharacter'),
-    onDefaultCharacterChanged: (callback) => ipcRenderer.on('default-character-changed', callback),
+    onDefaultCharacterChanged: (callback) => subscribe('default-character-changed', callback),
     checkMissingScopes: (characterId) => ipcRenderer.invoke('esi:checkMissingScopes', characterId),
     openAuthErrorWindow: (errorInfo) => ipcRenderer.invoke('esi:openAuthErrorWindow', errorInfo),
     refreshGlobalNow: () => ipcRenderer.invoke('esi:refreshGlobalNow'),
@@ -60,13 +85,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
     exists: () => ipcRenderer.invoke('sde:exists'),
     delete: () => ipcRenderer.invoke('sde:delete'),
     getPath: () => ipcRenderer.invoke('sde:getPath'),
-    onProgress: (callback) => ipcRenderer.on('sde:progress', (event, progress) => callback(progress)),
-    removeProgressListener: () => ipcRenderer.removeAllListeners('sde:progress'),
-    onUpdateAvailable: (callback) => ipcRenderer.on('sde:update-available', (event, updateInfo) => callback(updateInfo)),
-    removeUpdateListener: () => ipcRenderer.removeAllListeners('sde:update-available'),
+    onProgress: (callback) => subscribe('sde:progress', callback),
+    // No `onUpdateAvailable` here: the app does not push SDE update
+    // notifications. Updates are found at startup (startup-manager.js) or on
+    // demand via `checkUpdate` below - there is no background polling, so
+    // there is nothing to subscribe to. `app.onUpdateAvailable` is a different
+    // channel entirely: that one is the APPLICATION updater, and it is live.
     // Skill lookups
     getSkillName: (skillId) => ipcRenderer.invoke('sde:getSkillName', skillId),
     getSkillNames: (skillIds) => ipcRenderer.invoke('sde:getSkillNames', skillIds),
+    // Name + group + training rank in one query; prefer this when grouping.
+    getSkillInfo: (skillIds) => ipcRenderer.invoke('sde:getSkillInfo', skillIds),
     getAllSkills: () => ipcRenderer.invoke('sde:getAllSkills'),
     getSkillGroup: (skillId) => ipcRenderer.invoke('sde:getSkillGroup', skillId),
     searchSkills: (searchTerm) => ipcRenderer.invoke('sde:searchSkills', searchTerm),
@@ -100,8 +129,22 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getEffectiveLevel: (characterId, skillId) => ipcRenderer.invoke('skills:getEffectiveLevel', characterId, skillId),
     clearOverrides: (characterId) => ipcRenderer.invoke('skills:clearOverrides', characterId),
     getCacheStatus: (characterId) => ipcRenderer.invoke('skills:getCacheStatus', characterId),
-    openWindow: (characterId) => ipcRenderer.invoke('skills:openWindow', characterId),
-    onCharacterId: (callback) => ipcRenderer.on('skills:set-character-id', (event, id) => callback(id)),
+    // No openWindow/onCharacterId: the Skills Manager is a native shell view
+    // opened via window.openView('skills', { characterId }), which hands the
+    // character id in as a mount param instead of racing an IPC message.
+  },
+
+  // Manufacturing Summary API
+  summary: {
+    /**
+     * Run the summary. Progress arrives on the separate onProgress channel -
+     * a callback cannot cross the IPC boundary, so the two are split.
+     */
+    calculate: (options) => ipcRenderer.invoke('summary:calculate', options),
+    // Asks the in-flight run for THIS frame to stop at the next batch
+    // boundary. calculate() then resolves with { cancelled: true }.
+    cancel: () => ipcRenderer.invoke('summary:cancel'),
+    onProgress: (callback) => subscribe('summary:progress', callback),
   },
 
   // Blueprints API
@@ -113,10 +156,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     setOverride: (characterId, itemId, field, value) => ipcRenderer.invoke('blueprints:setOverride', characterId, itemId, field, value),
     getEffectiveValues: (itemId) => ipcRenderer.invoke('blueprints:getEffectiveValues', itemId),
     getCacheStatus: (characterId) => ipcRenderer.invoke('blueprints:getCacheStatus', characterId),
-    openWindow: (characterId) => ipcRenderer.invoke('blueprints:openWindow', characterId),
     openInCalculator: (blueprintTypeId, meLevel) => ipcRenderer.invoke('blueprints:openInCalculator', blueprintTypeId, meLevel),
-    onCharacterId: (callback) => ipcRenderer.on('blueprints:set-character-id', (event, id) => callback(id)),
-    onOpenInCalculator: (callback) => ipcRenderer.on('calculator:openBlueprint', (event, data) => callback(data)),
+    // No openWindow/onCharacterId: the Blueprint Manager is a native shell view
+    // and takes its character id as a mount param.
+    onOpenInCalculator: (callback) => subscribe('calculator:openBlueprint', callback),
   },
 
   // Assets API
@@ -124,8 +167,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     fetch: (characterId) => ipcRenderer.invoke('assets:fetch', characterId),
     get: (characterId, isCorporation) => ipcRenderer.invoke('assets:get', characterId, isCorporation),
     getCacheStatus: (characterId, isCorporation) => ipcRenderer.invoke('assets:getCacheStatus', characterId, isCorporation),
-    openWindow: (characterId) => ipcRenderer.invoke('assets:openWindow', characterId),
-    onCharacterId: (callback) => ipcRenderer.on('assets:set-character-id', (event, id) => callback(id)),
+    // No openWindow here: opening a screen in its own window is generic, via
+    // window.openView('assets', { characterId }). A per-screen opener is the
+    // legacy pattern being replaced.
   },
 
   // Division Settings API
@@ -135,6 +179,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
     fetchNames: (characterId) => ipcRenderer.invoke('divisions:fetchNames', characterId),
     getCacheStatus: (characterId) => ipcRenderer.invoke('divisions:getCacheStatus', characterId),
     getGenericName: (divisionId) => ipcRenderer.invoke('divisions:getGenericName', divisionId),
+    // Blueprint sources - a SEPARATE axis from the asset divisions above.
+    // A corp may keep BPOs in a library division while materials live in a
+    // production division, so these never write each other's columns.
+    getBlueprintSettings: (characterId) =>
+      ipcRenderer.invoke('divisions:getBlueprintSettings', characterId),
+    updateBlueprintDivisions: (characterId, divisions) =>
+      ipcRenderer.invoke('divisions:updateBlueprintDivisions', characterId, divisions),
+    setUseBlueprintsFrom: (characterId, enabled) =>
+      ipcRenderer.invoke('divisions:setUseBlueprintsFrom', characterId, enabled),
   },
 
   // Industry Settings API
@@ -169,6 +222,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getIndustrySettings: (planId) => ipcRenderer.invoke('plans:getIndustrySettings', planId),
     updateIndustrySettings: (planId, settings) => ipcRenderer.invoke('plans:updateIndustrySettings', planId, settings),
     updateCharacterDivisions: (planId, characterId, divisions) => ipcRenderer.invoke('plans:updateCharacterDivisions', planId, characterId, divisions),
+    // Blueprint sources for this plan - separate axis from the asset divisions.
+    updateCharacterBlueprintDivisions: (planId, characterId, divisions) => ipcRenderer.invoke('plans:updateCharacterBlueprintDivisions', planId, characterId, divisions),
     addBlueprint: (planId, blueprintConfig) => ipcRenderer.invoke('plans:addBlueprint', planId, blueprintConfig),
     updateBlueprint: (planBlueprintId, updates) => ipcRenderer.invoke('plans:updateBlueprint', planBlueprintId, updates),
     bulkUpdateBlueprints: (planId, bulkUpdates) => ipcRenderer.invoke('plans:bulkUpdateBlueprints', planId, bulkUpdates),
@@ -186,13 +241,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
     updateBuildItemsByType: (planId, itemType, blueprintTypeId, updates) => ipcRenderer.invoke('plans:updateBuildItemsByType', planId, itemType, blueprintTypeId, updates),
     markReactionBuilt: (planBlueprintId, builtRuns) => ipcRenderer.invoke('plans:markReactionBuilt', planBlueprintId, builtRuns),
     getMaterials: (planId, includeAssets) => ipcRenderer.invoke('plans:getMaterials', planId, includeAssets),
+    // Live prices for drift display. Read-only: the plan's locked cost basis is
+    // unaffected until an explicit re-lock.
+    getMaterialDrift: (planId, marketSetId) => ipcRenderer.invoke('plans:getMaterialDrift', planId, marketSetId),
     getProducts: (planId) => ipcRenderer.invoke('plans:getProducts', planId),
     getProductOwnedAssets: (planId, typeId) => ipcRenderer.invoke('plans:getProductOwnedAssets', planId, typeId),
     getSummary: (planId) => ipcRenderer.invoke('plans:getSummary', planId),
     recalculateMaterials: (planId, refreshPrices, marketSetId) => ipcRenderer.invoke('plans:recalculateMaterials', planId, refreshPrices, marketSetId),
     refreshESIData: (characterId) => ipcRenderer.invoke('plans:refreshESIData', characterId),
     refreshPlanESIData: (planId) => ipcRenderer.invoke('plans:refreshPlanESIData', planId),
-    openWindow: () => ipcRenderer.invoke('plans:openWindow'),
     // Matching functions
     matchJobs: (planId, options) => ipcRenderer.invoke('plans:matchJobs', planId, options),
     saveJobMatches: (matches) => ipcRenderer.invoke('plans:saveJobMatches', matches),
@@ -237,6 +294,19 @@ contextBridge.exposeInMainWorld('electronAPI', {
   location: {
     resolve: (locationId, characterId, isCorporation) =>
       ipcRenderer.invoke('location:resolve', locationId, characterId, isCorporation),
+    // Prefer this for lists: one call, deduped by location id.
+    resolveMany: (locationIds, characterId, isCorporation) =>
+      ipcRenderer.invoke('location:resolveMany', locationIds, characterId, isCorporation),
+  },
+
+  // Player-structure name cache
+  structures: {
+    // Force a re-resolve, overriding BOTH the 24h name TTL and the 7-day
+    // access-denied backoff. Stops early (reporting partial progress) if the
+    // ESI error budget runs low, since forcing many previously denied lookups
+    // is exactly the 403 burst the backoff exists to prevent.
+    manualRefresh: (options) => ipcRenderer.invoke('structures:manualRefresh', options),
+    getStats: () => ipcRenderer.invoke('structures:getStats'),
   },
 
   // Market API
@@ -255,16 +325,63 @@ contextBridge.exposeInMainWorld('electronAPI', {
     fetchOrders: (regionId, typeId, locationFilter) => ipcRenderer.invoke('market:fetchOrders', regionId, typeId, locationFilter),
     fetchHistory: (regionId, typeId) => ipcRenderer.invoke('market:fetchHistory', regionId, typeId),
     fetchData: (regionId, typeId) => ipcRenderer.invoke('market:fetchData', regionId, typeId),
+    // Every profitability metric for one product from ONE history read. Prefer
+    // this over calling the individual metrics: six separate calls per
+    // blueprint each re-fetched the same history.
+    metricsForProduct: (options) => ipcRenderer.invoke('metrics:forProduct', options),
+    materialVolatility: (options) => ipcRenderer.invoke('metrics:materialVolatility', options),
     fetchFuzzwork: (typeId, regionId) => ipcRenderer.invoke('market:fetchFuzzwork', typeId, regionId),
     fetchJitaPrice: (typeId) => ipcRenderer.invoke('market:fetchJitaPrice', typeId),
     fetchBulkPrices: (typeIds, regionId) => ipcRenderer.invoke('market:fetchBulkPrices', typeIds, regionId),
     calculatePrice: (typeId, regionId, locationId, priceType, quantity, marketSetId, settingsScope) =>
       ipcRenderer.invoke('market:calculatePrice', typeId, regionId, locationId, priceType, quantity, marketSetId, settingsScope),
+    // Prefer this for lists: one call, deduped by typeId. Same pricing rules as
+    // calculatePrice - a per-item loop over a large list is what made the
+    // Assets screen hammer ESI.
+    calculatePrices: (typeIds, options) =>
+      ipcRenderer.invoke('market:calculatePrices', typeIds, options),
     getPriceOverride: (typeId) => ipcRenderer.invoke('market:getPriceOverride', typeId),
     setPriceOverride: (typeId, price, notes) => ipcRenderer.invoke('market:setPriceOverride', typeId, price, notes),
     removePriceOverride: (typeId) => ipcRenderer.invoke('market:removePriceOverride', typeId),
     getAllPriceOverrides: () => ipcRenderer.invoke('market:getAllPriceOverrides'),
     getLastFetchTime: () => ipcRenderer.invoke('market:getLastFetchTime'),
+
+    // Seeded trade hubs, for the set editor's location picker.
+    getMarketLocations: () => ipcRenderer.invoke('market:getMarketLocations'),
+
+    // Inspector: plans referencing a type, and a single-material re-lock.
+    getPlansUsingType: (typeId) => ipcRenderer.invoke('market:getPlansUsingType', typeId),
+    relockPlanMaterial: (planId, typeId, price) =>
+      ipcRenderer.invoke('market:relockPlanMaterial', planId, typeId, price),
+    getCachedHistory: (regionId, typeId, days) =>
+      ipcRenderer.invoke('market:getCachedHistory', regionId, typeId, days),
+
+    // Items actually traded in a region (SDE names ∩ cached orders).
+    searchTradedItems: (regionId, searchTerm, limit) =>
+      ipcRenderer.invoke('market:searchTradedItems', regionId, searchTerm, limit),
+    getOrderBookSummary: (regionId, typeIds) =>
+      ipcRenderer.invoke('market:getOrderBookSummary', regionId, typeIds),
+
+    // Watchlists, watchlist items, favourites, and alert evaluation.
+    watchlists: {
+      getAll: () => ipcRenderer.invoke('market:getWatchlists'),
+      get: (watchlistId) => ipcRenderer.invoke('market:getWatchlist', watchlistId),
+      create: (data) => ipcRenderer.invoke('market:createWatchlist', data),
+      update: (watchlistId, updates) => ipcRenderer.invoke('market:updateWatchlist', watchlistId, updates),
+      remove: (watchlistId) => ipcRenderer.invoke('market:deleteWatchlist', watchlistId),
+      addItem: (watchlistId, typeId, alert) => ipcRenderer.invoke('market:addWatchlistItem', watchlistId, typeId, alert),
+      updateItem: (itemId, updates) => ipcRenderer.invoke('market:updateWatchlistItem', itemId, updates),
+      removeItem: (itemId) => ipcRenderer.invoke('market:removeWatchlistItem', itemId),
+      rebaseline: (itemId, prices) =>
+        ipcRenderer.invoke('market:rebaselineWatchlistItem', itemId, prices),
+      // No `evaluateAlerts`: alert state is derived in the renderer from the
+      // live price against the stored baseline, not evaluated in main.
+    },
+    favorites: {
+      getAll: () => ipcRenderer.invoke('market:getFavorites'),
+      toggle: (typeId) => ipcRenderer.invoke('market:toggleFavorite', typeId),
+      set: (typeId, isFavorite) => ipcRenderer.invoke('market:setFavorite', typeId, isFavorite),
+    },
     manualRefresh: (regionId) => ipcRenderer.invoke('market:manualRefresh', regionId),
     getLastHistoryFetchTime: () => ipcRenderer.invoke('market:getLastHistoryFetchTime'),
     getHistoryDataStatus: (regionId) => ipcRenderer.invoke('market:getHistoryDataStatus', regionId),
@@ -276,12 +393,18 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.invoke('market:searchStructures', characterId, searchTerm),
     refreshStructureMarket: (structureId, regionId, characterId) =>
       ipcRenderer.invoke('market:refreshStructureMarket', structureId, regionId, characterId),
-    onFetchProgress: (callback) => ipcRenderer.on('market:fetchProgress', (event, progress) => callback(progress)),
-    removeFetchProgressListener: () => ipcRenderer.removeAllListeners('market:fetchProgress'),
-    onHistoryProgress: (callback) => ipcRenderer.on('market:historyProgress', (event, progress) => callback(progress)),
-    removeHistoryProgressListener: () => ipcRenderer.removeAllListeners('market:historyProgress'),
-    onCheckUnsavedChanges: (callback) => ipcRenderer.on('market:checkUnsavedChanges', callback),
-    sendUnsavedChangesResponse: (hasChanges) => ipcRenderer.send('market:unsavedChangesResponse', hasChanges),
+    onFetchProgress: (callback) => subscribe('market:fetchProgress', callback),
+
+    /**
+     * Which stage of a full market refresh is running.
+     *
+     * Payload: `{ phase, current, total, regionId?, structureId?, label?, at }`.
+     * Phases run `starting` -> `regions` -> `structures` -> `adjusted-prices`
+     * -> `cost-indices` -> `done`. Only main knows the plan, so this is what
+     * lets the UI show "region 3 of 12" rather than an anonymous spinner.
+     */
+    onRefreshStage: (callback) => subscribe('market:refreshStage', callback),
+    onHistoryProgress: (callback) => subscribe('market:historyProgress', callback),
   },
 
   // Blueprint Calculator API
@@ -291,7 +414,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.invoke('calculator:calculateMaterials', blueprintTypeId, runs, meLevel, characterId, facilityId, marketSetId),
     getBlueprintProduct: (blueprintTypeId) => ipcRenderer.invoke('calculator:getBlueprintProduct', blueprintTypeId),
     getTypeName: (typeId) => ipcRenderer.invoke('calculator:getTypeName', typeId),
-    getOwnedBlueprintME: (characterId, blueprintTypeId) => ipcRenderer.invoke('calculator:getOwnedBlueprintME', characterId, blueprintTypeId),
+    // Resolves against the ENABLED blueprint sources (Settings > Industry) and
+    // returns which copy won - ME, TE, personal/corp, BPO/BPC.
+    resolveOwnedBlueprint: (blueprintTypeId) => ipcRenderer.invoke('calculator:resolveOwnedBlueprint', blueprintTypeId),
     getRigBonuses: (rigTypeId) => ipcRenderer.invoke('calculator:getRigBonuses', rigTypeId),
     getAllBlueprints: (limit) => ipcRenderer.invoke('calculator:getAllBlueprints', limit),
     getAllReactions: (limit) => ipcRenderer.invoke('calculator:getAllReactions', limit),
@@ -301,8 +426,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getBlueprintMaterials: (blueprintTypeId) => ipcRenderer.invoke('calculator:getBlueprintMaterials', blueprintTypeId),
     calculateInventionProbability: (baseProbability, skills, decryptorMultiplier) =>
       ipcRenderer.invoke('calculator:calculateInventionProbability', baseProbability, skills, decryptorMultiplier),
-    findBestDecryptor: (inventionData, materialPrices, productPrice, skills, facility, optimizationStrategy, customVolume, marketSetId) =>
-      ipcRenderer.invoke('calculator:findBestDecryptor', inventionData, materialPrices, productPrice, skills, facility, optimizationStrategy, customVolume, marketSetId),
+    findBestDecryptor: (inventionData, materialPrices, productPrice, skills, facility, optimizationStrategy, marketSetId) =>
+      ipcRenderer.invoke('calculator:findBestDecryptor', inventionData, materialPrices, productPrice, skills, facility, optimizationStrategy, marketSetId),
     clearCaches: () => ipcRenderer.invoke('calculator:clearCaches'),
   },
 
@@ -342,17 +467,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getRigEffects: (typeId) => ipcRenderer.invoke('facilities:getRigEffects', typeId),
   },
 
-  // Manufacturing Summary API
-  manufacturingSummary: {
-    openWindow: () => ipcRenderer.invoke('manufacturingSummary:openWindow'),
-  },
+  // No manufacturingSummary namespace: the screen is a native shell view, and
+  // its calculation lives under `summary` above.
 
-  // Loot Analyzer API
-  lootAnalyzer: {
-    openWindow: () => ipcRenderer.invoke('lootAnalyzer:openWindow'),
-  },
-
-  // Loot Analyzer data API (used by the window's renderer)
+  // Loot Analyzer data API. There is no `lootAnalyzer.openWindow` any more -
+  // the screen is a native shell view and mounts in the main window.
   loot: {
     parseAndEnrich: (rawText) => ipcRenderer.invoke('loot:parseAndEnrich', rawText),
     fetchPrices: (params) => ipcRenderer.invoke('loot:fetchPrices', params),
@@ -360,11 +479,23 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
 
   // Cleanup Tool API
+  // What Can I Build? — asset plumbing kept under its original `cleanupTool`
+  // name so the existing handlers are untouched; the calculation lives under
+  // `wcib` below. There is no openWindow: it is a native shell view now.
   cleanupTool: {
-    openWindow: () => ipcRenderer.invoke('cleanupTool:openWindow'),
     getAssetSources: () => ipcRenderer.invoke('cleanupTool:getAssetSources'),
     refreshAssets: (characterIds) => ipcRenderer.invoke('cleanupTool:refreshAssets', characterIds),
     aggregateAssets: (sources) => ipcRenderer.invoke('cleanupTool:aggregateAssets', sources),
+  },
+
+  // What Can I Build? calculation. Mirrors `summary` above: one call in, rows
+  // out, progress on its own channel because a callback cannot cross IPC.
+  wcib: {
+    calculate: (options) => ipcRenderer.invoke('wcib:calculate', options),
+    // Asks the in-flight run for THIS frame to stop at the next batch
+    // boundary. calculate() then resolves with { cancelled: true }.
+    cancel: () => ipcRenderer.invoke('wcib:cancel'),
+    onProgress: (callback) => subscribe('wcib:progress', callback),
   },
 
   // App API (updates, version, etc.)
@@ -372,20 +503,25 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getVersion: () => ipcRenderer.invoke('app:getVersion'),
     getElectronVersion: () => ipcRenderer.invoke('app:getElectronVersion'),
     checkForUpdates: () => ipcRenderer.invoke('app:checkForUpdates'),
-    onUpdateAvailable: (callback) => ipcRenderer.on('update-available', (event, info) => callback(info)),
-    onUpdateNotAvailable: (callback) => ipcRenderer.on('update-not-available', () => callback()),
-    onUpdateDownloadProgress: (callback) => ipcRenderer.on('update-download-progress', (event, progress) => callback(progress)),
-    onUpdateDownloaded: (callback) => ipcRenderer.on('update-downloaded', (event, info) => callback(info)),
-    onUpdateError: (callback) => ipcRenderer.on('update-error', (event, error) => callback(error)),
+    onUpdateAvailable: (callback) => subscribe('update-available', callback),
+    onUpdateNotAvailable: (callback) => subscribe('update-not-available', callback),
+    onUpdateDownloadProgress: (callback) => subscribe('update-download-progress', callback),
+    onUpdateDownloaded: (callback) => subscribe('update-downloaded', callback),
+    onUpdateError: (callback) => subscribe('update-error', callback),
   },
 
   // Startup API (for splash screen)
   startup: {
-    onProgress: (callback) => ipcRenderer.on('startup:progress', (event, progress) => callback(progress)),
-    onRequireAction: (callback) => ipcRenderer.on('startup:requireAction', (event, action) => callback(action)),
-    onWarning: (callback) => ipcRenderer.on('startup:warning', (event, warning) => callback(warning)),
-    onError: (callback) => ipcRenderer.on('startup:error', (event, error) => callback(error)),
-    onComplete: (callback) => ipcRenderer.on('startup:complete', () => callback()),
+    onProgress: (callback) => subscribe('startup:progress', callback),
+    onRequireAction: (callback) => subscribe('startup:requireAction', callback),
+    onWarning: (callback) => subscribe('startup:warning', callback),
+    onError: (callback) => subscribe('startup:error', callback),
+    onComplete: (callback) => subscribe('startup:complete', callback),
+    // Fit the splash window to its card. The content changes shape as startup
+    // progresses (the SDE row appears only when there is a download; the action
+    // and error panels replace the task list), so this is called on every
+    // change rather than once at load.
+    fitToContent: (height) => ipcRenderer.invoke('startup:fitToContent', height),
     updateApp: () => ipcRenderer.send('startup:updateApp'),
     skipAppUpdate: () => ipcRenderer.send('startup:skipAppUpdate'),
     downloadSDE: () => ipcRenderer.send('startup:downloadSDE'),
@@ -404,6 +540,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Server Status API
   status: {
     fetch: () => ipcRenderer.invoke('status:fetch'),
+    // Read-only; does NOT trigger an ESI call. The background cycle fetches.
+    getCached: () => ipcRenderer.invoke('status:getCached'),
     getLastFetchTime: () => ipcRenderer.invoke('status:getLastFetchTime'),
   },
 
@@ -411,12 +549,98 @@ contextBridge.exposeInMainWorld('electronAPI', {
   esiStatus: {
     openWindow: () => ipcRenderer.invoke('esiStatus:openWindow'),
     getAggregated: () => ipcRenderer.invoke('esiStatus:getAggregated'),
+    // Error-budget state + the endpoints responsible, for diagnostics.
+    getErrorBudget: () => ipcRenderer.invoke('esiStatus:getErrorBudget'),
     initializeCharacter: (characterId, characterName) => ipcRenderer.invoke('esiStatus:initializeCharacter', characterId, characterName),
     initializeUniverse: () => ipcRenderer.invoke('esiStatus:initializeUniverse'),
     getCharacterCalls: (characterId) => ipcRenderer.invoke('esiStatus:getCharacterCalls', characterId),
     getUniverseCalls: () => ipcRenderer.invoke('esiStatus:getUniverseCalls'),
     getCallDetails: (callKey) => ipcRenderer.invoke('esiStatus:getCallDetails', callKey),
     cleanup: () => ipcRenderer.invoke('esiStatus:cleanup'),
+  },
+
+  // Window Controls API (custom frameless title bar)
+  //
+  // NOTE: `onMaximizeChanged` returns an unsubscribe function. New `on*` methods
+  // MUST follow this pattern - the persistent shell mounts and unmounts views
+  // repeatedly, and listeners without a disposer accumulate into duplicate
+  // handlers. (Historically this leak was masked because every navigation
+  // destroyed the document.)
+  window: {
+    minimize: () => ipcRenderer.invoke('window:minimize'),
+    toggleMaximize: () => ipcRenderer.invoke('window:toggleMaximize'),
+    close: () => ipcRenderer.invoke('window:close'),
+    isMaximized: () => ipcRenderer.invoke('window:isMaximized'),
+    getPlatformChrome: () => ipcRenderer.invoke('window:getPlatformChrome'),
+
+    /**
+     * Open any registered shell view in its own window.
+     *
+     * The single, universal way a screen gets its own window - this is what the
+     * pop-out feature uses, and it works for any view without a per-screen main
+     * module or IPC channel. Windows are identified by (viewId, params), so
+     * asking twice for the same pair focuses the existing window.
+     *
+     *   window.openView('assets', { characterId: 123 })
+     */
+    openView: (viewId, params, options) =>
+      ipcRenderer.invoke('window:openView', viewId, params, options),
+    isViewOpen: (viewId, params) => ipcRenderer.invoke('window:isViewOpen', viewId, params),
+    focusView: (viewId, params) => ipcRenderer.invoke('window:focusView', viewId, params),
+    closeView: (viewId, params) => ipcRenderer.invoke('window:closeView', viewId, params),
+
+    /** Every open view window, as `{ key, viewId, params }`. */
+    listViewWindows: () => ipcRenderer.invoke('window:listViewWindows'),
+
+    /**
+     * Park a payload for a window that is about to open, and get a token to
+     * pass in its mount params.
+     *
+     * Used by pop-out so an expensive result set (a Manufacturing Summary
+     * sweep, a What Can I Build? run) moves to the new window instead of being
+     * recomputed there. The payload does NOT travel in params - that would put
+     * it in the window key and break saved bounds.
+     */
+    createHandoff: (viewId, payload) => ipcRenderer.invoke('handoff:create', viewId, payload),
+
+    /** Claim a parked payload. One shot: the slot is consumed on read. */
+    claimHandoff: (token, viewId) => ipcRenderer.invoke('handoff:claim', token, viewId),
+
+    /**
+     * A view window opened or closed, in ANY window. Payload is
+     * `{ open: [{ key, viewId, params }] }` - the full current set, not a
+     * delta, so a late subscriber cannot miss an event and desync.
+     */
+    onViewWindowsChanged: (callback) => subscribe('window:viewWindowsChanged', callback),
+
+    // Main process asking the shell to mount a view (e.g. Settings, requested
+    // from a framed tool or another window).
+    onShowView: (callback) => subscribe('shell:showView', callback),
+    onMaximizeChanged: (callback) => {
+      const handler = (_event, state) => callback(state);
+      ipcRenderer.on('window:maximize-changed', handler);
+      return () => ipcRenderer.removeListener('window:maximize-changed', handler);
+    },
+  },
+
+  // Data-change events (see src/main/data-events.js).
+  //
+  // Screens subscribe to these instead of polling, so a staleness warning or a
+  // table can update itself the moment fresh data lands. Every method returns an
+  // unsubscribe function - the shell mounts views repeatedly, so an untracked
+  // listener would accumulate.
+  data: {
+    onChanged: (callback) => subscribe('esi:data-changed', callback),
+    onCycleComplete: (callback) => subscribe('esi:cycle-complete', callback),
+    onMarketChanged: (callback) => subscribe('market:data-changed', callback),
+    // A settings category was written, in ANY window. Payload is
+    // { category, keys, updates, at } - check `category`/`keys` before acting,
+    // since this fires for every settings write in the app.
+    onSettingsChanged: (callback) => subscribe('settings:changed', callback),
+    // ESI's error budget is running low / is spent. Payload names the
+    // offending endpoints so the user can report them.
+    onBudgetLow: (callback) => subscribe('esi:budget-low', callback),
+    onBudgetBlocked: (callback) => subscribe('esi:budget-blocked', callback),
   },
 
   // Shell API (for opening external links)

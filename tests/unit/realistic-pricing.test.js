@@ -19,11 +19,13 @@ jest.mock('../../src/main/market-database', () => ({
 }));
 
 jest.mock('../../src/main/esi-market', () => ({
-  fetchMarketOrders: jest.fn((typeId) => {
+  // Real signatures are (regionId, typeId, ...) - these return the fixture
+  // regardless, but the parameter names were reversed and misleading.
+  fetchMarketOrders: jest.fn((regionId, typeId) => {
     const marketData = require('./fixtures/market-data');
     return Promise.resolve(marketData.tritaniumOrders.sell);
   }),
-  fetchMarketHistory: jest.fn((typeId) => {
+  fetchMarketHistory: jest.fn((regionId, typeId) => {
     const marketData = require('./fixtures/market-data');
     return Promise.resolve(marketData.tritaniumHistory);
   }),
@@ -49,13 +51,34 @@ describe('Realistic Price Calculation', () => {
       }))
     });
 
-    // Reset ESI mocks to defaults
+    // Reset ESI mocks to defaults.
+    //
+    // mockReset() FIRST, because mockResolvedValue does NOT drain a queued
+    // mockResolvedValueOnce - the two are separate queues and the Once wins.
+    // Any test that primes a Once it does not consume (or consumes fewer than
+    // it queued) would otherwise leak that value into the next test, which is
+    // exactly how a snapshot ended up asserting another test's fixture.
+    //
+    // fetchMarketOrders / fetchMarketHistory need this too: an order-book-only
+    // method calls them directly rather than going through fetchMarketData.
+    const fixtures = require('./fixtures/market-data');
     const mockESI = require('../../src/main/esi-market');
+
+    [
+      mockESI.getCachedMarketOrders,
+      mockESI.getCachedMarketHistory,
+      mockESI.fetchMarketOrders,
+      mockESI.fetchMarketHistory,
+      mockESI.fetchMarketData,
+    ].forEach((fn) => fn.mockReset());
+
     mockESI.getCachedMarketOrders.mockReturnValue(null);
     mockESI.getCachedMarketHistory.mockReturnValue(null);
+    mockESI.fetchMarketOrders.mockResolvedValue(fixtures.tritaniumOrders.sell);
+    mockESI.fetchMarketHistory.mockResolvedValue(fixtures.tritaniumHistory);
     mockESI.fetchMarketData.mockResolvedValue({
-      orders: require('./fixtures/market-data').tritaniumOrders.sell,
-      history: require('./fixtures/market-data').tritaniumHistory
+      orders: fixtures.tritaniumOrders.sell,
+      history: fixtures.tritaniumHistory,
     });
   });
 
@@ -184,10 +207,11 @@ describe('Realistic Price Calculation', () => {
 
     test('falls back to historical when no market orders', async () => {
       const mockESI = require('../../src/main/esi-market');
-      mockESI.fetchMarketData.mockResolvedValueOnce({
-        orders: [],  // No orders
-        history: marketData.tritaniumHistory
-      });
+      // 'vwap' reads the order book, and only fetches history if that book
+      // turns out to be empty - so BOTH calls have to be primed here. Mocking
+      // fetchMarketData alone no longer reaches this path.
+      mockESI.fetchMarketOrders.mockResolvedValueOnce([]);
+      mockESI.fetchMarketHistory.mockResolvedValueOnce(marketData.tritaniumHistory);
 
       const result = await calculateRealisticPrice(
         marketData.TRITANIUM_TYPE_ID,
@@ -216,9 +240,13 @@ describe('Realistic Price Calculation', () => {
       });
 
       const mockESI = require('../../src/main/esi-market');
-      // Mock all cache and fetch functions to return empty
+      // Mock every cache and fetch path to return empty. fetchMarketOrders and
+      // fetchMarketHistory are the ones an order-book-only method actually
+      // uses; fetchMarketData covers the history-reading methods.
       mockESI.getCachedMarketOrders.mockReturnValue(null);
       mockESI.getCachedMarketHistory.mockReturnValue([]);  // Empty array, not null
+      mockESI.fetchMarketOrders.mockImplementation(async () => []);
+      mockESI.fetchMarketHistory.mockImplementation(async () => []);
       mockESI.fetchMarketData.mockImplementation(async () => ({
         orders: [],
         history: []
@@ -279,10 +307,11 @@ describe('Realistic Price Calculation', () => {
 
     test('low confidence for historical fallback', async () => {
       const mockESI = require('../../src/main/esi-market');
-      mockESI.fetchMarketData.mockResolvedValueOnce({
-        orders: [],
-        history: require('./fixtures/market-data').tritaniumHistory
-      });
+      // Empty order book forces the historical fallback, which then fetches.
+      mockESI.fetchMarketOrders.mockResolvedValueOnce([]);
+      mockESI.fetchMarketHistory.mockResolvedValueOnce(
+        require('./fixtures/market-data').tritaniumHistory
+      );
 
       const result = await calculateRealisticPrice(
         marketData.TRITANIUM_TYPE_ID,
@@ -396,10 +425,8 @@ describe('Realistic Price Calculation', () => {
   describe('Location Filtering', () => {
     test('filters orders by location', async () => {
       const mockESI = require('../../src/main/esi-market');
-      mockESI.fetchMarketData.mockResolvedValueOnce({
-        orders: marketData.multiLocationOrders,
-        history: require('./fixtures/market-data').tritaniumHistory
-      });
+      // 'vwap' reads the order book directly.
+      mockESI.fetchMarketOrders.mockResolvedValueOnce(marketData.multiLocationOrders);
 
       const result = await calculateRealisticPrice(
         marketData.TRITANIUM_TYPE_ID,
@@ -433,10 +460,13 @@ describe('Realistic Price Calculation', () => {
   describe('Error Handling', () => {
     test('handles ESI API errors gracefully', async () => {
       const mockESI = require('../../src/main/esi-market');
-      mockESI.fetchMarketData.mockRejectedValueOnce(new Error('API error'));
+      // 'vwap' prices from the ORDER BOOK, so that is the call that can fail.
+      // (It used to reach ESI through fetchMarketData, which also pulled
+      // history; order-book-only methods no longer fetch history speculatively.)
+      mockESI.fetchMarketOrders.mockRejectedValueOnce(new Error('API error'));
 
-      // The function doesn't have try-catch, so it will throw
-      // We test that it throws with the expected error
+      // calculateRealisticPrice has no try-catch around the fetch, so the
+      // error propagates to the caller.
       await expect(
         calculateRealisticPrice(
           marketData.TRITANIUM_TYPE_ID,

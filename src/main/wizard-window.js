@@ -14,8 +14,18 @@ function createWizardWindow() {
   }
 
   wizardWindow = new BrowserWindow({
-    width: 800,
-    height: 800,
+    // Exactly the card in wizard.css: 820x720. It was 800x800 - NARROWER than
+    // the 820px card, which `max-width: 100%` then squeezed, and 80px taller
+    // than it, which left a margin below.
+    //
+    // Deliberately NOT sized to content like the splash: the eight steps differ
+    // enormously in height (step 5 is roughly ten times step 1), so a
+    // content-sized window would resize and re-centre on every Next click. The
+    // card is a fixed frame and `.wizard-content` scrolls inside it, which is
+    // what the mockup specifies.
+    width: 820,
+    height: 720,
+    useContentSize: true, // dimensions are CONTENT, ignoring any frame
     frame: false,
     resizable: false,
     center: true,

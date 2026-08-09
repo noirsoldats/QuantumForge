@@ -1,0 +1,363 @@
+<!--
+  Loot Analyzer view.
+
+  Ported from public/loot-analyzer.html against `Loot Analyzer (1a).dc.html`.
+  Behaviour (best-action logic, yield formula, all 15 sortable columns, the
+  per-market SVR pair) comes from the LIVE screen; presentation comes from the
+  mockup. Where the two disagree the live app wins - the mockup, for instance,
+  makes only 6 columns sortable and carries a single SVR value.
+
+  Element ids are kept stable with the live screen wherever the renderer keyed
+  off them, so the port is a presentation change rather than a rewrite.
+-->
+<div id="la-view" class="la-view">
+
+  <!-- ------------------------------------------------------------ input -->
+  <div class="la-card">
+    <div class="la-card-accent"></div>
+
+    <div class="la-input-body">
+      <div class="la-field">
+        <label class="la-field-label" for="loot-input">Paste Loot / Assets</label>
+        <textarea id="loot-input" class="la-textarea" rows="6"
+                  placeholder="Paste from Eve inventory (Ctrl+C) or Personal Assets window…"></textarea>
+      </div>
+
+      <div class="la-market-row">
+        <div class="la-field">
+          <label class="la-field-label" for="market1-region">Market 1</label>
+          <select id="market1-region" class="qf-select">
+            <option value="">— Select Region —</option>
+          </select>
+          <select id="market1-hub" class="qf-select la-hub-select" hidden>
+            <option value="">Entire Region</option>
+          </select>
+        </div>
+        <div class="la-field">
+          <label class="la-field-label" for="market2-region">
+            Market 2 <span class="la-optional">(optional)</span>
+          </label>
+          <select id="market2-region" class="qf-select">
+            <option value="">— None —</option>
+          </select>
+          <select id="market2-hub" class="qf-select la-hub-select" hidden>
+            <option value="">Entire Region</option>
+          </select>
+        </div>
+        <div class="la-field la-field-narrow">
+          <label class="la-field-label" for="min-svr">
+            Minimum SVR <span class="la-optional">(sell markets below this are excluded)</span>
+          </label>
+          <input type="number" id="min-svr" class="la-input la-input-mono"
+                 min="0" step="1" value="0" placeholder="0 = no minimum">
+        </div>
+      </div>
+
+      <!--
+        Freshness badge. Driven by QFFreshness.subscribe, which re-reads the
+        region dashboard on every market/cycle event - the old screen cached
+        the dashboard once at load, so this warning could never clear.
+      -->
+      <div id="market-data-warning" class="la-warning" hidden>
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>
+        <span id="market-data-warning-text"></span>
+      </div>
+
+      <!-- ------------------------------------------ reprocessing config -->
+      <details id="reprocessing-config" class="la-config" open>
+        <summary class="la-config-head">
+          <svg class="la-config-chevron" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 18l6-6-6-6"></path></svg>
+          <span class="la-config-title">Reprocessing Configuration</span>
+          <span class="la-spacer"></span>
+          <!-- The same value also appears in the results summary bar; both
+               are driven by renderYield(). -->
+          <span class="la-config-yield"><span id="yield-value">—</span> effective yield</span>
+        </summary>
+
+        <div class="la-config-grid">
+          <div class="la-field">
+            <label class="la-field-label" for="station-type">Station Type</label>
+            <select id="station-type" class="qf-select">
+              <option value="npc">NPC Station (50% base, 5% tax)</option>
+              <option value="athanor">Athanor (54% base, 0% tax)</option>
+              <option value="tatara">Tatara (54% base, 0% tax)</option>
+            </select>
+          </div>
+
+          <div class="la-field">
+            <label class="la-field-label" for="rig-1">Rig (Slot 1)</label>
+            <select id="rig-1" class="qf-select">
+              <option value="none">None</option>
+              <option value="t1">T1 Reprocessing Rig (+2%)</option>
+              <option value="t2">T2 Reprocessing Rig (+4%)</option>
+            </select>
+          </div>
+
+          <!-- Only Tatara has a second rig slot; the renderer toggles this. -->
+          <div class="la-field" id="rig-2-group" hidden>
+            <label class="la-field-label" for="rig-2">Rig (Slot 2 — Tatara)</label>
+            <select id="rig-2" class="qf-select">
+              <option value="none">None</option>
+              <option value="t1">T1 Reprocessing Rig (+2%)</option>
+              <option value="t2">T2 Reprocessing Rig (+4%)</option>
+            </select>
+          </div>
+
+          <div class="la-field la-field-narrow">
+            <label class="la-field-label" for="skill-reprocessing">Reprocessing (0–5)</label>
+            <input type="number" id="skill-reprocessing" class="la-input la-input-mono"
+                   min="0" max="5" step="1" value="0">
+          </div>
+
+          <div class="la-field la-field-narrow">
+            <label class="la-field-label" for="skill-reprocessing-eff">Reprocessing Eff. (0–5)</label>
+            <input type="number" id="skill-reprocessing-eff" class="la-input la-input-mono"
+                   min="0" max="5" step="1" value="0">
+          </div>
+
+          <div class="la-field">
+            <label class="la-field-label" for="implant-bonus">Reprocessing Implant</label>
+            <select id="implant-bonus" class="qf-select">
+              <option value="0">None</option>
+              <option value="0.01">+1% (Beancounter RX-801)</option>
+              <option value="0.02">+2% (Beancounter RX-802)</option>
+              <option value="0.04">+4% (Beancounter RX-804)</option>
+            </select>
+          </div>
+
+          <div class="la-field la-field-wide">
+            <button type="button" id="ore-skills-btn" class="btn btn-secondary btn-sm">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"></path><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path></svg>
+              Configure Ore Processing Skills
+            </button>
+          </div>
+        </div>
+      </details>
+
+      <div class="la-actions">
+        <button type="button" id="analyze-btn" class="btn btn-primary">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+          <span id="analyze-label">Analyze Loot</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ------------------------------------------------------- unresolved -->
+  <div id="unresolved-banner" class="la-unresolved" hidden>
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>
+    <span>Items not found in SDE:&nbsp;</span><span id="unresolved-list"></span>
+  </div>
+
+  <!-- ---------------------------------------------------- no regions -->
+  <div id="no-regions-state" class="la-empty" hidden>
+    <div class="la-empty-icon" aria-hidden="true">
+      <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+    </div>
+    <div class="la-empty-title">No market regions configured</div>
+    <div class="la-empty-text">
+      Add a market set with at least one region in Market Manager, then come back.
+    </div>
+  </div>
+
+  <!-- ------------------------------------------------------------ empty -->
+  <div id="la-empty-state" class="la-empty">
+    <div class="la-empty-icon" aria-hidden="true">
+      <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+    </div>
+    <div class="la-empty-title">Paste loot to analyze</div>
+    <div class="la-empty-text">
+      Paste an inventory or assets list, pick at least one market, then Analyze
+      Loot to compare reprocessing against selling.
+    </div>
+  </div>
+
+  <!-- ---------------------------------------------------------- results -->
+  <div id="results-section" hidden>
+    <!--
+      Summary bar. Per the mockup this is its own bordered card carrying the
+      effective yield on the left and the item count / grand total on the
+      right - not a bare heading row.
+    -->
+    <div class="la-results-head">
+      <span class="la-results-label">Effective Reprocessing Yield</span>
+      <span id="yield-value-results" class="la-results-yield">—</span>
+      <span class="la-spacer"></span>
+      <span id="la-result-count" class="la-total-label"></span>
+      <span id="la-grand-total" class="la-total-value" title=""></span>
+    </div>
+
+    <div class="la-card">
+      <div class="la-card-accent"></div>
+      <div class="la-table-scroll">
+        <table class="la-table" id="results-table">
+          <thead>
+            <tr id="la-thead-row">
+              <th class="la-th col-name sortable" data-sort="name">Item Name <span class="la-sort-icon">↕</span></th>
+              <th class="la-th is-numeric sortable" data-sort="quantity">Qty <span class="la-sort-icon">↕</span></th>
+              <th class="la-th is-numeric sortable" data-sort="reprocessSell">Repr. Sell <span class="la-sort-icon">↕</span></th>
+              <th class="la-th is-numeric sortable" data-sort="reprocessBuy">Repr. Buy <span class="la-sort-icon">↕</span></th>
+              <th class="la-th is-numeric sortable" data-sort="m1Sell">M1 Sell <span class="la-sort-icon">↕</span></th>
+              <th class="la-th is-numeric sortable" data-sort="m1Buy">M1 Buy <span class="la-sort-icon">↕</span></th>
+              <th class="la-th is-numeric sortable" data-sort="m2Sell">M2 Sell <span class="la-sort-icon">↕</span></th>
+              <th class="la-th is-numeric sortable" data-sort="m2Buy">M2 Buy <span class="la-sort-icon">↕</span></th>
+              <th class="la-th is-numeric sortable" data-sort="m1SellVsM2SellPct">M1v M2 Sell% <span class="la-sort-icon">↕</span></th>
+              <th class="la-th is-numeric sortable" data-sort="m1BuyVsM2BuyPct">M1v M2 Buy% <span class="la-sort-icon">↕</span></th>
+              <th class="la-th is-numeric sortable" data-sort="m1Spread">M1 Spread <span class="la-sort-icon">↕</span></th>
+              <th class="la-th is-numeric sortable" data-sort="m2Spread">M2 Spread <span class="la-sort-icon">↕</span></th>
+              <th class="la-th is-numeric sortable" data-sort="svr">SVR <span class="la-sort-icon">↕</span></th>
+              <th class="la-th is-center sortable" data-sort="bestAction">Best Action <span class="la-sort-icon">↕</span></th>
+              <th class="la-th is-numeric sortable" data-sort="totalBest">Total ISK (Best) <span class="la-sort-icon">↕</span></th>
+            </tr>
+          </thead>
+          <tbody id="results-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- ------------------------------------------------- ore skills modal -->
+  <div id="ore-skills-modal" class="modal" role="dialog" aria-modal="true"
+       aria-labelledby="ore-skills-modal-title" hidden>
+    <div class="modal-content la-ore-modal">
+      <div class="modal-header">
+        <h2 id="ore-skills-modal-title">Ore Processing Skills</h2>
+        <button type="button" class="modal-close" id="ore-skills-modal-close" aria-label="Close dialog">&times;</button>
+      </div>
+
+      <div class="modal-body">
+        <div class="la-ore-cols">
+          <div class="la-ore-col">
+            <section class="la-ore-section">
+              <h3 class="la-ore-section-title">Mineral Ore Processing</h3>
+              <div class="la-ore-grid">
+                <div class="la-ore-row">
+                  <label for="skill-simple-ore">Simple Ore Processing</label>
+                  <input type="number" id="skill-simple-ore" class="la-input la-input-mono la-ore-input" value="0" min="0" max="5" step="1">
+                  <span class="la-ore-hint">Veldspar, Scordite, Pyroxeres, Plagioclase…</span>
+                </div>
+                <div class="la-ore-row">
+                  <label for="skill-coherent-ore">Coherent Ore Processing</label>
+                  <input type="number" id="skill-coherent-ore" class="la-input la-input-mono la-ore-input" value="0" min="0" max="5" step="1">
+                  <span class="la-ore-hint">Omber, Kernite, Jaspet, Hemorphite, Hedbergite…</span>
+                </div>
+                <div class="la-ore-row">
+                  <label for="skill-variegated-ore">Variegated Ore Processing</label>
+                  <input type="number" id="skill-variegated-ore" class="la-input la-input-mono la-ore-input" value="0" min="0" max="5" step="1">
+                  <span class="la-ore-hint">Gneiss, Dark Ochre, Crokite…</span>
+                </div>
+                <div class="la-ore-row">
+                  <label for="skill-complex-ore">Complex Ore Processing</label>
+                  <input type="number" id="skill-complex-ore" class="la-input la-input-mono la-ore-input" value="0" min="0" max="5" step="1">
+                  <span class="la-ore-hint">Spodumain, Bistot, Arkonor…</span>
+                </div>
+                <div class="la-ore-row">
+                  <label for="skill-abyssal-ore">Abyssal Ore Processing</label>
+                  <input type="number" id="skill-abyssal-ore" class="la-input la-input-mono la-ore-input" value="0" min="0" max="5" step="1">
+                  <span class="la-ore-hint">Bezdnacine, Rakovene, Talassonite</span>
+                </div>
+                <div class="la-ore-row">
+                  <label for="skill-erratic-ore">Erratic Ore Processing</label>
+                  <input type="number" id="skill-erratic-ore" class="la-input la-input-mono la-ore-input" value="0" min="0" max="5" step="1">
+                  <span class="la-ore-hint">Prismaticite</span>
+                </div>
+                <div class="la-ore-row">
+                  <label for="skill-mercoxit-ore">Mercoxit Ore Processing</label>
+                  <input type="number" id="skill-mercoxit-ore" class="la-input la-input-mono la-ore-input" value="0" min="0" max="5" step="1">
+                  <span class="la-ore-hint">Mercoxit</span>
+                </div>
+              </div>
+            </section>
+
+            <section class="la-ore-section">
+              <h3 class="la-ore-section-title">Ice</h3>
+              <div class="la-ore-grid">
+                <div class="la-ore-row">
+                  <label for="skill-ice">Ice Processing</label>
+                  <input type="number" id="skill-ice" class="la-input la-input-mono la-ore-input" value="0" min="0" max="5" step="1">
+                  <span class="la-ore-hint"></span>
+                </div>
+              </div>
+            </section>
+
+            <section class="la-ore-section">
+              <h3 class="la-ore-section-title">Modules &amp; Items</h3>
+              <div class="la-ore-grid">
+                <div class="la-ore-row">
+                  <label for="skill-scrapmetal">Scrapmetal Processing</label>
+                  <input type="number" id="skill-scrapmetal" class="la-input la-input-mono la-ore-input" value="0" min="0" max="5" step="1">
+                  <span class="la-ore-hint">Modules, drones, charges, structure modules</span>
+                </div>
+              </div>
+            </section>
+          </div>
+
+          <div class="la-ore-col">
+            <section class="la-ore-section">
+              <h3 class="la-ore-section-title">Moon Ores</h3>
+              <div class="la-ore-grid">
+                <div class="la-ore-row">
+                  <label for="skill-moon-ubiquitous">Ubiquitous Moon Ore Processing</label>
+                  <input type="number" id="skill-moon-ubiquitous" class="la-input la-input-mono la-ore-input" value="0" min="0" max="5" step="1">
+                  <span class="la-ore-hint"></span>
+                </div>
+                <div class="la-ore-row">
+                  <label for="skill-moon-common">Common Moon Ore Processing</label>
+                  <input type="number" id="skill-moon-common" class="la-input la-input-mono la-ore-input" value="0" min="0" max="5" step="1">
+                  <span class="la-ore-hint"></span>
+                </div>
+                <div class="la-ore-row">
+                  <label for="skill-moon-uncommon">Uncommon Moon Ore Processing</label>
+                  <input type="number" id="skill-moon-uncommon" class="la-input la-input-mono la-ore-input" value="0" min="0" max="5" step="1">
+                  <span class="la-ore-hint"></span>
+                </div>
+                <div class="la-ore-row">
+                  <label for="skill-moon-rare">Rare Moon Ore Processing</label>
+                  <input type="number" id="skill-moon-rare" class="la-input la-input-mono la-ore-input" value="0" min="0" max="5" step="1">
+                  <span class="la-ore-hint"></span>
+                </div>
+                <div class="la-ore-row">
+                  <label for="skill-moon-exceptional">Exceptional Moon Ore Processing</label>
+                  <input type="number" id="skill-moon-exceptional" class="la-input la-input-mono la-ore-input" value="0" min="0" max="5" step="1">
+                  <span class="la-ore-hint"></span>
+                </div>
+              </div>
+            </section>
+          </div>
+        </div>
+      </div>
+
+      <!--
+        Per the mockup: character loading on the left, bulk actions and Save
+        on the right. Everything that acts on the whole skill set lives in
+        this one bar rather than being split above and below the list.
+      -->
+      <div class="modal-footer la-ore-footer">
+        <div class="la-ore-footer-group">
+          <select id="ore-skills-character-select" class="qf-select la-ore-character" aria-label="Load from character">
+            <option value="">— Load from Character —</option>
+          </select>
+          <button type="button" id="ore-skills-load-char-btn" class="btn btn-secondary btn-sm">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>
+            Load Skills
+          </button>
+        </div>
+
+        <span class="la-spacer"></span>
+
+        <div class="la-ore-footer-group">
+          <button type="button" id="ore-skills-set-all-btn" class="btn btn-secondary btn-sm">Set All to 5</button>
+          <button type="button" id="ore-skills-clear-btn" class="btn btn-secondary btn-sm">Clear All</button>
+          <button type="button" id="ore-skills-save-btn" class="btn btn-primary btn-sm">Save</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ---------------------------------------------------------- loading -->
+  <div id="loading-overlay" class="la-loading" hidden>
+    <div class="la-spinner" aria-hidden="true"></div>
+    <div id="loading-message" class="la-loading-text">Analyzing…</div>
+  </div>
+
+</div>

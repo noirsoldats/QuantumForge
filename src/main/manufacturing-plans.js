@@ -1,11 +1,16 @@
 const { getCharacterDatabase } = require('./character-database');
-const { calculateBlueprintMaterials, getBlueprintProduct, getBlueprintForProduct, getOwnedBlueprintME } = require('./blueprint-calculator');
+const { calculateBlueprintMaterials, getBlueprintProduct, getBlueprintForProduct, resolveOwnedBlueprint } = require('./blueprint-calculator');
 const { calculateReactionMaterials, getReactionProduct, getReactionForProduct, getReactionMaterials, calculateReactionMaterialQuantity } = require('./reaction-calculator');
 const { calculateRealisticPrice } = require('./market-pricing');
 const { getInputLocation, getOutputLocation } = require('./blueprint-pricing');
 const { recordPricing } = require('./audit-recorder');
 const { getAssets } = require('./esi-assets');
 const { getSdePath } = require('./sde-manager');
+const {
+  isInEnabledDivision,
+  divisionFromLocationFlag,
+  unionDivisionsByCorp,
+} = require('./corp-divisions');
 const { randomUUID } = require('crypto');
 const Database = require('better-sqlite3');
 
@@ -136,6 +141,31 @@ function createManufacturingPlan(characterId, planName = null, description = nul
       INSERT INTO manufacturing_plans (plan_id, character_id, plan_name, description, status, created_at, updated_at)
       VALUES (?, ?, ?, ?, ?, ?, ?)
     `).run(planId, characterId, planName, description, 'active', now, now);
+
+    // Snapshot the global industry settings as this plan's starting point.
+    // Settings > Industry IS the plan default, and a plan that starts with no
+    // industry settings row silently resolves ME 0 for every intermediate.
+    // Failing here must not lose the plan itself - the read path falls back to
+    // the same global defaults.
+    try {
+      const { loadSettings, getBlueprintSources } = require('./settings-manager');
+      const globalSettings = loadSettings();
+      const blueprintSources = getBlueprintSources();
+
+      updatePlanIndustrySettings(planId, {
+        enabledDivisions: {},
+        defaultCharacters: globalSettings.industry?.defaultManufacturingCharacters || [],
+        blueprintCharacters: blueprintSources.characterIds,
+        blueprintDivisions: blueprintSources.divisionsByCharacter,
+        reactionsAsIntermediates: globalSettings.industry?.calculateReactionsAsIntermediates || false,
+      });
+    } catch (error) {
+      console.error(
+        `[Plans] Could not seed industry settings for ${planId}; ` +
+        'it will fall back to global defaults on read:',
+        error
+      );
+    }
 
     console.log(`Created manufacturing plan: ${planId} for character ${characterId}`);
 
@@ -306,17 +336,25 @@ function getPlanIndustrySettings(planId) {
 
   let settings = db.prepare(`
     SELECT enabled_divisions_json, default_characters_json,
+           blueprint_characters_json, blueprint_enabled_divisions_json,
            reactions_as_intermediates, last_updated
     FROM plan_industry_settings
     WHERE plan_id = ?
   `).get(planId);
 
   if (!settings) {
-    // No settings exist yet, return defaults from global settings
+    // No settings exist yet, return defaults from global settings.
+    // Settings > Industry IS the plan default, so blueprint sources come from
+    // there too rather than starting empty - a plan with no blueprint sources
+    // resolves ME 0 for every intermediate with nothing explaining why.
     const globalSettings = loadSettings();
+    const { getBlueprintSources } = require('./settings-manager');
+    const blueprintSources = getBlueprintSources();
     return {
       enabledDivisions: {}, // Empty per-character divisions
       defaultCharacters: globalSettings.industry?.defaultManufacturingCharacters || [],
+      blueprintCharacters: blueprintSources.characterIds,
+      blueprintDivisions: blueprintSources.divisionsByCharacter,
       reactionsAsIntermediates: globalSettings.industry?.calculateReactionsAsIntermediates || false,
       lastUpdated: null
     };
@@ -325,9 +363,34 @@ function getPlanIndustrySettings(planId) {
   return {
     enabledDivisions: JSON.parse(settings.enabled_divisions_json || '{}'),
     defaultCharacters: JSON.parse(settings.default_characters_json || '[]'),
+    blueprintCharacters: JSON.parse(settings.blueprint_characters_json || '[]'),
+    blueprintDivisions: JSON.parse(settings.blueprint_enabled_divisions_json || '{}'),
     reactionsAsIntermediates: Boolean(settings.reactions_as_intermediates),
     lastUpdated: settings.last_updated
   };
+}
+
+/**
+ * A plan's blueprint sources, in the shape resolveOwnedBlueprint expects.
+ *
+ * Plans snapshot their own sources, so ME lookups inside a plan must use THIS
+ * plan's configuration - passing the global sources would make plan figures
+ * drift whenever Settings > Industry changed.
+ *
+ * @param {string} planId
+ * @returns {{characterIds: number[], divisionsByCharacter: Object}}
+ */
+function getPlanBlueprintSources(planId) {
+  try {
+    const settings = getPlanIndustrySettings(planId);
+    return {
+      characterIds: settings.blueprintCharacters || [],
+      divisionsByCharacter: settings.blueprintDivisions || {},
+    };
+  } catch (error) {
+    console.error(`[Plans] Could not read blueprint sources for ${planId}:`, error);
+    return { characterIds: [], divisionsByCharacter: {} };
+  }
 }
 
 /**
@@ -352,17 +415,26 @@ function updatePlanIndustrySettings(planId, settings) {
     const existing = db.prepare('SELECT plan_id FROM plan_industry_settings WHERE plan_id = ?').get(planId);
 
     if (existing) {
-      // Update existing settings
+      // Update existing settings.
+      //
+      // The blueprint columns are only written when the caller supplied them.
+      // A caller that knows nothing about blueprint sources (an older screen,
+      // or a partial update) must not blank a plan's configured sources by
+      // omission - COALESCE keeps whatever is stored.
       db.prepare(`
         UPDATE plan_industry_settings SET
           enabled_divisions_json = ?,
           default_characters_json = ?,
+          blueprint_characters_json = COALESCE(?, blueprint_characters_json),
+          blueprint_enabled_divisions_json = COALESCE(?, blueprint_enabled_divisions_json),
           reactions_as_intermediates = ?,
           last_updated = ?
         WHERE plan_id = ?
       `).run(
         JSON.stringify(settings.enabledDivisions || {}),
         JSON.stringify(settings.defaultCharacters || []),
+        settings.blueprintCharacters ? JSON.stringify(settings.blueprintCharacters) : null,
+        settings.blueprintDivisions ? JSON.stringify(settings.blueprintDivisions) : null,
         settings.reactionsAsIntermediates ? 1 : 0,
         now,
         planId
@@ -372,12 +444,15 @@ function updatePlanIndustrySettings(planId, settings) {
       db.prepare(`
         INSERT INTO plan_industry_settings (
           plan_id, enabled_divisions_json, default_characters_json,
+          blueprint_characters_json, blueprint_enabled_divisions_json,
           reactions_as_intermediates, last_updated
-        ) VALUES (?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
       `).run(
         planId,
         JSON.stringify(settings.enabledDivisions || {}),
         JSON.stringify(settings.defaultCharacters || []),
+        JSON.stringify(settings.blueprintCharacters || []),
+        JSON.stringify(settings.blueprintDivisions || {}),
         settings.reactionsAsIntermediates ? 1 : 0,
         now
       );
@@ -405,6 +480,30 @@ function updatePlanCharacterDivisions(planId, characterId, enabledDivisions) {
     return updatePlanIndustrySettings(planId, currentSettings);
   } catch (error) {
     console.error('[Plans] Error updating plan character divisions:', error);
+    return false;
+  }
+}
+
+/**
+ * Update BLUEPRINT divisions for a character in a plan.
+ *
+ * A separate axis from updatePlanCharacterDivisions above: this writes only
+ * blueprint_enabled_divisions_json and never touches the asset divisions.
+ *
+ * @param {string} planId
+ * @param {number} characterId
+ * @param {number[]} divisions
+ * @returns {boolean} success
+ */
+function updatePlanCharacterBlueprintDivisions(planId, characterId, divisions) {
+  try {
+    const currentSettings = getPlanIndustrySettings(planId);
+    const byCharacter = currentSettings.blueprintDivisions || {};
+    byCharacter[characterId] = divisions;
+    currentSettings.blueprintDivisions = byCharacter;
+    return updatePlanIndustrySettings(planId, currentSettings);
+  } catch (error) {
+    console.error('[Plans] Error updating plan blueprint divisions:', error);
     return false;
   }
 }
@@ -640,10 +739,21 @@ async function detectAndCreateIntermediates(parentBlueprintId, planId, character
           LIMIT 1
         `).get(planId, intermediateBlueprintTypeId);
 
-        const intermediateME = sibling
-          ? sibling.me_level
-          : (getOwnedBlueprintME(characterId, intermediateBlueprintTypeId) || 0);
-        const intermediateTE = sibling ? sibling.te_level : 0;
+        // A configured sibling's ME/TE is GOLD - locked when the user added it
+        // and never recalculated. The lookup only fills a gap, and it uses THIS
+        // PLAN's blueprint sources, not the global ones, so a plan does not
+        // drift when Settings > Industry changes.
+        const ownedSibling = sibling
+          ? null
+          : resolveOwnedBlueprint(
+              intermediateBlueprintTypeId,
+              getPlanBlueprintSources(planId)
+            );
+
+        const intermediateME = sibling ? sibling.me_level : (ownedSibling ? ownedSibling.me : 0);
+        // TE comes from the same owned blueprint rather than defaulting to 0 -
+        // one lookup already resolved both.
+        const intermediateTE = sibling ? sibling.te_level : (ownedSibling ? ownedSibling.te : 0);
         const intermediateUseIntermediates = sibling
           ? (sibling.use_intermediates || 'raw_materials')
           : 'raw_materials';
@@ -1093,6 +1203,29 @@ function getPlanBlueprints(planId) {
       SELECT * FROM plan_blueprints WHERE plan_id = ? ORDER BY added_at
     `).all(planId);
 
+    // Products-per-run comes from the SDE, and the UI needs it to report what
+    // a row actually yields. Opened once for the whole list rather than per
+    // row. Reactions resolve through a different (async) path and are left
+    // null here - getReactions supplies theirs.
+    //
+    // Isolated from the main result: this is a display extra, so a missing or
+    // unreadable SDE must cost the caller its per-run figures, not its
+    // blueprints.
+    const productsPerRun = new Map();
+    let sdeDb = null;
+    try {
+      sdeDb = new Database(getSdePath(), { readonly: true });
+      for (const bp of blueprints) {
+        if (bp.blueprint_type === 'reaction') continue;
+        const product = getBlueprintProduct(bp.blueprint_type_id, sdeDb);
+        if (product) productsPerRun.set(bp.plan_blueprint_id, product.quantity);
+      }
+    } catch (error) {
+      console.warn('[Plans] Could not resolve products-per-run from SDE:', error.message);
+    } finally {
+      if (sdeDb) sdeDb.close();
+    }
+
     return blueprints.map(bp => ({
       planBlueprintId: bp.plan_blueprint_id,
       planId: bp.plan_id,
@@ -1112,7 +1245,13 @@ function getPlanBlueprints(planId) {
       isIntermediate: bp.is_intermediate === 1,
       isBuilt: bp.is_built === 1,
       builtRuns: bp.built_runs || 0,
+      // Callers must route mark-built through markReactionBuilt vs
+      // markIntermediateBuilt, and each rejects the other's type outright.
+      blueprintType: bp.blueprint_type || 'manufacturing',
       intermediateProductTypeId: bp.intermediate_product_type_id,
+      productQuantityPerRun: productsPerRun.has(bp.plan_blueprint_id)
+        ? productsPerRun.get(bp.plan_blueprint_id)
+        : null,
       addedAt: bp.added_at,
     }));
   } catch (error) {
@@ -1151,6 +1290,9 @@ function getIntermediateBlueprints(planBlueprintId) {
       isIntermediate: bp.is_intermediate === 1,
       isBuilt: bp.is_built === 1,
       builtRuns: bp.built_runs || 0,
+      // Callers must route mark-built through markReactionBuilt vs
+      // markIntermediateBuilt, and each rejects the other's type outright.
+      blueprintType: bp.blueprint_type || 'manufacturing',
       intermediateProductTypeId: bp.intermediate_product_type_id,
       addedAt: bp.added_at,
     }));
@@ -1813,11 +1955,22 @@ async function expandIntermediate(
   let facility = intermediateConfig?.facilitySnapshot ?? parentFacility;
   let useIntermediates = intermediateConfig?.useIntermediates ?? 'raw_materials';
 
-  // Fallback: check owned blueprints for ME if not in config
+  // Fallback: check owned blueprints if not in config.
+  // Only when there is NO stored config - a configured intermediate's ME/TE is
+  // locked and must never be recalculated. Uses this plan's own sources.
+  //
+  // The null check is on the RESOLVED BLUEPRINT, not on the ME: an owned ME 0
+  // blueprint is a real answer and must overwrite the default, while "nothing
+  // owned" must leave it alone. The previous `ownedME !== null` could never be
+  // false, since the old wrapper returned 0 for both cases.
   if (!intermediateConfig && characterId) {
-    const ownedME = getOwnedBlueprintME(characterId, intermediateBlueprintTypeId);
-    if (ownedME !== null) {
-      meLevel = ownedME;
+    const owned = resolveOwnedBlueprint(
+      intermediateBlueprintTypeId,
+      getPlanBlueprintSources(planId)
+    );
+    if (owned) {
+      meLevel = owned.me;
+      teLevel = owned.te;
     }
   }
 
@@ -3598,34 +3751,40 @@ async function recalculatePlanMaterials(planId, refreshPrices = false, marketSet
     db.exec('BEGIN TRANSACTION');
 
     try {
-      // Get existing prices before clearing (to preserve them when not refreshing)
+      // Existing prices, preserved when not refreshing. Split on the INPUT vs
+      // OUTPUT boundary, which is 'product' vs everything else - intermediates
+      // are cascading inputs, not outputs.
       const existingMaterialPrices = {};
       const existingProductPrices = {};
 
       if (!refreshPrices) {
         const existingMaterials = db.prepare(`
-          SELECT type_id, MAX(price_frozen_at) as price_frozen_at, price_each as base_price
+          SELECT type_id, MAX(price_frozen_at) as price_frozen_at, price_each as base_price,
+                 last_market_price
           FROM plan_material_nodes
-          WHERE plan_id = ? AND node_type = 'material'
+          WHERE plan_id = ? AND node_type != 'product'
           GROUP BY type_id
         `).all(planId);
         for (const mat of existingMaterials) {
           existingMaterialPrices[mat.type_id] = {
             price: mat.base_price,
-            frozenAt: mat.price_frozen_at
+            frozenAt: mat.price_frozen_at,
+            lastMarketPrice: mat.last_market_price
           };
         }
 
         const existingProducts = db.prepare(`
-          SELECT type_id, MAX(price_frozen_at) as price_frozen_at, price_each as base_price
+          SELECT type_id, MAX(price_frozen_at) as price_frozen_at, price_each as base_price,
+                 last_market_price
           FROM plan_material_nodes
-          WHERE plan_id = ? AND node_type IN ('product', 'intermediate')
+          WHERE plan_id = ? AND node_type = 'product'
           GROUP BY type_id
         `).all(planId);
         for (const prod of existingProducts) {
           existingProductPrices[prod.type_id] = {
             price: prod.base_price,
-            frozenAt: prod.price_frozen_at
+            frozenAt: prod.price_frozen_at,
+            lastMarketPrice: prod.last_market_price
           };
         }
       }
@@ -3637,8 +3796,9 @@ async function recalculatePlanMaterials(planId, refreshPrices = false, marketSet
         INSERT INTO plan_material_nodes
           (node_id, plan_id, plan_blueprint_id, source_plan_blueprint_id, parent_node_id,
            type_id, node_type, depth, quantity_needed, quantity_per_run, runs_needed, me_level,
-           is_reaction, build_plan, price_each, price_frozen_at, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           is_reaction, build_plan, price_each, last_market_price, price_frozen_at,
+           created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `);
 
       const now = Date.now();
@@ -3679,6 +3839,10 @@ async function recalculatePlanMaterials(planId, refreshPrices = false, marketSet
       for (const node of collectedNodes) {
         let price = null;
         let priceFrozenAt = null;
+        // The market price this lock captured. Recorded for EVERY node, not
+        // just overridden ones, so removing an override later always has a
+        // truthful price to revert to. See migration 025.
+        let lastMarketPrice = null;
 
         if (overrideMap.has(node.typeId)) {
           price = overrideMap.get(node.typeId);
@@ -3689,8 +3853,13 @@ async function recalculatePlanMaterials(planId, refreshPrices = false, marketSet
           // to revert to instead of a stale one from whenever the override was first set.
           if (refreshPrices) {
             try {
-              const location = node.nodeType === 'material' ? inputLocation : outputLocation;
-              const sideSettings = node.nodeType === 'material' ? marketSettings.inputMaterials : marketSettings.outputProducts;
+              // Only a FINAL product prices against the output scope. An
+              // intermediate is a cascading INPUT - it happens to be a
+              // blueprint's product, but the plan consumes it, so it is bought
+              // (or valued) on the input side like any other material.
+              const isOutput = node.nodeType === 'product';
+              const location = isOutput ? outputLocation : inputLocation;
+              const sideSettings = isOutput ? marketSettings.outputProducts : marketSettings.inputMaterials;
               const marketPriceResult = await calculateRealisticPrice(
                 node.typeId,
                 location.regionId,
@@ -3699,12 +3868,21 @@ async function recalculatePlanMaterials(planId, refreshPrices = false, marketSet
                 node.quantityNeeded,
                 sideSettings
               );
-              setLastMarketPrice(planId, node.typeId, marketPriceResult.price);
+              lastMarketPrice = marketPriceResult.price;
             } catch (error) {
               console.warn(`Could not refresh market snapshot for overridden type ${node.typeId}:`, error.message);
             }
+          } else {
+            // Not refreshing: carry the existing snapshot across the rebuild,
+            // from the same side this node prices against.
+            const existing = node.nodeType === 'product'
+              ? existingProductPrices[node.typeId]
+              : existingMaterialPrices[node.typeId];
+            if (existing) lastMarketPrice = existing.lastMarketPrice;
           }
-        } else if (node.nodeType === 'material') {
+        } else if (node.nodeType !== 'product') {
+          // Materials AND intermediates both price on the input side: an
+          // intermediate is consumed by the plan, not sold by it.
           if (refreshPrices) {
             try {
               const priceResult = await calculateRealisticPrice(
@@ -3716,6 +3894,7 @@ async function recalculatePlanMaterials(planId, refreshPrices = false, marketSet
                 marketSettings.inputMaterials
               );
               price = priceResult.price;
+              lastMarketPrice = priceResult.price;
               priceFrozenAt = now;
               recordPricing({ typeId: node.typeId, quantity: node.quantityNeeded, priceType: marketSettings.inputMaterials.priceType, planId, marketSetId: marketSettings.id, marketSetName: marketSettings.name, source: 'manufacturing-plans:recalculatePlanMaterials' }, priceResult);
             } catch (error) {
@@ -3726,10 +3905,11 @@ async function recalculatePlanMaterials(planId, refreshPrices = false, marketSet
             if (existing) {
               price = existing.price;
               priceFrozenAt = existing.frozenAt;
+              lastMarketPrice = existing.lastMarketPrice;
             }
           }
         } else {
-          // 'product' or 'intermediate'
+          // Final products only.
           if (refreshPrices) {
             try {
               const priceResult = await calculateRealisticPrice(
@@ -3741,6 +3921,7 @@ async function recalculatePlanMaterials(planId, refreshPrices = false, marketSet
                 marketSettings.outputProducts
               );
               price = priceResult.price;
+              lastMarketPrice = priceResult.price;
               priceFrozenAt = now;
               recordPricing({ typeId: node.typeId, quantity: node.quantityNeeded, priceType: marketSettings.outputProducts.priceType, planId, marketSetId: marketSettings.id, marketSetName: marketSettings.name, source: 'manufacturing-plans:recalculatePlanMaterials' }, priceResult);
             } catch (error) {
@@ -3751,6 +3932,7 @@ async function recalculatePlanMaterials(planId, refreshPrices = false, marketSet
             if (existing) {
               price = existing.price;
               priceFrozenAt = existing.frozenAt;
+              lastMarketPrice = existing.lastMarketPrice;
             }
           }
         }
@@ -3774,6 +3956,7 @@ async function recalculatePlanMaterials(planId, refreshPrices = false, marketSet
           insertData.isReaction,
           insertData.buildPlan,
           price,
+          lastMarketPrice,
           priceFrozenAt,
           now,
           now
@@ -3850,6 +4033,102 @@ async function recalculatePlanMaterials(planId, refreshPrices = false, marketSet
  * @param {boolean} includeAssets - Whether to include owned asset quantities
  * @returns {Promise<Array>} Array of materials with quantities
  */
+/**
+ * Live market prices for a plan's materials, for DRIFT DISPLAY ONLY.
+ *
+ * A plan's cost basis is its LOCKED price (`price_each`, frozen at
+ * `price_frozen_at`). This function never writes anything - it fetches what the
+ * market says right now so the UI can show how far the locked basis has moved.
+ * Only an explicit "Re-lock Prices" adopts live prices (binding rule 7).
+ *
+ * Prices come from the INPUT side: everything on the shopping list is bought,
+ * including intermediates, which are cascading inputs rather than products.
+ *
+ * Failures are per-material and non-fatal - one unpriceable item must not blank
+ * the whole drift column, so its entry is simply absent from the result.
+ *
+ * @param {string} planId
+ * @param {Object|null} marketSet resolved market set; falls back to the tool's
+ *   configured set
+ * @returns {Promise<Object>} { [typeId]: { livePrice, lockedPrice, driftPercent,
+ *   driftAbsolute } } - absent keys mean "could not price"
+ */
+async function getPlanMaterialDrift(planId, marketSet = null) {
+  const db = getCharacterDatabase();
+
+  try {
+    if (!marketSet) {
+      const { resolveMarketSetForTool } = require('./settings-manager');
+      marketSet = resolveMarketSetForTool('manufacturingPlansMarketSetId');
+    }
+    if (!marketSet) {
+      console.warn('[Plans] getPlanMaterialDrift: no Market Set configured');
+      return {};
+    }
+
+    const nodes = db.prepare(`
+      SELECT type_id, price_each, SUM(quantity_needed) AS quantity_needed
+      FROM plan_material_nodes
+      WHERE plan_id = ? AND node_type = 'material'
+      GROUP BY type_id
+    `).all(planId);
+
+    if (nodes.length === 0) return {};
+
+    const inputLocation = getInputLocation(marketSet);
+    const sideSettings = marketSet.inputMaterials;
+
+    // Priced in parallel: independent lookups, each writing its own key.
+    const results = await Promise.all(
+      nodes.map(async (node) => {
+        try {
+          const priceResult = await calculateRealisticPrice(
+            node.type_id,
+            inputLocation.regionId,
+            inputLocation.locationId,
+            sideSettings.priceType,
+            node.quantity_needed,
+            sideSettings
+          );
+
+          const live = priceResult.price;
+          const locked = node.price_each;
+          if (!Number.isFinite(live)) return null;
+
+          // Drift is meaningless without a locked basis to measure from, and a
+          // zero basis would divide by zero.
+          const canCompare = Number.isFinite(locked) && locked !== 0;
+
+          return {
+            typeId: node.type_id,
+            entry: {
+              livePrice: live,
+              lockedPrice: locked,
+              driftAbsolute: canCompare ? live - locked : null,
+              driftPercent: canCompare ? ((live - locked) / locked) * 100 : null,
+            },
+          };
+        } catch (error) {
+          console.warn(
+            `[Plans] Could not price type ${node.type_id} for drift:`,
+            error.message
+          );
+          return null;
+        }
+      })
+    );
+
+    const byType = {};
+    for (const result of results) {
+      if (result) byType[result.typeId] = result.entry;
+    }
+    return byType;
+  } catch (error) {
+    console.error('[Plans] Error computing material drift:', error);
+    return {};
+  }
+}
+
 async function getPlanMaterials(planId, includeAssets = false) {
   try {
     const db = getCharacterDatabase();
@@ -4007,10 +4286,11 @@ async function getPlanMaterials(planId, includeAssets = false) {
       const corpAssetMap = {};
       const personalAssetDetails = {};
       const corpAssetDetails = {};
-      const processedCorps = new Set();
+      const { getCharacter } = require('./settings-manager');
+      const corpEntries = [];
 
+      // Personal assets: per character, no deduplication needed.
       for (const characterId of characterIds) {
-        const { getCharacter } = require('./settings-manager');
         const character = getCharacter(characterId);
         if (!character) continue;
 
@@ -4026,32 +4306,55 @@ async function getPlanMaterials(planId, includeAssets = false) {
           charEntry.quantity += asset.quantity;
         }
 
-        const corpId = character.corporationId;
-        if (corpId && !processedCorps.has(corpId)) {
-          processedCorps.add(corpId);
-          const charEnabledDivisions = enabledDivisions[characterId] || [];
-          const corpAssets = getAssets(characterId, true);
-          for (const asset of corpAssets) {
-            if (isAssetInEnabledDivision(asset, charEnabledDivisions)) {
-              corpAssetMap[asset.typeId] = (corpAssetMap[asset.typeId] || 0) + asset.quantity;
-              if (!corpAssetDetails[asset.typeId]) corpAssetDetails[asset.typeId] = [];
-              const divisionId = extractDivisionId(asset.locationFlag);
-              let corpEntry = corpAssetDetails[asset.typeId].find(
-                e => e.corporationId === corpId && e.divisionId === divisionId
-              );
-              if (!corpEntry) {
-                corpEntry = {
-                  corporationId: corpId,
-                  corporationName: character.corporationName || `Corporation ${corpId}`,
-                  divisionId,
-                  divisionName: getDivisionName(characterId, divisionId),
-                  quantity: 0
-                };
-                corpAssetDetails[asset.typeId].push(corpEntry);
-              }
-              corpEntry.quantity += asset.quantity;
-            }
+        if (character.corporationId) {
+          corpEntries.push({
+            characterId,
+            corporationId: character.corporationId,
+            // NOT character.corporationName - nothing writes that field, so
+            // it was always undefined. Names are resolved below.
+            divisions: enabledDivisions[characterId] || [],
+          });
+        }
+      }
+
+      // Corp assets: read each corp ONCE, using the union of every enabled
+      // division across its characters. Corp assets are stored per character
+      // who can see them, so iterating characters double-counts - and the old
+      // "skip after the first character" guard silently used only that
+      // character's divisions, discarding the others'.
+      // Resolved in one deduped, session-cached call rather than per corp.
+      const { resolveCorporationNames } = require('./esi-corporations');
+      const corpNames = await resolveCorporationNames(
+        corpEntries.map(e => e.corporationId)
+      );
+
+      for (const corp of unionDivisionsByCorp(corpEntries)) {
+        // Falls back to the bare ID, so an unresolvable corporation is still
+        // identifiable in the materials breakdown.
+        const corpName = corpNames[corp.corporationId]
+          || `Corporation ${corp.corporationId}`;
+        const corpAssets = getAssets(corp.readerCharacterId, true);
+
+        for (const asset of corpAssets) {
+          if (!isAssetInEnabledDivision(asset, corp.divisions)) continue;
+
+          corpAssetMap[asset.typeId] = (corpAssetMap[asset.typeId] || 0) + asset.quantity;
+          if (!corpAssetDetails[asset.typeId]) corpAssetDetails[asset.typeId] = [];
+          const divisionId = extractDivisionId(asset.locationFlag);
+          let corpEntry = corpAssetDetails[asset.typeId].find(
+            e => e.corporationId === corp.corporationId && e.divisionId === divisionId
+          );
+          if (!corpEntry) {
+            corpEntry = {
+              corporationId: corp.corporationId,
+              corporationName: corpName,
+              divisionId,
+              divisionName: getDivisionName(corp.readerCharacterId, divisionId),
+              quantity: 0
+            };
+            corpAssetDetails[asset.typeId].push(corpEntry);
           }
+          corpEntry.quantity += asset.quantity;
         }
       }
 
@@ -4077,48 +4380,13 @@ async function getPlanMaterials(planId, includeAssets = false) {
  * @returns {boolean} True if asset is in an enabled division
  */
 function isAssetInEnabledDivision(asset, enabledDivisions) {
-  // If no divisions are enabled, no corp assets should be included
-  if (!enabledDivisions || enabledDivisions.length === 0) {
-    return false;
-  }
-
-  // Parse location_flag to extract division number
-  // Format: "CorpSAG1", "CorpSAG2", etc.
-  const locationFlag = asset.locationFlag;
-  if (!locationFlag || !locationFlag.startsWith('CorpSAG')) {
-    // Asset is not in a corporation hangar division
-    // (might be in a station hangar, container, etc.)
-    // Exclude it since we can't determine its division
-    return false;
-  }
-
-  // Extract division number (1-7)
-  const divisionMatch = locationFlag.match(/^CorpSAG(\d+)$/);
-  if (!divisionMatch) {
-    return false; // Can't parse, exclude
-  }
-
-  const divisionId = parseInt(divisionMatch[1], 10);
-
-  // Check if this division is enabled
-  return enabledDivisions.includes(divisionId);
+  // An asset we cannot attribute to an enabled division is not counted as
+  // on-hand. See corp-divisions.js - this rule is absolute and shared.
+  return isInEnabledDivision(asset.locationFlag, enabledDivisions);
 }
 
-/**
- * Extract division ID from location flag
- * @param {string} locationFlag - Location flag (e.g., "CorpSAG2")
- * @returns {number|null} Division ID (1-7) or null
- */
-function extractDivisionId(locationFlag) {
-  if (!locationFlag) return null;
-
-  const match = locationFlag.match(/CorpSAG(\d)/);
-  if (match && match[1]) {
-    return parseInt(match[1], 10);
-  }
-
-  return null;
-}
+/** @see corp-divisions.divisionFromLocationFlag */
+const extractDivisionId = divisionFromLocationFlag;
 
 /**
  * Get division name for a character
@@ -4931,6 +5199,145 @@ function updateMaterialCustomPrice(planId, typeId, customPrice) {
 }
 
 /**
+ * Every plan that uses a type, with the price currently locked for it.
+ *
+ * Backs the Market Manager inspector's "Plans using <item>" section. Reports
+ * the locked price so the caller can show drift against the live market, and
+ * flags whether that price came from a plan price OVERRIDE - an overridden
+ * price is user-pinned and must not be presented as a stale market lock.
+ *
+ * @param {number} typeId
+ * @returns {Array<{planId, planName, status, lockedPrice, lockedAt, quantity, isOverride}>}
+ */
+function getPlansUsingType(typeId) {
+  const db = getCharacterDatabase();
+
+  try {
+    // Grouped by plan AND scope, not by plan alone: a type can be both an
+    // input and an output in the same plan, and the two price against
+    // DIFFERENT market-set settings. Collapsing them would hide that and
+    // mis-price one of the rows.
+    //
+    // Scope follows recalculatePlanMaterials: ONLY a final 'product' uses the
+    // output side. An 'intermediate' is a cascading input - it is a blueprint's
+    // product, but the plan consumes it rather than selling it.
+    return db.prepare(`
+      SELECT p.plan_id                       AS planId,
+             p.plan_name                     AS planName,
+             p.status                        AS status,
+             CASE WHEN n.node_type = 'product' THEN 'output' ELSE 'input' END AS scope,
+             n.price_each                    AS lockedPrice,
+             MAX(n.price_frozen_at)          AS lockedAt,
+             SUM(n.quantity_needed)          AS quantity,
+             CASE WHEN o.type_id IS NULL THEN 0 ELSE 1 END AS isOverride,
+             -- The market price captured by the most recent lock, recorded on
+             -- the node so it exists whether or not an override is in play.
+             -- Pairs with price_frozen_at.
+             n.last_market_price             AS lastMarketPrice
+      FROM plan_material_nodes n
+      JOIN manufacturing_plans p ON p.plan_id = n.plan_id
+      LEFT JOIN plan_price_overrides o
+             ON o.plan_id = n.plan_id AND o.type_id = n.type_id
+      WHERE n.type_id = ?
+      GROUP BY p.plan_id, scope
+      ORDER BY p.plan_name, scope
+    `).all(typeId).map((r) => ({
+      ...r,
+      isOverride: !!r.isOverride,
+    }));
+  } catch (error) {
+    console.error('[Plans] Error querying plans using type:', error);
+    return [];
+  }
+}
+
+/**
+ * Re-lock ONE material in ONE plan to a supplied market price.
+ *
+ * Deliberately narrow: it touches only `plan_material_nodes` rows matching this
+ * (plan, type) pair, and never creates a `plan_price_overrides` row - a re-lock
+ * captures the market, it does not pin a manual price.
+ *
+ * Behaves exactly like a full "Refresh Prices" run does for this one item, so
+ * the two paths cannot diverge (see recalculatePlanMaterials):
+ *
+ *   NO override   price_each, last_market_price and price_frozen_at all update
+ *   override set  price_each keeps the OVERRIDE (the user's pin wins), while
+ *                 last_market_price and price_frozen_at still update - so
+ *                 deleting the override later reverts to a current market price
+ *                 rather than a stale one
+ *
+ * All three columns live on plan_material_nodes (migration 025). The older
+ * plan_price_overrides.last_market_price column from migration 016 is no longer
+ * read or written.
+ *
+ * The `overridden` flag in the result lets the caller tell the user that their
+ * override still applies while the underlying market price was updated.
+ *
+ * This is an explicit user action, so it does not violate the "plan prices
+ * never auto-update on market refresh" rule.
+ *
+ * @param {string} planId
+ * @param {number} typeId
+ * @param {number} price - The current market price
+ * @returns {{success: boolean, overridden: boolean, overridePrice?: number, nodesUpdated: number}}
+ */
+function relockPlanMaterialPrice(planId, typeId, price) {
+  const db = getCharacterDatabase();
+
+  if (!Number.isFinite(price) || price <= 0) {
+    throw new Error(`Invalid re-lock price for type ${typeId}: ${price}`);
+  }
+
+  try {
+    const override = db.prepare(
+      `SELECT price FROM plan_price_overrides WHERE plan_id = ? AND type_id = ?`
+    ).get(planId, typeId);
+
+    const now = Date.now();
+
+    if (override) {
+      // A re-lock IS a market lock, so last_market_price and price_frozen_at
+      // move together in ONE statement - they are a matched pair recording what
+      // the market was and when it was locked, and writing one without the
+      // other leaves the pair lying. Only price_each is left alone, because the
+      // override still wins there.
+      const result = db.prepare(`
+        UPDATE plan_material_nodes
+        SET last_market_price = ?, price_frozen_at = ?, updated_at = ?
+        WHERE plan_id = ? AND type_id = ?
+      `).run(price, now, now, planId, typeId);
+
+      console.log(
+        `[Plans] Re-locked market snapshot for overridden type ${typeId} in plan ${planId} at ${price} ` +
+        `(override ${override.price} still applies, ${result.changes} node(s))`
+      );
+      return {
+        success: true,
+        overridden: true,
+        overridePrice: override.price,
+        marketPrice: price,
+        nodesUpdated: result.changes,
+      };
+    }
+
+    // No override: the lock sets the effective price AND the snapshot, so a
+    // later override can be removed and reverted to this price.
+    const result = db.prepare(`
+      UPDATE plan_material_nodes
+      SET price_each = ?, last_market_price = ?, price_frozen_at = ?, updated_at = ?
+      WHERE plan_id = ? AND type_id = ?
+    `).run(price, price, now, now, planId, typeId);
+
+    console.log(`[Plans] Re-locked type ${typeId} in plan ${planId} at ${price} (${result.changes} node(s))`);
+    return { success: true, overridden: false, marketPrice: price, nodesUpdated: result.changes };
+  } catch (error) {
+    console.error('[Plans] Error re-locking material price:', error);
+    throw error;
+  }
+}
+
+/**
  * Set (create or update) a plan-scoped price override for a type.
  * This is independent of the acquisition-ledger customPrice mechanism (updateMaterialCustomPrice)
  * and the global market-database price_overrides table (market-pricing.js).
@@ -4938,9 +5345,12 @@ function updateMaterialCustomPrice(planId, typeId, customPrice) {
  * flows through to getPlanMaterials/getPlanProducts/getPlanSummary/getPlanAnalytics without
  * requiring a recalculation, and recalculatePlanMaterials re-applies it on every "Refresh Prices"
  * until the user changes or removes it.
- * On first creation (no override row exists yet for this type), snapshots the node's current
- * price_each as last_market_price — this must be a real market price at that point, since no
- * override existed before. Editing an existing override leaves last_market_price untouched.
+ *
+ * Does NOT touch last_market_price or price_frozen_at. Those are the market-lock
+ * pair, written only by "Refresh Prices" and single-item re-lock. Setting an
+ * override reads no market data, so it records none — seeding last_market_price
+ * from price_each would fabricate a market price (price_each may already be an
+ * override value), and removePlanPriceOverride would later restore that fiction.
  * @param {string} planId - Plan ID
  * @param {number} typeId - Type ID
  * @param {number} price - Override price (must be a positive number)
@@ -4952,31 +5362,32 @@ function setPlanPriceOverride(planId, typeId, price) {
   try {
     const now = Date.now();
 
-    const existingOverride = db.prepare(
-      `SELECT last_market_price FROM plan_price_overrides WHERE plan_id = ? AND type_id = ?`
-    ).get(planId, typeId);
-
-    let lastMarketPrice = existingOverride ? existingOverride.last_market_price : null;
-    if (!existingOverride) {
-      const currentNode = db.prepare(
-        `SELECT price_each FROM plan_material_nodes WHERE plan_id = ? AND type_id = ? LIMIT 1`
-      ).get(planId, typeId);
-      lastMarketPrice = currentNode ? currentNode.price_each : null;
-    }
-
+    // last_market_price is written ONLY by a real market lock ("Refresh Prices"
+    // or a single-item re-lock, both writing the node directly). Setting an
+    // override must never seed it from price_each: price_each may itself be an
+    // override value, and copying that in would fabricate a "market" price the
+    // market never quoted - which removePlanPriceOverride would then restore.
+    // A null here simply means no lock has happened for this type yet.
     db.prepare(`
-      INSERT INTO plan_price_overrides (plan_id, type_id, price, last_market_price, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?)
+      INSERT INTO plan_price_overrides (plan_id, type_id, price, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?)
       ON CONFLICT(plan_id, type_id) DO UPDATE SET price = excluded.price, updated_at = excluded.updated_at
-    `).run(planId, typeId, price, lastMarketPrice, now, now);
+    `).run(planId, typeId, price, now, now);
 
     // Immediately stamp the override onto every existing node for this type in this plan
     // so it's reflected without requiring a recalculation.
+    //
+    // price_frozen_at is deliberately NOT touched. It pairs with
+    // last_market_price to record when the user last locked the market and what
+    // that price was - and setting an override locks nothing: last_market_price
+    // above is a snapshot of the node's EXISTING price_each, not a fresh market
+    // read. Stamping the timestamp here would claim a lock that never happened.
+    // The override's own age lives in plan_price_overrides.created_at/updated_at.
     db.prepare(`
       UPDATE plan_material_nodes
-      SET price_each = ?, price_frozen_at = ?
+      SET price_each = ?
       WHERE plan_id = ? AND type_id = ?
-    `).run(price, now, planId, typeId);
+    `).run(price, planId, typeId);
 
     console.log(`[Plans] Set plan price override for type ${typeId} in plan ${planId}: ${price}`);
     return { success: true };
@@ -4987,25 +5398,13 @@ function setPlanPriceOverride(planId, typeId, price) {
 }
 
 /**
- * Internal helper: update the last_market_price snapshot for an existing override row,
- * called from recalculatePlanMaterials whenever a "Refresh Prices" run touches an
- * overridden type, so the snapshot stays current with the latest market read.
- * @param {string} planId - Plan ID
- * @param {number} typeId - Type ID
- * @param {number} marketPrice - Freshly fetched market price
- */
-function setLastMarketPrice(planId, typeId, marketPrice) {
-  const db = getCharacterDatabase();
-  db.prepare(`
-    UPDATE plan_price_overrides SET last_market_price = ? WHERE plan_id = ? AND type_id = ?
-  `).run(marketPrice, planId, typeId);
-}
-
-/**
- * Remove a plan-scoped price override. Restores price_each to the last_market_price
- * snapshot captured on the override row (from override-creation time or the most recent
- * "Refresh Prices" run, whichever is more recent) — no live market fetch, no dependency
- * on whatever Market Set the plan happens to resolve to at delete time.
+ * Remove a plan-scoped price override. Restores price_each to last_market_price —
+ * the price captured by the most recent market lock ("Refresh Prices" or a
+ * single-item re-lock) — with no live fetch and no dependency on whatever Market
+ * Set the plan happens to resolve to at delete time.
+ *
+ * When no lock has ever run for this type, last_market_price is null and
+ * price_each is left as-is: there is no honest market price to revert to.
  * @param {string} planId - Plan ID
  * @param {number} typeId - Type ID
  * @returns {object} { success: true, removed: boolean }
@@ -5014,25 +5413,32 @@ function removePlanPriceOverride(planId, typeId) {
   const db = getCharacterDatabase();
 
   try {
-    const override = db.prepare(
-      `SELECT last_market_price FROM plan_price_overrides WHERE plan_id = ? AND type_id = ?`
+    // The snapshot lives on the node, so it exists whenever ANY lock has run -
+    // not only locks that happened while this override was in place.
+    const node = db.prepare(
+      `SELECT last_market_price FROM plan_material_nodes
+       WHERE plan_id = ? AND type_id = ? AND last_market_price IS NOT NULL LIMIT 1`
     ).get(planId, typeId);
 
     const result = db.prepare(`
       DELETE FROM plan_price_overrides WHERE plan_id = ? AND type_id = ?
     `).run(planId, typeId);
 
-    if (override && override.last_market_price !== null) {
+    if (node) {
+      // price_frozen_at is NOT restamped: this restores the price captured by
+      // an earlier lock, so the timestamp already paired with it stays correct.
+      // Stamping "now" would claim the price is fresher than it is.
       db.prepare(`
         UPDATE plan_material_nodes
-        SET price_each = ?, price_frozen_at = ?
+        SET price_each = ?
         WHERE plan_id = ? AND type_id = ?
-      `).run(override.last_market_price, Date.now(), planId, typeId);
+      `).run(node.last_market_price, planId, typeId);
     } else {
-      // Rare edge case: no market price was ever available for this node (e.g. brand-new
-      // item with no market data). Leave price_each as the stale override value; the next
-      // "Refresh Prices" will correct it like any other node.
-      console.warn(`[Plans] No market price snapshot available for type ${typeId} in plan ${planId}; price_each left unchanged until next Refresh Prices`);
+      // No market lock has happened for this type yet, so there is nothing
+      // truthful to revert to. This is the normal state for an override set
+      // before the plan's first "Refresh Prices" - leave price_each alone
+      // rather than invent a price; the next lock corrects it like any node.
+      console.log(`[Plans] No market lock recorded for type ${typeId} in plan ${planId}; price_each left unchanged until the next Refresh Prices`);
     }
 
     console.log(`[Plans] Removed plan price override for type ${typeId} in plan ${planId}`);
@@ -5052,11 +5458,28 @@ function getPlanPriceOverrides(planId) {
   const db = getCharacterDatabase();
 
   try {
+    // last_market_price moved onto plan_material_nodes in migration 025 - it is
+    // written by any market lock, not only locks that happened while an
+    // override existed. Selecting it from plan_price_overrides threw
+    // "no such column" and this function swallowed it into an empty list, so
+    // the Settings tab showed no overrides at all.
+    //
+    // LEFT JOIN: an override can exist for a type with no node row (or no lock
+    // yet), and those must still be listed - with a null snapshot.
     const rows = db.prepare(`
-      SELECT type_id, price, last_market_price, created_at, updated_at
-      FROM plan_price_overrides
-      WHERE plan_id = ?
-      ORDER BY updated_at DESC
+      SELECT o.type_id,
+             o.price,
+             o.created_at,
+             o.updated_at,
+             (SELECT n.last_market_price
+                FROM plan_material_nodes n
+               WHERE n.plan_id = o.plan_id
+                 AND n.type_id = o.type_id
+                 AND n.last_market_price IS NOT NULL
+               LIMIT 1) AS last_market_price
+      FROM plan_price_overrides o
+      WHERE o.plan_id = ?
+      ORDER BY o.updated_at DESC
     `).all(planId);
 
     return rows.map(r => ({
@@ -5724,7 +6147,7 @@ async function markReactionBuilt(planBlueprintId, builtRuns) {
  * @param {number} typeId - Type ID of the product to check
  * @returns {Object} Object with ownedPersonal, ownedCorp, and detail arrays
  */
-function getProductOwnedAssets(planId, typeId) {
+async function getProductOwnedAssets(planId, typeId) {
   try {
     const db = getCharacterDatabase();
 
@@ -5752,11 +6175,11 @@ function getProductOwnedAssets(planId, typeId) {
     let totalCorp = 0;
     const personalDetails = [];
     const corpDetails = [];
-    const processedCorps = new Set();
+    const { getCharacter } = require('./settings-manager');
+    const corpEntries = [];
 
+    // Personal assets: per character, no deduplication needed.
     for (const characterId of characterIds) {
-      // Get character info
-      const { getCharacter } = require('./settings-manager');
       const character = getCharacter(characterId);
 
       if (!character) {
@@ -5764,7 +6187,6 @@ function getProductOwnedAssets(planId, typeId) {
         continue;
       }
 
-      // Fetch personal assets for this character, filter by typeId
       const personalAssets = getAssets(characterId, false).filter(a => a.typeId === typeId);
       let charTotal = 0;
       for (const asset of personalAssets) {
@@ -5779,44 +6201,56 @@ function getProductOwnedAssets(planId, typeId) {
         });
       }
 
-      // Fetch corporation assets (with division filtering and deduplication)
-      const corpId = character.corporationId;
-      if (corpId && !processedCorps.has(corpId)) {
-        processedCorps.add(corpId);
+      if (character.corporationId) {
+        corpEntries.push({
+          characterId,
+          corporationId: character.corporationId,
+          // NOT character.corporationName - nothing writes that field.
+          divisions: enabledDivisions[characterId] || [],
+        });
+      }
+    }
 
-        // Get enabled divisions for this character
-        const charEnabledDivisions = enabledDivisions[characterId] || [];
+    // Resolved in one deduped, session-cached call rather than per corp.
+    const { resolveCorporationNames } = require('./esi-corporations');
+    const corpNames = await resolveCorporationNames(
+      corpEntries.map(e => e.corporationId)
+    );
 
-        // Fetch all corp assets for this character, filter by typeId
-        const corpAssets = getAssets(characterId, true).filter(a => a.typeId === typeId);
+    // Corp assets: one read per corp, using the union of every enabled division
+    // across its characters. See unionDivisionsByCorp - iterating characters
+    // would double-count, and skipping after the first would silently drop the
+    // other characters' division choices.
+    for (const corp of unionDivisionsByCorp(corpEntries)) {
+      const corpName = corpNames[corp.corporationId]
+        || `Corporation ${corp.corporationId}`;
+      const corpAssets = getAssets(corp.readerCharacterId, true).filter(a => a.typeId === typeId);
 
-        // Group by division - only include assets in enabled divisions
-        const divisionTotals = {};
-        for (const asset of corpAssets) {
-          if (isAssetInEnabledDivision(asset, charEnabledDivisions)) {
-            const divisionId = extractDivisionId(asset.locationFlag);
-            if (divisionId) {
-              if (!divisionTotals[divisionId]) {
-                divisionTotals[divisionId] = 0;
-              }
-              divisionTotals[divisionId] += asset.quantity;
+      // Group by division - only include assets in enabled divisions
+      const divisionTotals = {};
+      for (const asset of corpAssets) {
+        if (isAssetInEnabledDivision(asset, corp.divisions)) {
+          const divisionId = extractDivisionId(asset.locationFlag);
+          if (divisionId) {
+            if (!divisionTotals[divisionId]) {
+              divisionTotals[divisionId] = 0;
             }
+            divisionTotals[divisionId] += asset.quantity;
           }
         }
+      }
 
-        // Add to details
-        for (const [divKey, qty] of Object.entries(divisionTotals)) {
-          if (qty > 0) {
-            totalCorp += qty;
-            const divisionId = parseInt(divKey, 10);
-            corpDetails.push({
-              corporationId: corpId,
-              corporationName: character.corporationName || `Corporation ${corpId}`,
-              divisionId: divisionId,
-              divisionName: getDivisionName(characterId, divisionId),
-              quantity: qty
-            });
-          }
+      for (const [divKey, qty] of Object.entries(divisionTotals)) {
+        if (qty > 0) {
+          totalCorp += qty;
+          const divisionId = parseInt(divKey, 10);
+          corpDetails.push({
+            corporationId: corp.corporationId,
+            corporationName: corpName,
+            divisionId: divisionId,
+            divisionName: getDivisionName(corp.readerCharacterId, divisionId),
+            quantity: qty
+          });
         }
       }
     }
@@ -6337,6 +6771,8 @@ module.exports = {
   getPlanIndustrySettings,
   updatePlanIndustrySettings,
   updatePlanCharacterDivisions,
+  updatePlanCharacterBlueprintDivisions,
+  getPlanBlueprintSources,
   addBlueprintToPlan,
   updatePlanBlueprint,
   bulkUpdateBlueprints,
@@ -6353,6 +6789,7 @@ module.exports = {
   deleteOrphanedIntermediates,
   recalculatePlanMaterials,
   getPlanMaterials,
+  getPlanMaterialDrift,
   getPlanProducts,
   getPlanSummary,
   refreshActivePlansESIData,
@@ -6363,6 +6800,8 @@ module.exports = {
   updateMaterialAcquisition,
   updateMaterialCustomPrice,
   setPlanPriceOverride,
+  getPlansUsingType,
+  relockPlanMaterialPrice,
   removePlanPriceOverride,
   getPlanPriceOverrides,
   cleanupExcessAcquisitions,

@@ -788,6 +788,10 @@ async function calculateReactionMaterials(reactionTypeId, runs = 1, characterId 
 
         // Calculate output product value
         let outputValue = 0;
+        // Kept alongside the total so callers can show how it was reached
+        // ("N units x price each") without re-deriving it by division.
+        let outputUnitPrice = 0;
+        let outputQuantity = product.quantity * runs;
         try {
           const priceResult = await calculateRealisticPrice(
             product.typeID,
@@ -797,7 +801,8 @@ async function calculateReactionMaterials(reactionTypeId, runs = 1, characterId 
             product.quantity * runs,
             marketSettings.outputProducts || {}
           );
-          outputValue = (priceResult.price || 0) * (product.quantity * runs);
+          outputUnitPrice = priceResult.price || 0;
+          outputValue = outputUnitPrice * (product.quantity * runs);
           recordPricing({ typeId: product.typeID, quantity: product.quantity * runs, priceType: marketSettings.outputProducts?.priceType || 'sell', marketSetId: marketSettings.id, marketSetName: marketSettings.name, source: 'reaction-calculator:calculateReactionMaterials' }, priceResult);
         } catch (error) {
           console.error(`Error calculating price for product ${product.typeID}:`, error);
@@ -850,7 +855,14 @@ async function calculateReactionMaterials(reactionTypeId, runs = 1, characterId 
             allPricesAvailable: itemsWithoutPrices === 0
           },
           outputValue: {
-            totalValue: outputValue
+            totalValue: outputValue,
+            // How the total was reached. hasPrice distinguishes a genuinely
+            // free product from one the market could not price.
+            unitPrice: outputUnitPrice,
+            quantity: outputQuantity,
+            typeId: product.typeID,
+            priceType: marketSettings.outputProducts?.priceType || 'sell',
+            hasPrice: outputUnitPrice > 0,
           },
           jobCostBreakdown,  // Will be null if no facility selected
           taxesBreakdown,    // Trading fees (material broker fee, product sales tax, product broker fee)

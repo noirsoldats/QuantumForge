@@ -81,6 +81,28 @@ function getUniqueRegions(marketSettings) {
  * @param {Object} marketSettings - Market settings object
  * @returns {Promise<Object>} Material pricing details
  */
+/**
+ * Material name for the breakdown table.
+ *
+ * `materials` arrives as `{typeId: quantity}` - no names - so this payload had
+ * none to carry, and the Cost & Fees breakdown fell back to "Type 34" for every
+ * row. Resolved HERE rather than in the view: `getTypeName` is synchronous
+ * (better-sqlite3) and memoised in the calculator's `typeNameCache`, which is
+ * already warm from the same calculation enriching the material breakdown. So
+ * this costs a Map lookup, versus a round trip per row from the renderer.
+ *
+ * A failure is not worth breaking a price calculation over - the row simply
+ * keeps the id fallback it had before.
+ */
+function typeNameFor(typeId) {
+  try {
+    const { getTypeName } = require('./blueprint-calculator');
+    return getTypeName(typeId) || null;
+  } catch (error) {
+    return null;
+  }
+}
+
 async function calculateInputMaterialsCost(materials, marketSettings) {
   const inputSettings = marketSettings.inputMaterials;
   const inputLocation = getInputLocation(marketSettings);
@@ -122,6 +144,7 @@ async function calculateInputMaterialsCost(materials, marketSettings) {
 
       materialPrices[typeId] = {
         quantity,
+        typeName: typeNameFor(typeIdNum),
         unitPrice: finalPrice,
         totalPrice: finalPrice * quantity,
         hasPrice: price > 0
@@ -137,6 +160,7 @@ async function calculateInputMaterialsCost(materials, marketSettings) {
       console.error(`Error calculating price for material ${typeId}:`, error);
       materialPrices[typeId] = {
         quantity,
+        typeName: typeNameFor(typeIdNum),
         unitPrice: 0,
         totalPrice: 0,
         hasPrice: false,

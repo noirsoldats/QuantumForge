@@ -17,57 +17,44 @@ const {
 
 const marketData = require('../unit/fixtures/market-data');
 
+/**
+ * Tritanium fixtures, shared by the jest.mock factory and the beforeEach that
+ * restores it. `mock`-prefixed so the hoisted factory may reference them - Jest
+ * forbids out-of-scope variables in a mock factory otherwise.
+ */
+const mockTritaniumOrders = [
+  { price: 6.45, volume_remain: 5000000, is_buy_order: false, location_id: 60003760 },
+  { price: 6.48, volume_remain: 3000000, is_buy_order: false, location_id: 60003760 },
+  { price: 6.50, volume_remain: 10000000, is_buy_order: false, location_id: 60003760 },
+  { price: 6.55, volume_remain: 2000000, is_buy_order: false, location_id: 60003760 },
+  { price: 6.60, volume_remain: 1000000, is_buy_order: false, location_id: 60003760 }
+];
+
+const mockTritaniumHistory = [
+  { date: '2024-01-10', average: 6.40, volume: 50000000 },
+  { date: '2024-01-09', average: 6.42, volume: 48000000 },
+  { date: '2024-01-08', average: 6.38, volume: 52000000 },
+  { date: '2024-01-07', average: 6.41, volume: 49000000 },
+  { date: '2024-01-06', average: 6.39, volume: 51000000 }
+];
+
 // Mock ESI market module with realistic data
 jest.mock('../../src/main/esi-market', () => ({
-  fetchMarketOrders: jest.fn((typeId, regionId) => {
-    // Return fixture data for Tritanium
-    if (typeId === 34) {
-      return Promise.resolve([
-        { price: 6.45, volume_remain: 5000000, is_buy_order: false, location_id: 60003760 },
-        { price: 6.48, volume_remain: 3000000, is_buy_order: false, location_id: 60003760 },
-        { price: 6.50, volume_remain: 10000000, is_buy_order: false, location_id: 60003760 },
-        { price: 6.55, volume_remain: 2000000, is_buy_order: false, location_id: 60003760 },
-        { price: 6.60, volume_remain: 1000000, is_buy_order: false, location_id: 60003760 }
-      ]);
-    }
-    return Promise.resolve([]);
-  }),
-  fetchMarketHistory: jest.fn((typeId, regionId) => {
-    if (typeId === 34) {
-      return Promise.resolve([
-        { date: '2024-01-10', average: 6.40, volume: 50000000 },
-        { date: '2024-01-09', average: 6.42, volume: 48000000 },
-        { date: '2024-01-08', average: 6.38, volume: 52000000 },
-        { date: '2024-01-07', average: 6.41, volume: 49000000 },
-        { date: '2024-01-06', average: 6.39, volume: 51000000 }
-      ]);
-    }
-    return Promise.resolve([]);
-  }),
-  getCachedMarketOrders: jest.fn(() => null),  // Return null to force fresh fetch
-  getCachedMarketHistory: jest.fn(() => null),  // Return null to force fresh fetch
-  fetchMarketData: jest.fn((regionId, typeId) => {
-    // Return fixture data for Tritanium
-    if (typeId === 34) {
-      return Promise.resolve({
-        orders: [
-          { price: 6.45, volume_remain: 5000000, is_buy_order: false, location_id: 60003760 },
-          { price: 6.48, volume_remain: 3000000, is_buy_order: false, location_id: 60003760 },
-          { price: 6.50, volume_remain: 10000000, is_buy_order: false, location_id: 60003760 },
-          { price: 6.55, volume_remain: 2000000, is_buy_order: false, location_id: 60003760 },
-          { price: 6.60, volume_remain: 1000000, is_buy_order: false, location_id: 60003760 }
-        ],
-        history: [
-          { date: '2024-01-10', average: 6.40, volume: 50000000 },
-          { date: '2024-01-09', average: 6.42, volume: 48000000 },
-          { date: '2024-01-08', average: 6.38, volume: 52000000 },
-          { date: '2024-01-07', average: 6.41, volume: 49000000 },
-          { date: '2024-01-06', average: 6.39, volume: 51000000 }
-        ]
-      });
-    }
-    return Promise.resolve({ orders: [], history: [] });
-  }),
+  // NOTE the argument order: the real signature is
+  // fetchMarketOrders(regionId, typeId, ...), matching fetchMarketData below.
+  // These two mocks previously had it reversed, so they returned [] for every
+  // call - harmless only while nothing exercised them directly.
+  fetchMarketOrders: jest.fn(async (regionId, typeId) =>
+    (typeId === 34 ? mockTritaniumOrders : [])),
+  // Real signature: fetchMarketHistory(regionId, typeId, forceRefresh).
+  fetchMarketHistory: jest.fn(async (regionId, typeId) =>
+    (typeId === 34 ? mockTritaniumHistory : [])),
+  // Null forces a fresh fetch, which is what these tests exercise.
+  getCachedMarketOrders: jest.fn(() => null),
+  getCachedMarketHistory: jest.fn(() => null),
+  fetchMarketData: jest.fn(async (regionId, typeId) => (typeId === 34
+    ? { orders: mockTritaniumOrders, history: mockTritaniumHistory }
+    : { orders: [], history: [] })),
 }));
 
 // Mock market database
@@ -147,6 +134,38 @@ describe('Market Pricing - Integration Tests', () => {
     const marketDb = require('../../src/main/market-database');
     if (marketDb.__clearOverrides) marketDb.__clearOverrides();
     if (marketDb.__clearCache) marketDb.__clearCache();
+
+    // Reset the ESI mocks and re-apply their default behaviour.
+    //
+    // A queued mockResolvedValueOnce takes priority over the default and is NOT
+    // cleared by re-declaring one (nor by mockClear, which only wipes call
+    // history). Only mockReset() drains the queue - but it also discards the
+    // implementation, so each default is restored immediately after.
+    //
+    // Without this, a test that primes more Onces than it consumes leaks the
+    // surplus into whatever runs next.
+    const esiMarket = require('../../src/main/esi-market');
+
+    esiMarket.fetchMarketOrders.mockReset();
+    esiMarket.fetchMarketHistory.mockReset();
+    esiMarket.fetchMarketData.mockReset();
+    esiMarket.getCachedMarketOrders.mockReset();
+    esiMarket.getCachedMarketHistory.mockReset();
+
+    esiMarket.fetchMarketOrders.mockImplementation(
+      async (regionId, typeId) => (typeId === 34 ? mockTritaniumOrders : [])
+    );
+    esiMarket.fetchMarketHistory.mockImplementation(
+      async (regionId, typeId) => (typeId === 34 ? mockTritaniumHistory : [])
+    );
+    esiMarket.fetchMarketData.mockImplementation(
+      async (regionId, typeId) => (typeId === 34
+        ? { orders: mockTritaniumOrders, history: mockTritaniumHistory }
+        : { orders: [], history: [] })
+    );
+    // Null forces a fresh fetch, which is what these tests exercise.
+    esiMarket.getCachedMarketOrders.mockReturnValue(null);
+    esiMarket.getCachedMarketHistory.mockReturnValue(null);
   });
 
   describe('End-to-End Price Calculation Workflow', () => {
@@ -202,14 +221,14 @@ describe('Market Pricing - Integration Tests', () => {
 
     test('workflow falls back from orders to historical when no data', async () => {
       const esiMarket = require('../../src/main/esi-market');
-      // Mock fetchMarketData to return empty orders but some history
-      esiMarket.fetchMarketData.mockResolvedValueOnce({
-        orders: [],
-        history: [
-          { date: '2024-01-10', average: 6.40, volume: 50000000 },
-          { date: '2024-01-09', average: 6.42, volume: 48000000 }
-        ]
-      });
+      // 'vwap' reads the order book, and only fetches history once that book
+      // proves empty - so both calls are primed here. Mocking fetchMarketData
+      // alone no longer reaches this path.
+      esiMarket.fetchMarketOrders.mockResolvedValueOnce([]);
+      esiMarket.fetchMarketHistory.mockResolvedValueOnce([
+        { date: '2024-01-10', average: 6.40, volume: 50000000 },
+        { date: '2024-01-09', average: 6.42, volume: 48000000 }
+      ]);
 
       const settings = {
         priceMethod: 'vwap',
@@ -524,7 +543,10 @@ describe('Market Pricing - Integration Tests', () => {
   describe('Error Handling and Resilience', () => {
     test('handles ESI API errors gracefully', async () => {
       const esiMarket = require('../../src/main/esi-market');
-      esiMarket.fetchMarketData.mockRejectedValueOnce(new Error('ESI timeout'));
+      // 'vwap' prices from the ORDER BOOK, so that is the call that can fail.
+      // Rejecting fetchMarketData instead left the `Once` primed and unconsumed,
+      // which then blew up the NEXT test in this file.
+      esiMarket.fetchMarketOrders.mockRejectedValueOnce(new Error('ESI timeout'));
 
       // Function should throw when ESI fails
       await expect(

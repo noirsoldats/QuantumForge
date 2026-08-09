@@ -444,37 +444,79 @@ describe('Blueprint Tree - Recursive Calculations', () => {
   });
 
   describe('Performance', () => {
-    test('caching improves performance for repeated calculations', () => {
+    test('caching improves performance for repeated calculations', async () => {
       populateDatabase(db, { blueprint: blueprintFixtures.scourgeBlueprint });
 
-      // First call (no cache)
-      const start1 = Date.now();
-      calculateBlueprintMaterials(
-        blueprintFixtures.TYPE_IDS.SCOURGE_BLUEPRINT,
-        1,
-        10,
-        null,
-        facilitiesFixtures.raitaruNoRigs,
-        0,
-        db
-      );
-      const time1 = Date.now() - start1;
+      // Count database queries rather than measuring wall-clock time: a cache hit
+      // returns before touching the database at all, so query count is a direct
+      // and deterministic signal. (This previously asserted on elapsed ms, which
+      // was noise-sensitive and failed intermittently under parallel test load.)
+      const prepareSpy = jest.spyOn(db, 'prepare');
 
-      // Second call (cached)
-      const start2 = Date.now();
-      calculateBlueprintMaterials(
+      // Full signature: (blueprintTypeId, runs, meLevel, characterId, facility,
+      //                  useIntermediates, depth, db)
+      // depth MUST be 0 - the cache is only consulted for top-level calls.
+      const args = [
         blueprintFixtures.TYPE_IDS.SCOURGE_BLUEPRINT,
-        1,
-        10,
-        null,
+        1,     // runs
+        10,    // ME
+        null,  // characterId
         facilitiesFixtures.raitaruNoRigs,
-        0,
-        db
-      );
-      const time2 = Date.now() - start2;
+        true,  // useIntermediates
+        0,     // depth
+        db,
+      ];
 
-      // Cached call should be faster or same speed
-      expect(time2).toBeLessThanOrEqual(time1 + 10);  // Allow 10ms margin
+      // First call: cache miss, must query the database.
+      const result1 = await calculateBlueprintMaterials(...args);
+      const queriesUncached = prepareSpy.mock.calls.length;
+      expect(queriesUncached).toBeGreaterThan(0);
+
+      // Second call: cache hit, must not query the database again.
+      prepareSpy.mockClear();
+      const result2 = await calculateBlueprintMaterials(...args);
+      const queriesCached = prepareSpy.mock.calls.length;
+
+      expect(queriesCached).toBe(0);
+      expect(queriesCached).toBeLessThan(queriesUncached);
+
+      // The cached result must be equivalent, and a distinct object (structuredClone)
+      // so callers cannot mutate the cache.
+      expect(result2).toEqual(result1);
+      expect(result2).not.toBe(result1);
+
+      prepareSpy.mockRestore();
+    });
+
+    test('cache is bypassed after clearMaterialCache', async () => {
+      populateDatabase(db, { blueprint: blueprintFixtures.scourgeBlueprint });
+
+      const args = [
+        blueprintFixtures.TYPE_IDS.SCOURGE_BLUEPRINT,
+        1,     // runs
+        10,    // ME
+        null,  // characterId
+        facilitiesFixtures.raitaruNoRigs,
+        true,  // useIntermediates
+        0,     // depth - must be 0 for the cache to be consulted
+        db,
+      ];
+
+      await calculateBlueprintMaterials(...args);
+
+      const prepareSpy = jest.spyOn(db, 'prepare');
+
+      // Cached: no queries.
+      await calculateBlueprintMaterials(...args);
+      expect(prepareSpy.mock.calls.length).toBe(0);
+
+      // After clearing, the next call must hit the database again.
+      clearMaterialCache();
+      prepareSpy.mockClear();
+      await calculateBlueprintMaterials(...args);
+      expect(prepareSpy.mock.calls.length).toBeGreaterThan(0);
+
+      prepareSpy.mockRestore();
     });
   });
 });

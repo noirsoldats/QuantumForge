@@ -382,6 +382,34 @@
   pointer-events: none;
 }
 
+/* ---- Toast container ----
+   One per position; created on demand by QFToast (shared/toast.js). Placement
+   is a per-screen default with a per-call override, so several containers can
+   coexist on one screen. */
+
+.toast-container {
+  position: fixed;
+  z-index: 3000;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  pointer-events: none;
+}
+
+.toast-container-top-right    { top: 20px; right: 20px; }
+.toast-container-top-left     { top: 20px; left: 20px; }
+.toast-container-top-center   { top: 20px; left: 50%; transform: translateX(-50%); }
+.toast-container-bottom-right { bottom: 20px; right: 20px; }
+.toast-container-bottom-left  { bottom: 20px; left: 20px; }
+.toast-container-bottom-center{ bottom: 20px; left: 50%; transform: translateX(-50%); }
+
+/* Bottom containers stack upward so the newest toast is nearest the edge. */
+.toast-container-bottom-right,
+.toast-container-bottom-left,
+.toast-container-bottom-center {
+  flex-direction: column-reverse;
+}
+
 .toast {
   display: flex;
   align-items: flex-start;
@@ -419,6 +447,29 @@
   color: var(--color-text-primary);
   line-height: 1.4;
 }
+
+.toast-title {
+  font-weight: 600;
+  color: var(--color-text-heading);
+  margin-bottom: 2px;
+}
+
+.toast-message {
+  color: var(--color-text-primary);
+}
+
+/* Status glyph. The coloured left edge comes from .toast::before. */
+.toast-icon {
+  flex-shrink: 0;
+  font-size: 14px;
+  line-height: 1.4;
+  color: var(--color-text-muted);
+}
+
+.toast-icon.success { color: var(--color-success); }
+.toast-icon.error   { color: var(--color-error); }
+.toast-icon.warning { color: var(--color-warning); }
+.toast-icon.info    { color: var(--color-info); }
 
 .toast-close {
   background: none;
@@ -631,6 +682,14 @@
   backdrop-filter: blur(4px);
 }
 
+/* `display: flex` above beats the browser's default `[hidden] { display: none }`,
+   so a modal written as `<div class="modal" hidden>` would render OPEN on first
+   paint. Any element with an explicit display needs this rule to make `hidden`
+   work - do not remove it. */
+.modal[hidden] {
+  display: none;
+}
+
 .modal-content {
   background: var(--color-bg-elevated);
   border: 1px solid var(--color-border-active);
@@ -695,4 +754,481 @@
 
 .modal-close:hover {
   color: var(--color-text-primary);
+}
+
+/* ============================================
+   Form control sizing
+
+   REQUIRED - inputs overflow their containers without this.
+   See CLAUDE.md "UI Redesign Conventions" rule 6. Do not remove.
+   ============================================ */
+
+.qf-input,
+.qf-select {
+  box-sizing: border-box;
+}
+
+/* ---- Standard text input recipe (UI Redesign Conventions rule 4) ----
+   Matches the QFSearchSelect / DS select trigger so controls sitting
+   side by side in a form look consistent. */
+
+.qf-input {
+  width: 100%;
+  padding: 8px 12px;
+  background: var(--qf-surface-sunken);
+  border: 1px solid var(--qf-border);
+  border-radius: var(--qf-radius-md);
+  color: var(--qf-text-primary);
+  font-family: var(--qf-font-sans);
+  font-size: var(--qf-text-sm);
+  line-height: 1.2;
+  outline: none;
+  transition: border-color var(--qf-transition-fast), box-shadow var(--qf-transition-fast);
+}
+
+.qf-input:focus {
+  border-color: var(--qf-border-active);
+  box-shadow: var(--qf-focus-ring);
+}
+
+.qf-input:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+/* ---- Plain select ----
+   Deliberately matches the .qf-input / QFSearchSelect trigger so a native
+   select sitting beside them looks like the same control family. The native
+   arrow is removed and redrawn, since its default is unstyleable and reads as
+   an OS widget dropped into the app. */
+
+.qf-select {
+  width: 100%;
+  padding: 8px 34px 8px 12px;
+  background-color: var(--qf-surface-sunken);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='7' viewBox='0 0 10 7'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%238a94a6' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+  border: 1px solid var(--qf-border);
+  border-radius: var(--qf-radius-md);
+  color: var(--qf-text-primary);
+  font-family: var(--qf-font-sans);
+  font-size: var(--qf-text-sm);
+  line-height: 1.2;
+  outline: none;
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+  transition: border-color var(--qf-transition-fast), box-shadow var(--qf-transition-fast);
+}
+
+.qf-select:focus {
+  border-color: var(--qf-border-active);
+  box-shadow: var(--qf-focus-ring);
+}
+
+.qf-select:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+/* Options render in the OS popup layer; only colours reliably apply. */
+.qf-select option {
+  background-color: var(--qf-bg-elevated);
+  color: var(--qf-text-primary);
+}
+
+.qf-input::placeholder {
+  color: var(--qf-text-faint);
+}
+
+/* Mono variant for ISK / ME / TE / runs */
+.qf-input-mono {
+  font-family: var(--qf-font-mono);
+}
+
+/* Width constraints - numeric fields must never be full-bleed */
+.qf-input-xs { width: 64px; }
+.qf-input-sm { width: 96px; }
+.qf-input-md { width: 160px; }
+
+/* ============================================
+   QFSearchSelect - searchable dropdown
+   Paired with public/shared/qf-search-select.js.
+
+   NOTE: the row highlight below is box-shadow ONLY, never a toggled
+   background. See CLAUDE.md "UI Redesign Conventions" rules 1 and 2.
+   ============================================ */
+
+.qf-ss {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-family: var(--qf-font-sans);
+  min-width: 0;
+}
+
+.qf-ss-head {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.qf-ss-label {
+  font-size: var(--qf-text-xs);
+  font-weight: var(--qf-weight-medium);
+  color: var(--qf-text-muted);
+  text-transform: uppercase;
+  letter-spacing: var(--qf-tracking-label);
+}
+
+.qf-ss-desc {
+  font-size: 11px;
+  color: var(--qf-text-faint);
+}
+
+.qf-ss-anchor {
+  position: relative;
+  width: 100%;
+  min-width: 0;
+}
+
+/* ---- Trigger ---- */
+
+.qf-ss-trigger {
+  position: relative;
+  box-sizing: border-box;
+  width: 100%;
+  padding: 8px 34px 8px 12px;
+  background: var(--qf-surface-sunken);
+  border: 1px solid var(--qf-border);
+  border-radius: var(--qf-radius-md);
+  color: var(--qf-text-primary);
+  font-size: var(--qf-text-sm);
+  line-height: 1.2;
+  cursor: pointer;
+  outline: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: border-color 0.12s ease, box-shadow 0.12s ease;
+}
+
+.qf-ss-trigger.qf-ss-compact {
+  padding: 4px 28px 4px 8px;
+  font-size: var(--qf-text-xs);
+  background: var(--qf-bg-elevated);
+}
+
+.qf-ss-trigger.qf-ss-placeholder {
+  color: var(--qf-text-muted);
+}
+
+.qf-ss-trigger.qf-ss-open {
+  border-color: var(--qf-border-active);
+  box-shadow: var(--qf-focus-ring);
+}
+
+.qf-ss-trigger:focus-visible {
+  border-color: var(--qf-border-active);
+  box-shadow: var(--qf-focus-ring);
+}
+
+.qf-ss-trigger.qf-ss-disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.qf-ss-value {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.qf-ss-chevron {
+  position: absolute;
+  right: 12px;
+  top: 44%;
+  width: 7px;
+  height: 7px;
+  border-right: 1.5px solid var(--qf-text-muted);
+  border-bottom: 1.5px solid var(--qf-text-muted);
+  pointer-events: none;
+  transform: translateY(-50%) rotate(45deg);
+  transition: transform var(--qf-transition-fast);
+}
+
+.qf-ss-compact .qf-ss-chevron {
+  right: 9px;
+}
+
+.qf-ss-trigger.qf-ss-open .qf-ss-chevron {
+  transform: translateY(-50%) rotate(225deg);
+}
+
+/* ---- Popover (position:fixed so it escapes overflow/scroll containers) ---- */
+
+.qf-ss-popover {
+  position: fixed;
+  z-index: var(--qf-z-toast);
+  display: flex;
+  flex-direction: column;
+  background: rgba(30, 30, 46, 0.98);
+  border: 1px solid var(--qf-border-active);
+  border-radius: var(--qf-radius-md);
+  box-shadow: var(--qf-shadow-lg);
+  backdrop-filter: blur(var(--qf-blur));
+  overflow: hidden;
+}
+
+.qf-ss-search {
+  position: relative;
+  padding: 8px;
+  border-bottom: 1px solid var(--qf-border-subtle);
+}
+
+.qf-ss-search-icon {
+  position: absolute;
+  left: 17px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--qf-text-faint);
+  pointer-events: none;
+}
+
+.qf-ss-input {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 7px 10px 7px 30px;
+  background: var(--qf-surface-sunken);
+  border: 1px solid var(--qf-border);
+  border-radius: var(--qf-radius-sm);
+  color: var(--qf-text-heading);
+  font-family: var(--qf-font-sans);
+  font-size: 13px;
+  outline: none;
+}
+
+.qf-ss-input::placeholder {
+  color: var(--qf-text-faint);
+}
+
+.qf-ss-list {
+  max-height: 240px;
+  overflow-y: auto;
+  padding: 4px;
+}
+
+/* ---- Rows ----
+   The highlight is box-shadow ONLY. background-color stays transparent at all
+   times: a background set on a row highlighted on its first paint does not
+   clear reliably. Do not "simplify" this into a background rule. */
+
+.qf-ss-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: var(--qf-radius-sm);
+  background-color: transparent;
+  box-shadow: none;
+  color: var(--qf-text-primary);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.qf-ss-row.qf-ss-hi {
+  box-shadow: inset 0 0 0 200px var(--qf-accent-dim), inset 3px 0 0 var(--qf-accent);
+}
+
+.qf-ss-row.qf-ss-selected {
+  color: var(--qf-accent);
+}
+
+.qf-ss-row.qf-ss-row-disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.qf-ss-check {
+  flex-shrink: 0;
+  width: 14px;
+  color: var(--qf-accent);
+  font-size: 12px;
+  line-height: 1;
+}
+
+.qf-ss-row-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.qf-ss-empty {
+  padding: 16px;
+  text-align: center;
+  color: var(--qf-text-faint);
+  font-size: 12.5px;
+}
+
+/* ---- Inline mode ----
+   `new QFSearchSelect(el, { inline: true })`: the search field IS the control,
+   with results dropping directly beneath it. Rows reuse .qf-ss-row above, so
+   the box-shadow highlight rule applies here unchanged. */
+
+.qf-ss-inline-field {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 13px;
+  background: var(--qf-surface);
+  border: 1px solid var(--qf-border);
+  border-radius: var(--qf-radius-md);
+  box-sizing: border-box;
+}
+
+.qf-ss-inline-field:focus-within {
+  border-color: var(--qf-border-active);
+}
+
+/* The icon is shared with the popover search, where it is absolutely positioned
+   over the input. Inline mode lays it out as a flex sibling instead, so every
+   positioning property has to be reset - without this it lifts out of the row
+   and the typed text runs underneath it. */
+.qf-ss-inline-field .qf-ss-search-icon {
+  position: static;
+  left: auto;
+  top: auto;
+  transform: none;
+  flex-shrink: 0;
+  color: var(--qf-text-faint);
+}
+
+.qf-ss-inline-input {
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--qf-text-heading);
+  font-size: 14px;
+  font-family: var(--qf-font-sans);
+}
+
+.qf-ss-inline-input::placeholder {
+  color: var(--qf-text-faint);
+}
+
+.qf-ss-inline-clear {
+  flex-shrink: 0;
+  cursor: pointer;
+  color: var(--qf-text-faint);
+  font-size: 18px;
+  line-height: 1;
+  padding: 0 2px;
+}
+
+.qf-ss-inline-clear:hover {
+  color: var(--qf-text-primary);
+}
+
+/* Results panel. Absolute (not fixed): it is anchored inside .qf-ss-anchor and
+   scrolls with the field, unlike the trigger-mode popover which must escape
+   overflow:hidden ancestors. */
+.qf-ss-inline-list {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  margin-top: 5px;
+  max-height: 320px;
+  overflow-y: auto;
+  padding: 4px;
+  background: rgba(30, 30, 46, 0.98);
+  border: 1px solid var(--qf-border-active);
+  border-radius: var(--qf-radius-md);
+  box-shadow: var(--qf-shadow-lg);
+  backdrop-filter: blur(10px);
+  z-index: 40;
+}
+
+.qf-ss-inline-list[hidden] {
+  display: none;
+}
+
+/* ---- Toggle switch ----
+   An on/off MODE, as distinct from a checkbox (which selects a thing).
+   Promoted here from settings.css so every screen uses the same control -
+   Manufacturing Plans needed it and forking would have let the two drift. */
+
+.toggle {
+  position: relative;
+  display: inline-block;
+  flex-shrink: 0;
+  width: 42px;
+  height: 22px;
+}
+
+.toggle input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.toggle-slider {
+  position: absolute;
+  inset: 0;
+  background-color: var(--qf-surface-sunken);
+  border: 1px solid var(--qf-border);
+  border-radius: var(--qf-radius-pill);
+  cursor: pointer;
+  transition: background-color var(--qf-transition-fast), border-color var(--qf-transition-fast);
+}
+
+.toggle-slider::before {
+  content: '';
+  position: absolute;
+  left: 3px;
+  bottom: 2px;
+  width: 15px;
+  height: 15px;
+  background-color: var(--qf-text-muted);
+  border-radius: 50%;
+  transition: transform var(--qf-transition-fast), background-color var(--qf-transition-fast);
+}
+
+.toggle input:checked + .toggle-slider {
+  background-color: var(--qf-accent-dim);
+  border-color: var(--qf-border-active);
+}
+
+.toggle input:checked + .toggle-slider::before {
+  transform: translateX(20px);
+  background-color: var(--qf-accent);
+}
+
+.toggle input:focus-visible + .toggle-slider {
+  box-shadow: var(--qf-focus-ring);
+}
+
+/* ---- Shared scrollbar treatment ---- */
+
+.qf-scroll::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.qf-scroll::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: var(--qf-radius-md);
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+
+.qf-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgba(100, 180, 255, 0.4);
+  background-clip: content-box;
 }

@@ -62,6 +62,20 @@ async function runDatabaseInit(splashWindow) {
   try {
     initializeMarketDatabase();
 
+    // Numbered market schema migrations run AFTER the baseline tables exist.
+    const {
+      needsMarketSchemaMigrations,
+      runMarketSchemaMigrations,
+    } = require('./market-schema-migrations');
+    if (needsMarketSchemaMigrations()) {
+      splashWindow.webContents.send('startup:progress', {
+        task: 'database',
+        status: 'Updating market database schema...',
+        complete: null,
+      });
+      await runMarketSchemaMigrations();
+    }
+
     splashWindow.webContents.send('startup:progress', {
       task: 'database',
       status: 'Database ready',

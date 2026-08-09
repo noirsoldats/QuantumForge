@@ -1,0 +1,177 @@
+<div id="assets-view" class="as-view">
+
+  <!-- header: character identity + market set + actions -->
+  <div class="as-header">
+    <div class="as-identity">
+      <img id="as-portrait" class="as-portrait" src="" alt="">
+      <div>
+        <h1 id="as-character-name" class="as-name">&nbsp;</h1>
+        <p class="as-subtitle">Asset Manager</p>
+      </div>
+    </div>
+    <div class="as-header-actions">
+      <span class="as-field-label">Market Set</span>
+      <!-- A plain select, not QFSearchSelect: market sets are a short fixed
+           list (binding rule 5 - roughly five or fewer options stay plain). -->
+      <select id="as-market-set" class="qf-select as-market-set" aria-label="Market Set"></select>
+      <button type="button" id="as-export-btn" class="btn btn-secondary btn-sm" title="Download the filtered rows as CSV">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+        Export CSV
+      </button>
+      <button type="button" id="as-refresh-btn" class="btn btn-secondary btn-sm" title="Fetch the latest assets from ESI">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 2v6h-6M3 12a9 9 0 0 1 15-6.7L21 8M3 22v-6h6M21 12a9 9 0 0 1-15 6.7L3 16"></path></svg>
+        <span id="as-refresh-label">Refresh from API</span>
+      </button>
+    </div>
+  </div>
+
+  <!-- summary strip -->
+  <div id="as-summary" class="as-summary"></div>
+
+  <!-- tabs + toolbar -->
+  <div class="as-toolbar">
+    <div id="as-tabs" class="as-tabs" role="tablist"></div>
+    <span class="as-spacer"></span>
+    <span class="as-field-label">Group by</span>
+    <select id="as-group-by" class="qf-select as-group-select">
+      <option value="none">None</option>
+      <option value="location" selected>Location</option>
+      <option value="category">Category</option>
+    </select>
+    <label id="as-aggregate-wrap" class="as-toggle">
+      <input type="checkbox" id="as-aggregate">
+      <span>Aggregate duplicates</span>
+    </label>
+    <button type="button" id="as-columns-btn" class="btn btn-secondary btn-sm" title="Show, hide and reorder columns">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="4" y1="21" x2="4" y2="14"></line><line x1="4" y1="10" x2="4" y2="3"></line><line x1="12" y1="21" x2="12" y2="12"></line><line x1="12" y1="8" x2="12" y2="3"></line><line x1="20" y1="21" x2="20" y2="16"></line><line x1="20" y1="12" x2="20" y2="3"></line><line x1="1" y1="14" x2="7" y2="14"></line><line x1="9" y1="8" x2="15" y2="8"></line><line x1="17" y1="16" x2="23" y2="16"></line></svg>
+      Columns
+    </button>
+  </div>
+
+  <!-- body -->
+  <div class="as-body">
+
+    <!-- sidebar: search + facets -->
+    <div class="as-sidebar qf-scroll">
+      <div class="as-search-wrap">
+        <input type="text" id="as-search" class="as-input as-search-input"
+               placeholder="Search assets…" aria-label="Search assets">
+        <button type="button" id="as-search-clear" class="as-search-clear"
+                aria-label="Clear search" title="Clear search (Esc)" hidden>&times;</button>
+      </div>
+
+      <div class="as-facet-block">
+        <div class="as-facet-head">
+          <h4>Saved Views</h4>
+          <span id="as-save-view" class="as-clear" role="button" tabindex="0"
+                title="Save the current filters, grouping and aggregation">+ Save</span>
+        </div>
+        <div class="as-facet-list">
+          <div id="as-reset-view" class="as-preset" role="button" tabindex="0">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 2v6h6"></path><path d="M3 13a9 9 0 1 0 3-7.7L3 8"></path></svg>
+            <span class="as-preset-name">All Assets (default)</span>
+            <span id="as-reset-badge" class="as-preset-reset" hidden>Reset</span>
+          </div>
+          <div id="as-saved-views"></div>
+        </div>
+      </div>
+
+      <div class="as-facet-block">
+        <div class="as-facet-head">
+          <h4>Category</h4>
+          <span id="as-clear-cats" class="as-clear" role="button" tabindex="0" hidden>Clear</span>
+        </div>
+        <div id="as-cat-facets" class="as-facet-list"></div>
+      </div>
+
+      <div class="as-facet-block">
+        <div class="as-facet-head">
+          <h4>Location</h4>
+          <span id="as-clear-locs" class="as-clear" role="button" tabindex="0" hidden>Clear</span>
+        </div>
+        <div id="as-loc-facets" class="as-facet-list"></div>
+      </div>
+
+      <div class="as-facet-block">
+        <div class="as-facet-head">
+          <h4>Blueprints</h4>
+          <span id="as-clear-bp" class="as-clear" role="button" tabindex="0" hidden>Clear</span>
+        </div>
+        <div id="as-bp-facets" class="as-facet-list"></div>
+      </div>
+    </div>
+
+    <!-- content -->
+    <div class="as-content qf-scroll">
+      <div id="as-selection-bar" class="as-selection-bar" hidden>
+        <span id="as-selected-count" class="as-selected-count"></span>
+        <span id="as-selected-value" class="as-selected-value"></span>
+        <span class="as-spacer"></span>
+        <button type="button" id="as-clear-selection" class="as-clear">Clear</button>
+      </div>
+
+      <div id="as-loading" class="as-loading">
+        <div class="as-spinner" aria-hidden="true"></div>
+        <span>Loading assets…</span>
+      </div>
+
+      <table id="as-table" class="as-table" hidden>
+        <thead><tr id="as-thead-row"></tr></thead>
+        <tbody id="as-tbody"></tbody>
+      </table>
+
+      <div id="as-empty" class="as-empty" hidden>
+        <div class="as-empty-icon">
+          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path><polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline><line x1="12" y1="22.08" x2="12" y2="12"></line></svg>
+        </div>
+        <div class="as-empty-title">No assets match</div>
+        <div id="as-empty-text" class="as-empty-text"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- status line -->
+  <div class="as-statusline">
+    <span id="as-shown-count"></span>
+    <span class="as-spacer"></span>
+    <span id="as-cache-status" class="as-cache-status"></span>
+  </div>
+
+  <!-- save view modal -->
+  <div id="as-save-modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="as-save-title" hidden>
+    <div class="modal-content as-save-modal">
+      <div class="modal-header">
+        <h2 id="as-save-title">Save View</h2>
+        <button type="button" class="modal-close" id="as-save-close" aria-label="Close dialog">&times;</button>
+      </div>
+      <div class="modal-body">
+        <label class="as-save-label" for="as-save-name">Name</label>
+        <input type="text" id="as-save-name" class="as-input" placeholder="e.g. High-Value Ships" maxlength="60">
+        <p class="as-columns-hint">Saves the current categories, locations, blueprint filter, grouping and aggregation. The search text is not saved.</p>
+        <div id="as-save-summary" class="as-save-summary"></div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" id="as-save-cancel" class="btn btn-secondary btn-sm">Cancel</button>
+        <button type="button" id="as-save-confirm" class="btn btn-primary btn-sm">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- column configuration modal -->
+  <div id="as-columns-modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="as-columns-title" hidden>
+    <div class="modal-content as-columns-modal">
+      <div class="modal-header">
+        <h2 id="as-columns-title">Configure Columns</h2>
+        <button type="button" class="modal-close" id="as-columns-close" aria-label="Close dialog">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p class="as-columns-hint">Drag to reorder. Uncheck to hide.</p>
+        <div id="as-columns-list" class="as-columns-list"></div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" id="as-columns-done" class="btn btn-primary btn-sm">Done</button>
+      </div>
+    </div>
+  </div>
+
+</div>

@@ -4,47 +4,19 @@
 // This module provides footer initialization and update logic
 // that can be used across all pages in the main window
 
+// The EVE clock is the only remaining timer: it is local Date arithmetic with
+// no IPC, so it costs nothing per window. Server and ESI status are both
+// event-driven now - main fetches, footers listen.
 let footerUpdateIntervals = {
   clock: null,
+};
+
+// Unsubscribe functions for the data-change subscriptions that replaced the
+// old polls. Guarded so re-initialising the footer does not stack them.
+let footerDisposers = {
   status: null,
   esiStatus: null,
 };
-
-// Constants
-const CACHE_KEY = 'quantum_forge_server_status_cache';
-const MIN_FETCH_INTERVAL = 60 * 1000; // 60 seconds minimum between fetches (match backend)
-
-/**
- * Get cached server status from sessionStorage
- * Returns null if cache doesn't exist or is invalid
- */
-function getCachedServerStatus() {
-  try {
-    const cached = sessionStorage.getItem(CACHE_KEY);
-    if (!cached) {
-      return null;
-    }
-    return JSON.parse(cached);
-  } catch (error) {
-    console.error('[Footer] Error reading cache:', error);
-    return null;
-  }
-}
-
-/**
- * Save server status to sessionStorage cache
- */
-function setCachedServerStatus(data) {
-  try {
-    const cacheEntry = {
-      data: data,
-      timestamp: Date.now(),
-    };
-    sessionStorage.setItem(CACHE_KEY, JSON.stringify(cacheEntry));
-  } catch (error) {
-    console.error('[Footer] Error writing cache:', error);
-  }
-}
 
 /**
  * Initialize status footer
@@ -183,65 +155,34 @@ function updateServerStatusDisplay(data, isCached = false, ageSeconds = 0) {
 /**
  * Update server status and player count
  */
+/**
+ * Redraw the server-status footer item from STORED data.
+ *
+ * Read-only by design: this never triggers an ESI call. The background
+ * refresh cycle owns fetching, and this runs when it reports one landed.
+ * Every window calling status.fetch() was the multi-window waste being fixed.
+ */
 async function updateServerStatus() {
   try {
-    const now = Date.now();
-    const cached = getCachedServerStatus();
+    const stored = await window.electronAPI.status.getCached();
 
-    // Check if we can use cached data
-    if (cached && cached.data) {
-      const timeSinceLastFetch = now - cached.timestamp;
-
-      if (timeSinceLastFetch < MIN_FETCH_INTERVAL) {
-        // Use cached data
-        const ageSeconds = Math.floor(timeSinceLastFetch / 1000);
-        console.log(`[Footer] Using cached server status (${ageSeconds}s old)`);
-        updateServerStatusDisplay(cached.data, true, ageSeconds);
-        return;
-      }
-    }
-
-    // Fetch fresh data from backend
-    const result = await window.electronAPI.status.fetch();
-
-    if (!result.success) {
-      console.error('Failed to fetch server status:', result.error);
-
-      // Check if we have cached data in sessionStorage as fallback
-      if (cached && cached.data) {
-        const ageSeconds = Math.floor((now - cached.timestamp) / 1000);
-        console.log(`Using sessionStorage fallback (${ageSeconds}s old)`);
-        updateServerStatusDisplay(cached.data, true, ageSeconds);
-        return;
-      }
-
-      // No fallback available, show error
-      const iconElement = document.getElementById('server-status-icon');
-      const textElement = document.getElementById('server-status-text');
-      const statusItem = document.getElementById('server-status-item');
-
-      if (iconElement && textElement && statusItem) {
-        iconElement.classList.remove('status-online', 'status-offline', 'status-restarting', 'status-loading');
-        iconElement.classList.add('status-error');
-        iconElement.innerHTML = `
-          <circle cx="12" cy="12" r="10"></circle>
-          <line x1="12" y1="8" x2="12" y2="12"></line>
-          <line x1="12" y1="16" x2="12.01" y2="16"></line>
-        `;
-        textElement.textContent = 'Error';
-        statusItem.title = `Server Status: Error (${result.error || 'Unknown error'})`;
-      }
+    if (!stored) {
+      // Nothing fetched yet - the first cycle has not run. Leave the loading
+      // state rather than claiming an error the user cannot act on.
       return;
     }
 
-    const serverData = result.data || result;
+    const ageSeconds = stored.lastUpdated
+      ? Math.max(0, Math.floor((Date.now() - stored.lastUpdated) / 1000))
+      : 0;
 
-    // Update display
-    updateServerStatusDisplay(serverData, result.cached || false, 0);
-
-    // Cache the successful result
-    setCachedServerStatus(serverData);
-
+    // getCachedServerStatus returns vip but not the derived label the display
+    // expects, so derive it the same way fetchServerStatus does.
+    updateServerStatusDisplay(
+      { ...stored, serverStatus: stored.vip ? 'restarting' : 'online' },
+      false,
+      ageSeconds
+    );
   } catch (error) {
     console.error('[Footer] Error updating server status:', error);
   }
@@ -251,13 +192,24 @@ async function updateServerStatus() {
  * Start server status polling (every 1 minute)
  */
 function startServerStatusPolling() {
-  // Clear existing interval if any
-  if (footerUpdateIntervals.status) {
-    clearInterval(footerUpdateIntervals.status);
+  // Not a poll any more. The footer is a pure CONSUMER: the background refresh
+  // cycle owns the fetch (GLOBAL_TASKS in esi-background-refresh.js) and this
+  // just redraws when it lands.
+  //
+  // Previously every window ran its own 5-minute timer, each triggering a real
+  // ESI fetch - so N windows meant N fetch cycles, and closing the last window
+  // stopped server status updating at all. Main now fetches once regardless of
+  // how many windows are open.
+  const api = window.electronAPI && window.electronAPI.data;
+  if (api && api.onChanged && !footerDisposers.status) {
+    footerDisposers.status = api.onChanged((info) => {
+      if (info && info.endpointType === 'server_status') updateServerStatus();
+    });
   }
 
-  // Update every 60 seconds
-  footerUpdateIntervals.status = setInterval(updateServerStatus, 60 * 1000);
+  // One read at startup so a newly-opened window shows the stored value
+  // immediately rather than waiting for the next cycle.
+  updateServerStatus();
 }
 
 /**
@@ -303,13 +255,16 @@ async function updateESIStatus() {
  * Start ESI status polling (every 30 seconds)
  */
 function startESIStatusPolling() {
-  // Clear existing interval if any
-  if (footerUpdateIntervals.esiStatus) {
-    clearInterval(footerUpdateIntervals.esiStatus);
+  // No interval at all. getAggregated() is a pure read of esi_call_status,
+  // and every ESI call both writes that table and emits esi:data-changed - so
+  // a timer could only ever re-read rows the event already prompted.
+  const api = window.electronAPI && window.electronAPI.data;
+  if (api && api.onChanged && !footerDisposers.esiStatus) {
+    footerDisposers.esiStatus = api.onChanged(() => updateESIStatus());
   }
 
-  // Update every 30 seconds
-  footerUpdateIntervals.esiStatus = setInterval(updateESIStatus, 30 * 1000);
+  // One read at startup, for the state accumulated before this window opened.
+  updateESIStatus();
 }
 
 /**
@@ -318,13 +273,16 @@ function startESIStatusPolling() {
 function cleanupFooter() {
   if (footerUpdateIntervals.clock) {
     clearInterval(footerUpdateIntervals.clock);
+    footerUpdateIntervals.clock = null;
   }
-  if (footerUpdateIntervals.status) {
-    clearInterval(footerUpdateIntervals.status);
-  }
-  if (footerUpdateIntervals.esiStatus) {
-    clearInterval(footerUpdateIntervals.esiStatus);
-  }
+
+  // Release the data-change subscriptions too, or they outlive the footer.
+  Object.keys(footerDisposers).forEach((key) => {
+    if (footerDisposers[key]) {
+      try { footerDisposers[key](); } catch (_) { /* already gone */ }
+      footerDisposers[key] = null;
+    }
+  });
 }
 
 // Add click handler for ESI status item to open window

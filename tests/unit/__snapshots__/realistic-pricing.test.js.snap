@@ -9,6 +9,7 @@ exports[`Realistic Price Calculation Snapshot Testing result structure matches s
   "immediate": 6.52,
   "metadata": {
     "historicalDays": 30,
+    "historySkipped": false,
     "ordersAvailable": 5,
     "ordersUsed": 1,
     "quantityFilled": 1000,

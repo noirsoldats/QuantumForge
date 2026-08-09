@@ -343,9 +343,13 @@ describe('Invention System', () => {
       // Time optimization should consider manufacturing time
     });
 
-    test('optimizes for custom-volume strategy', async () => {
-      const customVolume = 50;
-
+    test('an unrecognised strategy falls back to total-per-item', async () => {
+      // Replaces a 'custom-volume' test. That strategy was removed: its metric
+      // was total-per-item scaled by a constant, so it always chose the same
+      // decryptor. Anything unrecognised now takes the default branch, which
+      // this pins so a bad dropdown value is caught rather than silently
+      // optimising for something else. A stale 'custom-volume' left in a
+      // user's saved config lands here.
       const result = await findBestDecryptor(
         mockInventionData,
         mockPrices,
@@ -353,13 +357,21 @@ describe('Invention System', () => {
         mockSkills,
         facility,
         'custom-volume',
-        customVolume
+        null
       );
 
-      expect(result).toBeDefined();
-      // customVolume is not returned in the result, it's used for optimization metric calculation
-      expect(result.best).toBeDefined();
-      expect(result.optimizationStrategy).toBe('custom-volume');
+      const baseline = await findBestDecryptor(
+        mockInventionData,
+        mockPrices,
+        productPrice,
+        mockSkills,
+        facility,
+        'total-per-item',
+        null
+      );
+
+      expect(result.best.name).toBe(baseline.best.name);
+      expect(result.best.optimizationMetric).toBeCloseTo(baseline.best.optimizationMetric, 6);
     });
 
     test('includes no-decryptor option', async () => {

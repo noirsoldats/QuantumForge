@@ -1,0 +1,247 @@
+<div id="summary-view" class="ms-view">
+
+  <!-- page header -->
+  <div class="ms-page-head">
+    <h1 class="ms-title">Manufacturing Summary</h1>
+    <p class="ms-subtitle">
+      Rank every blueprint by profit, ISK/hour, ROI and liquidity for your facility and market set.
+    </p>
+  </div>
+
+  <div class="ms-body qf-scroll">
+    <div class="ms-stack">
+
+      <!-- ------------------------------------------------------ filters -->
+      <div class="ms-card">
+        <div class="ms-card-accent"></div>
+        <div class="ms-filter-grid">
+
+          <div>
+            <div class="ms-field-label">Blueprint Filter</div>
+            <div id="ms-bp-filters" class="ms-chip-row"></div>
+
+            <div class="ms-field-label ms-field-label-spaced">Character</div>
+            <div id="ms-char-filters" class="ms-chip-row"></div>
+            <div id="ms-char-select-wrap" class="ms-char-select" hidden>
+              <select id="ms-char-select" class="qf-select" aria-label="Character"></select>
+            </div>
+          </div>
+
+          <div>
+            <div class="ms-field-label">Market Filters</div>
+            <div class="ms-market-grid">
+              <div>
+                <label class="ms-input-label" for="ms-svr-period">SVR Period</label>
+                <select id="ms-svr-period" class="qf-select">
+                  <option value="7">7 Days</option>
+                  <option value="14">14 Days</option>
+                  <option value="30" selected>30 Days</option>
+                </select>
+              </div>
+              <div>
+                <label class="ms-input-label" for="ms-svr-threshold">SVR Threshold</label>
+                <input type="number" id="ms-svr-threshold" class="ms-input ms-input-mono"
+                       min="0" step="0.01" placeholder="Min SVR">
+              </div>
+              <div>
+                <label class="ms-check-label" for="ms-iph-enabled">
+                  <input type="checkbox" id="ms-iph-enabled">
+                  <span>IPH Threshold</span>
+                </label>
+                <input type="number" id="ms-iph-threshold" class="ms-input ms-input-mono"
+                       min="0" step="0.01" placeholder="Min ISK/Hour" disabled>
+              </div>
+              <div>
+                <label class="ms-check-label" for="ms-profit-enabled">
+                  <input type="checkbox" id="ms-profit-enabled">
+                  <span>Profit Threshold</span>
+                </label>
+                <input type="number" id="ms-profit-threshold" class="ms-input ms-input-mono"
+                       min="0" step="0.01" placeholder="Min Profit" disabled>
+              </div>
+            </div>
+          </div>
+
+          <div>
+            <div class="ms-field-label">Tech Levels</div>
+            <div id="ms-tech-chips" class="ms-chip-row ms-chip-wrap"></div>
+          </div>
+
+          <div>
+            <div class="ms-field-label">Categories</div>
+            <div id="ms-cat-chips" class="ms-chip-row ms-chip-wrap"></div>
+          </div>
+
+        </div>
+
+        <div class="ms-filter-foot">
+          <!-- Left: speculative invention, with its strategy stacked beneath. -->
+          <div class="ms-spec-controls">
+            <label class="ms-toggle" for="ms-spec-enabled">
+              <input type="checkbox" id="ms-spec-enabled">
+              <span>Speculative Invention (T2 Analysis)</span>
+            </label>
+
+            <div id="ms-dec-strategy-wrap" class="ms-dec-strategy">
+              <label class="ms-input-label" for="ms-dec-strategy">Decryptor Strategy</label>
+              <!--
+                These four values are the ones findBestDecryptor() switches on.
+                Anything else falls through its default branch and silently
+                optimises for the wrong thing.
+              -->
+              <select id="ms-dec-strategy" class="qf-select">
+                <option value="invention-only">Invention Cost Only</option>
+                <option value="total-per-item" selected>Total Cost per Item (Recommended)</option>
+                <option value="total-full-bpc">Total Cost for Full BPC</option>
+                <option value="time-optimized">Fastest Manufacturing Time</option>
+              </select>
+            </div>
+          </div>
+
+          <!--
+            Right: staleness warning above the run controls, right-aligned.
+            Pushed over by margin-left:auto on .ms-run-controls rather than a
+            spacer element, so it stays right-aligned when the row wraps.
+          -->
+          <div class="ms-run-controls">
+            <div id="ms-staleness" class="ms-staleness" hidden>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>
+              <span id="ms-staleness-text"></span>
+            </div>
+
+            <div class="ms-run-row">
+              <div class="ms-run-field">
+                <label class="ms-input-label" for="ms-market-set">Market Set</label>
+                <select id="ms-market-set" class="qf-select" aria-label="Market Set"></select>
+              </div>
+              <div class="ms-run-field">
+                <label class="ms-input-label" for="ms-facility">Manufacturing Facility</label>
+                <select id="ms-facility" class="qf-select" aria-label="Manufacturing Facility"></select>
+              </div>
+              <div class="ms-run-field">
+                <label class="ms-input-label" for="ms-reaction-facility">Reaction Facility</label>
+                <select id="ms-reaction-facility" class="qf-select" aria-label="Reaction Facility"></select>
+              </div>
+              <button type="button" id="ms-calculate" class="btn btn-primary">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline></svg>
+                <span id="ms-calculate-label">Calculate Summary</span>
+              </button>
+            </div>
+          </div>
+
+          <!--
+            Filters and thresholds choose what goes INTO the calculation, so
+            changing them leaves the rows on screen costed against a stale
+            selection. Say so rather than silently re-filtering the results.
+          -->
+          <p id="ms-stale-notice" class="ms-stale-notice" role="status" hidden>
+            Filters changed — press Calculate Summary to apply them.
+          </p>
+        </div>
+      </div>
+
+      <!-- ------------------------------------------------------ progress -->
+      <div id="ms-progress" class="ms-card ms-progress" hidden>
+        <div class="ms-progress-head">
+          <span id="ms-progress-text">Calculating…</span>
+          <span id="ms-progress-count" class="ms-mono"></span>
+        </div>
+        <div class="ms-progress-track">
+          <div id="ms-progress-fill" class="ms-progress-fill"></div>
+        </div>
+      </div>
+
+      <!-- ------------------------------------------------------- results -->
+      <div id="ms-results-head" class="ms-results-head" hidden>
+        <h2 class="ms-results-title">Results</h2>
+        <span id="ms-result-count" class="ms-pill"></span>
+        <span class="ms-spacer"></span>
+        <button type="button" id="ms-add-to-plan" class="btn btn-primary btn-sm" hidden>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+          <span id="ms-add-to-plan-label">Add to Plan</span>
+        </button>
+        <button type="button" id="ms-columns-btn" class="btn btn-secondary btn-sm">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="4" y1="21" x2="4" y2="14"></line><line x1="4" y1="10" x2="4" y2="3"></line><line x1="12" y1="21" x2="12" y2="12"></line><line x1="12" y1="8" x2="12" y2="3"></line><line x1="20" y1="21" x2="20" y2="16"></line><line x1="20" y1="12" x2="20" y2="3"></line><line x1="1" y1="14" x2="7" y2="14"></line><line x1="9" y1="8" x2="15" y2="8"></line><line x1="17" y1="16" x2="23" y2="16"></line></svg>
+          Columns
+        </button>
+        <div class="ms-search-wrap">
+          <svg class="ms-search-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+          <input type="text" id="ms-search" class="ms-input ms-search-input"
+                 placeholder="Search blueprints…" aria-label="Search results">
+          <button type="button" id="ms-search-clear" class="ms-search-clear"
+                  aria-label="Clear search" title="Clear search (Esc)" hidden>&times;</button>
+        </div>
+      </div>
+
+      <div id="ms-results" class="ms-card" hidden>
+        <div class="ms-card-accent"></div>
+        <div class="ms-table-scroll qf-scroll">
+          <table id="ms-table" class="ms-table">
+            <thead><tr id="ms-thead-row"></tr></thead>
+            <tbody id="ms-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- ---------------------------------------------------- empty state -->
+      <div id="ms-empty" class="ms-card ms-empty">
+        <div class="ms-empty-icon">
+          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"></rect><line x1="3" y1="9" x2="21" y2="9"></line><line x1="9" y1="21" x2="9" y2="9"></line></svg>
+        </div>
+        <div class="ms-empty-title" id="ms-empty-title">No data yet</div>
+        <div class="ms-empty-text" id="ms-empty-text">
+          Choose a blueprint filter and facility, then Calculate Summary to view manufacturing profitability.
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ----------------------------------------------- column config modal -->
+  <div id="ms-columns-modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="ms-columns-title" hidden>
+    <div class="modal-content ms-columns-modal">
+      <div class="modal-header">
+        <h2 id="ms-columns-title">Configure Columns</h2>
+        <button type="button" class="modal-close" id="ms-columns-close" aria-label="Close dialog">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p class="ms-columns-hint">Drag to reorder. Check to show or hide.</p>
+        <div id="ms-columns-list" class="ms-columns-list"></div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" id="ms-columns-reset" class="btn btn-secondary btn-sm">Reset to Default</button>
+        <!-- Changes apply live, so this only dismisses the modal. -->
+        <button type="button" id="ms-columns-apply" class="btn btn-primary btn-sm">Done</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- --------------------------------------------------- add to plan modal -->
+  <div id="ms-plan-modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="ms-plan-title" hidden>
+    <div class="modal-content ms-plan-modal">
+      <div class="modal-header">
+        <h2 id="ms-plan-title">Add to Manufacturing Plan</h2>
+        <button type="button" class="modal-close" id="ms-plan-close" aria-label="Close dialog">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p id="ms-plan-summary" class="ms-plan-summary"></p>
+
+        <label class="ms-input-label" for="ms-plan-select">Plan</label>
+        <select id="ms-plan-select" class="qf-select"></select>
+
+        <div id="ms-plan-new-wrap" class="ms-plan-new" hidden>
+          <label class="ms-input-label" for="ms-plan-name">New plan name</label>
+          <input type="text" id="ms-plan-name" class="ms-input" placeholder="e.g. T2 Cruisers">
+        </div>
+
+        <label class="ms-input-label ms-field-label-spaced" for="ms-plan-runs">Runs per blueprint</label>
+        <input type="number" id="ms-plan-runs" class="ms-input ms-input-mono" min="1" step="1" value="1">
+      </div>
+      <div class="modal-footer">
+        <button type="button" id="ms-plan-cancel" class="btn btn-secondary btn-sm">Cancel</button>
+        <button type="button" id="ms-plan-confirm" class="btn btn-primary btn-sm">Add</button>
+      </div>
+    </div>
+  </div>
+
+</div>

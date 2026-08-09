@@ -1,0 +1,2396 @@
+/*
+  Manufacturing Plans view styles.
+
+  Scoped under #mp-view so nothing leaks into the shell or another view.
+  Shared pieces (buttons, badges, modals, .qf-input, .qf-scroll, QFSearchSelect)
+  come from shared/components.css - only this screen's own styles live here.
+
+  Ported from "Manufacturing Plans (1a).dc.html".
+
+  Binding rules that apply here (CLAUDE.md "UI Redesign Conventions"):
+    - rule 1/3: row and tab highlights toggle a class whose CSS is box-shadow
+      only, and every conditional style sets the same properties in both
+      branches
+    - rule 4/6: inputs use --qf-surface-sunken and keep box-sizing: border-box
+    - rule 6a: `hidden` loses to any explicit display, so the catch-all below
+      is required - several elements here are flex/grid AND toggled via hidden
+*/
+
+/* rule 6a - keep this first and do not remove it. */
+#mp-view [hidden] {
+  display: none !important;
+}
+
+#mp-view.mp-root {
+  display: flex;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* ------------------------------------------------------------ sidebar */
+
+#mp-view .mp-sidebar {
+  width: 288px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: rgba(0, 0, 0, 0.22);
+  border-right: 1px solid var(--qf-border);
+}
+
+#mp-view .mp-sidebar-head {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  padding: 12px 12px 10px;
+  border-bottom: 1px solid var(--qf-border-subtle);
+}
+
+#mp-view .mp-character-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+#mp-view .mp-character-portrait img {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  object-fit: cover;
+  /* Gold marks the DEFAULT character, consistently with the rest of the app. */
+  border: 1.5px solid var(--qf-gold);
+}
+
+#mp-view .mp-character-host {
+  flex: 1;
+  min-width: 0;
+}
+
+#mp-view .mp-new-plan {
+  width: 100%;
+  justify-content: center;
+}
+
+#mp-view .mp-sidebar-filters {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  padding: 10px 12px 8px;
+}
+
+#mp-view .mp-status-filters {
+  display: flex;
+  gap: 4px;
+}
+
+/* Both states set the same properties so a deselected filter fully resets. */
+#mp-view .mp-status-filter {
+  flex: 1;
+  padding: 4px 0;
+  border: 1px solid transparent;
+  border-radius: var(--qf-radius-sm);
+  background-color: transparent;
+  color: var(--qf-text-muted);
+  font-size: 11px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+#mp-view .mp-status-filter.is-active {
+  border-color: var(--qf-border-active);
+  background-color: var(--qf-accent-dim);
+  color: var(--qf-accent);
+}
+
+#mp-view .mp-plans-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 4px 8px 12px;
+}
+
+/* Plan card. Selection is box-shadow only (rule 1) - a background set on a
+   card selected on first paint does not clear reliably. */
+#mp-view .mp-plan-card {
+  padding: 10px 11px;
+  border: 1px solid var(--qf-border);
+  border-radius: var(--qf-radius-md);
+  background-color: transparent;
+  box-shadow: none;
+  cursor: pointer;
+  text-align: left;
+  width: 100%;
+  font-family: inherit;
+}
+
+#mp-view .mp-plan-card:hover {
+  border-color: var(--qf-border-active);
+}
+
+#mp-view .mp-plan-card.is-selected {
+  border-color: var(--qf-border-active);
+  box-shadow: inset 0 0 0 200px var(--qf-accent-dim), inset 3px 0 0 var(--qf-accent);
+}
+
+#mp-view .mp-plan-card-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+#mp-view .mp-plan-card-name {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--qf-text-heading);
+  line-height: 1.25;
+}
+
+#mp-view .mp-drift-chip {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 7px;
+  border-radius: var(--qf-radius-pill);
+  background: var(--qf-warning-dim);
+  color: var(--qf-warning);
+  font-size: 9px;
+  font-weight: 700;
+}
+
+#mp-view .mp-plan-card-mid {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+#mp-view .mp-plan-card-bottom {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 7px;
+  font-size: 11px;
+  color: var(--qf-text-faint);
+}
+
+#mp-view .mp-plan-card-product {
+  font-size: 11px;
+  color: var(--qf-text-faint);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* --------------------------------------------------------- status badges */
+
+#mp-view .mp-status-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: var(--qf-radius-pill);
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--qf-text-muted);
+  background: var(--qf-surface);
+}
+
+#mp-view .mp-status-badge[data-status="active"] {
+  color: var(--qf-success);
+  background: var(--qf-success-dim);
+}
+
+#mp-view .mp-status-badge[data-status="completed"] {
+  color: var(--qf-accent);
+  background: var(--qf-accent-dim);
+}
+
+/* --------------------------------------------------------------- main */
+
+#mp-view .mp-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+#mp-view .mp-empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  color: var(--qf-text-faint);
+  text-align: center;
+}
+
+#mp-view .mp-empty svg {
+  opacity: 0.3;
+}
+
+#mp-view .mp-empty p {
+  margin: 0;
+  font-size: 13.5px;
+}
+
+#mp-view .mp-detail {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* -------------------------------------------------------- plan header */
+
+#mp-view .mp-plan-header {
+  flex-shrink: 0;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 15px 22px 14px;
+  border-bottom: 1px solid var(--qf-border-subtle);
+}
+
+#mp-view .mp-plan-title-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+#mp-view .mp-plan-name {
+  margin: 0;
+  font-size: 21px;
+  font-weight: 700;
+  color: var(--qf-text-heading);
+  letter-spacing: -0.3px;
+}
+
+#mp-view .mp-plan-meta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 8px;
+  flex-wrap: wrap;
+}
+
+#mp-view .mp-meta-text {
+  font-size: 12px;
+  color: var(--qf-text-faint);
+}
+
+#mp-view .mp-meta-sep {
+  color: var(--qf-text-faint);
+  font-size: 12px;
+}
+
+#mp-view .mp-locked-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+#mp-view .mp-plan-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+#mp-view .mp-icon-btn {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border: 1px solid var(--qf-border);
+  border-radius: var(--qf-radius-sm);
+  background-color: transparent;
+  color: var(--qf-text-faint);
+  cursor: pointer;
+}
+
+#mp-view .mp-icon-btn:hover {
+  border-color: var(--qf-border-active);
+  background-color: var(--qf-surface);
+  color: var(--qf-accent);
+}
+
+#mp-view .mp-icon-btn-danger:hover {
+  border-color: rgba(239, 75, 91, 0.4);
+  color: var(--qf-error);
+}
+
+/* ---------------------------------------------------------- tab strip */
+
+#mp-view .mp-tabstrip {
+  height: 40px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: stretch;
+  overflow-x: auto;
+  overflow-y: hidden;
+  background: rgba(0, 0, 0, 0.25);
+  border-bottom: 1px solid var(--qf-border);
+  /* Scrollable but without a visible bar - the strip is only 40px tall and a
+     scrollbar would eat a third of it. */
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+#mp-view .mp-tabstrip::-webkit-scrollbar {
+  height: 0;
+  width: 0;
+  display: none;
+}
+
+/* Per the mockup: dividers between tabs, an INSET TOP accent on the active
+   one, and a gradient background rather than an underline.
+   Symmetric - both states set background-image, box-shadow and color so
+   nothing sticks (rule 3). Padding is 11px rather than the mockup's 16px:
+   this plan has 12 tabs and the wider spacing overflowed a normal window. */
+#mp-view .tab-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 11px;
+  flex-shrink: 0;
+  border: none;
+  border-right: 1px solid var(--qf-border);
+  background-color: transparent;
+  background-image: none;
+  box-shadow: none;
+  color: var(--qf-text-muted);
+  font-size: 12.5px;
+  font-weight: 600;
+  font-family: inherit;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+#mp-view .tab-button.active {
+  background-color: transparent;
+  background-image: var(--qf-bg-app-gradient);
+  box-shadow: inset 0 2px 0 var(--qf-accent);
+  color: var(--qf-text-heading);
+}
+
+#mp-view .tab-button:hover:not(.active) {
+  color: var(--qf-text-primary);
+}
+
+#mp-view .mp-tab-badge {
+  padding: 1px 6px;
+  border-radius: var(--qf-radius-pill);
+  background: var(--qf-warning-dim);
+  color: var(--qf-warning);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+/* ------------------------------------------------------------- panels */
+
+#mp-view .tab-panel {
+  display: none;
+}
+
+/* A panel is a flex CHILD of .mp-detail, so it needs flex:1 and min-height:0
+   to be bounded by the viewport. Without both it sizes to its content and the
+   overflow rules below never engage - which is why no tab scrolled. */
+#mp-view .tab-panel.active {
+  display: block;
+  flex: 1;
+  min-height: 0;
+}
+
+#mp-view .mp-panel {
+  overflow-y: auto;
+  padding: 20px 22px;
+}
+
+/* Flush panels own their internal scrolling (a sticky header plus a scrolling
+   body), so the panel itself must not scroll. */
+#mp-view .mp-panel-flush.active {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 0;
+}
+
+#mp-view .mp-pending {
+  padding: 40px 0;
+  color: var(--qf-text-faint);
+  font-size: 13px;
+  text-align: center;
+}
+
+/* -------------------------------------------------------------- cards */
+
+#mp-view .mp-card {
+  background: var(--qf-bg-elevated);
+  border: 1px solid var(--qf-border);
+  border-radius: var(--qf-radius-lg);
+  overflow: hidden;
+}
+
+#mp-view .mp-card-accent {
+  height: 2px;
+  background: var(--qf-accent-gradient-h);
+}
+
+#mp-view .mp-card-body {
+  padding: 16px 18px;
+}
+
+#mp-view .mp-section-label {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--qf-text-faint);
+  font-weight: 700;
+  margin-bottom: 10px;
+}
+
+/* ----------------------------------------------------------- overview */
+
+#mp-view .mp-drift-banner {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  padding: 13px 16px;
+  margin-bottom: 18px;
+  background: var(--qf-warning-dim);
+  border: 1px solid rgba(255, 152, 0, 0.35);
+  border-radius: var(--qf-radius-md);
+}
+
+#mp-view .mp-drift-banner-text {
+  flex: 1;
+  min-width: 0;
+}
+
+#mp-view .mp-drift-banner-head {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--qf-text-heading);
+}
+
+#mp-view .mp-drift-banner-sub {
+  font-size: 12px;
+  color: var(--qf-text-muted);
+  margin-top: 2px;
+}
+
+#mp-view .mp-stat-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+@media (max-width: 1000px) {
+  #mp-view .mp-stat-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+#mp-view .mp-stat-label {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--qf-text-faint);
+  font-weight: 700;
+}
+
+#mp-view .mp-stat-locked {
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--qf-accent);
+  font-weight: 600;
+}
+
+#mp-view .mp-stat-value {
+  margin-top: 8px;
+  font-size: 27px;
+  font-weight: 700;
+  color: var(--qf-text-heading);
+  font-family: var(--qf-font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+#mp-view .mp-stat-meta {
+  margin-top: 4px;
+  font-size: 11.5px;
+  color: var(--qf-text-faint);
+}
+
+#mp-view .mp-stat-drift {
+  margin-top: 8px;
+  font-size: 11.5px;
+  color: var(--qf-text-muted);
+}
+
+#mp-view .mp-description {
+  margin: 0;
+  font-size: 13.5px;
+  color: var(--qf-text-muted);
+  line-height: 1.6;
+  max-width: 720px;
+}
+
+/* ---------------------------------------------------------- materials */
+
+#mp-view .mp-materials-head {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 14px 22px 12px;
+}
+
+#mp-view .mp-materials-title {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+#mp-view .mp-materials-title h3 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--qf-text-heading);
+}
+
+#mp-view .mp-locked-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 4px 11px;
+  border-radius: var(--qf-radius-pill);
+  background: var(--qf-accent-dim);
+  border: 1px solid var(--qf-border-active);
+  color: var(--qf-accent);
+  font-size: 11.5px;
+  font-weight: 600;
+}
+
+#mp-view .mp-materials-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+#mp-view .mp-live-vs {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px 4px 11px;
+  background: var(--qf-surface);
+  border: 1px solid var(--qf-border);
+  border-radius: var(--qf-radius-md);
+}
+
+#mp-view .mp-live-vs-label {
+  font-size: 9.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--qf-text-faint);
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+#mp-view .mp-market-host {
+  width: 150px;
+}
+
+#mp-view .mp-checkbox-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  color: var(--qf-text-muted);
+  cursor: pointer;
+}
+
+#mp-view .mp-checkbox-label input {
+  width: 15px;
+  height: 15px;
+  accent-color: var(--qf-accent);
+  cursor: pointer;
+}
+
+#mp-view .mp-materials-note {
+  flex-shrink: 0;
+  margin: 0 0 12px;
+  padding: 0 22px;
+  font-size: 12.5px;
+  color: var(--qf-text-muted);
+  max-width: 900px;
+  line-height: 1.5;
+}
+
+#mp-view .mp-materials-note strong {
+  color: var(--qf-text-primary);
+}
+
+/* The materials scroller. `min-width: 0` matters as much as min-height: a
+   flex item defaults to min-width:auto, which refuses to shrink below its
+   content - so a wide table would stretch this box instead of scrolling
+   inside it. */
+#mp-view .mp-materials-scroll {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  overflow: auto;
+  padding: 0 22px 18px;
+}
+
+/* Card chrome lives on a wrapper so the <table> itself stays a plain table -
+   border-radius on a table element clips its own borders.
+
+   NO overflow: hidden here. The scroll container is .mp-materials-scroll
+   outside it, and clipping at this level meant anything wider than the frame
+   was simply cut off with no way to scroll to it. `width: max-content` makes
+   the frame grow to the table rather than pinning it to the pane. */
+#mp-view .mp-materials-frame {
+  width: max-content;
+  min-width: 100%;
+  background: var(--qf-bg-elevated);
+  border: 1px solid var(--qf-border);
+  border-radius: var(--qf-radius-md);
+}
+
+/* A REAL table, because this is tabular data. The browser sizes each column
+   across every row at once - the one thing per-row grids cannot do, and the
+   reason column alignment kept fighting us here.
+
+   table-layout: auto lets each column take what its content needs; only the
+   name column is capped (below), so a long name ellipses instead of pushing
+   the figures off screen. */
+#mp-view .mp-materials-table {
+  /* Fills the pane when the content is narrow, and grows past it when the
+     content is wide - .mp-materials-scroll then scrolls to reach the rest. */
+  width: 100%;
+  min-width: max-content;
+  border-collapse: collapse;
+  table-layout: auto;
+}
+
+#mp-view .mp-materials-table th,
+#mp-view .mp-materials-table td {
+  padding: 11px 10px;
+  font-size: 12.5px;
+  vertical-align: middle;
+  border-bottom: 1px solid var(--qf-border-subtle);
+}
+
+/* Row height is set by the acquisition column, which stacks its pills. This
+   floor keeps a one-pill row from sitting noticeably shorter than a
+   two-pill one beside it. */
+#mp-view .mp-materials-table tbody tr.mp-materials-row {
+  height: 46px;
+}
+
+#mp-view .mp-materials-table th:first-child,
+#mp-view .mp-materials-table td:first-child {
+  padding-left: 18px;
+}
+
+#mp-view .mp-materials-table th:last-child,
+#mp-view .mp-materials-table td:last-child {
+  padding-right: 18px;
+}
+
+/* Figures should not wrap - they are short and reading them across a wrapped
+   line is worse than a slightly wider column. */
+#mp-view .mp-materials-table td.mp-mono,
+#mp-view .mp-materials-table th.mp-right {
+  white-space: nowrap;
+}
+
+/* The only capped column: long names ellipsis (with the full name on hover)
+   rather than crowding out the figures. */
+#mp-view .mp-materials-table .mp-col-name {
+  max-width: 320px;
+}
+
+#mp-view .mp-owned-cell {
+  color: var(--qf-text-muted);
+}
+
+/* Signals the hover breakdown is there - a bare number gives no hint. */
+#mp-view .mp-has-tooltip {
+  cursor: help;
+  text-decoration: underline dotted var(--qf-border-active);
+  text-underline-offset: 3px;
+}
+
+#mp-view .mp-materials-table thead th {
+  padding-top: 10px;
+  padding-bottom: 10px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--qf-text-faint);
+  font-weight: 700;
+  text-align: left;
+  white-space: nowrap;
+  border-bottom: 1px solid var(--qf-border);
+}
+
+#mp-view .mp-materials-table thead th.mp-right {
+  text-align: right;
+}
+
+#mp-view .mp-materials-table thead th.mp-center {
+  text-align: center;
+}
+
+#mp-view .mp-materials-table tfoot td {
+  padding-top: 13px;
+  padding-bottom: 13px;
+  background: rgba(0, 0, 0, 0.25);
+  border-bottom: none;
+}
+
+#mp-view .mp-total-label {
+  color: var(--qf-text-heading);
+  font-weight: 700;
+}
+
+#mp-view .mp-total-value {
+  color: var(--qf-text-heading);
+  font-weight: 700;
+}
+
+/* A group heading spans every column, and its cell adds no padding of its
+   own - the button inside supplies it and fills the row. */
+#mp-view .mp-materials-table .mp-mat-group-row > td,
+#mp-view .mp-materials-table .mp-materials-empty > td {
+  padding: 0;
+}
+
+/* Category group header - collapsible. */
+#mp-view .mp-mat-group {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 9px 18px;
+  background: rgba(0, 0, 0, 0.22);
+  border-bottom: 1px solid var(--qf-border);
+  cursor: pointer;
+  width: 100%;
+  border-left: none;
+  border-right: none;
+  border-top: none;
+  font-family: inherit;
+}
+
+#mp-view .mp-mat-group-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  font-weight: 700;
+  color: var(--qf-text-primary);
+}
+
+#mp-view .mp-mat-group-chev {
+  transition: transform 0.12s ease;
+}
+
+#mp-view .mp-mat-group.is-collapsed .mp-mat-group-chev {
+  transform: rotate(0deg);
+}
+
+#mp-view .mp-mat-group:not(.is-collapsed) .mp-mat-group-chev {
+  transform: rotate(90deg);
+}
+
+#mp-view .mp-mat-group-count {
+  padding: 1px 8px;
+  border-radius: var(--qf-radius-pill);
+  background: var(--qf-surface);
+  border: 1px solid var(--qf-border);
+  color: var(--qf-text-faint);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+#mp-view .mp-mat-group-totals {
+  display: inline-flex;
+  align-items: center;
+  gap: 16px;
+  font-family: var(--qf-font-mono);
+  font-size: 11.5px;
+  color: var(--qf-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* `flex`, not `inline-flex`: an inline-flex sizes to its content and refused
+   to shrink, so the icon plus a long name overflowed the cell and printed
+   over the next column. As a block-level flex it fills the cell and its text
+   child ellipses instead. */
+#mp-view .mp-mat-name {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+  color: var(--qf-text-primary);
+}
+
+#mp-view .mp-mat-name span {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+#mp-view .mp-mat-icon {
+  width: 24px;
+  height: 24px;
+  flex-shrink: 0;
+  border-radius: var(--qf-radius-sm);
+  background: var(--qf-surface-sunken);
+  object-fit: cover;
+}
+
+/* ---- drift ----
+   Symmetric by design: every variant sets color AND background-color, so
+   switching between them cannot leave a stale tint (rule 3). */
+#mp-view .mp-drift {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: var(--qf-radius-pill);
+  font-size: 11px;
+  font-weight: 700;
+  font-family: var(--qf-font-mono);
+  color: var(--qf-text-faint);
+  background-color: var(--qf-surface);
+}
+
+#mp-view .mp-drift.is-up {
+  color: var(--qf-error);
+  background-color: var(--qf-error-dim);
+}
+
+#mp-view .mp-drift.is-down {
+  color: var(--qf-success);
+  background-color: var(--qf-success-dim);
+}
+
+#mp-view .mp-drift.is-flat {
+  color: var(--qf-text-faint);
+  background-color: var(--qf-surface);
+}
+
+/* Acquisition pills */
+/* Pills STACK rather than sitting side by side. A row of them - even a
+   wrapping one - makes the column as wide as the widest LINE, so two pills
+   doubled the column width for every row in the table. Stacked, the column
+   only has to fit the widest single pill, and the extra height costs
+   nothing: rows are far shorter than they are wide. */
+#mp-view .mp-acq-cell {
+  display: flex;
+  flex-direction: column;
+  /* Centres each pill AND stops it stretching to the column width. */
+  align-items: center;
+  gap: 3px;
+}
+
+#mp-view .mp-acq-none {
+  font-size: 10.5px;
+  color: var(--qf-text-faint);
+  font-style: italic;
+}
+
+#mp-view .mp-acq-pill {
+  padding: 1px 7px;
+  border-radius: var(--qf-radius-pill);
+  font-size: 10px;
+  font-weight: 700;
+  white-space: nowrap;
+  cursor: help;
+}
+
+/* A MANUAL ledger entry: how the user recorded obtaining this. Outlined,
+   because it is an assertion by the user rather than an observed fact. */
+#mp-view .mp-acq-pill.mp-acq-manual {
+  background: transparent;
+  border: 1px solid var(--qf-border-active);
+  color: var(--qf-text-muted);
+  text-transform: capitalize;
+}
+
+/* A CONFIRMED ESI record - a real wallet transaction or industry job matched
+   to this material. Filled, because it is corroborated. */
+#mp-view .mp-acq-pill.mp-acq-esi {
+  background: var(--qf-accent-dim);
+  border: 1px solid transparent;
+  color: var(--qf-accent);
+}
+
+/* ------------------------------------------------- build list & friends */
+
+#mp-view .mp-buildlist-head {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 14px 22px 12px;
+}
+
+#mp-view .mp-buildlist-head h3 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--qf-text-heading);
+}
+
+#mp-view .mp-buildlist-hint {
+  font-size: 12px;
+  color: var(--qf-text-faint);
+}
+
+#mp-view .mp-spacer {
+  flex: 1;
+}
+
+/* Scrolls in BOTH directions: wide tables should be reachable by scrolling
+   sideways rather than being clipped at the window edge. */
+#mp-view .mp-buildlist-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 4px 22px 20px;
+}
+
+/* Sections must not shrink below their table's natural width, or the columns
+   compress instead of the container scrolling. */
+#mp-view .mp-buildlist-scroll > .mp-section {
+  flex-shrink: 0;
+  min-width: min-content;
+}
+
+#mp-view .mp-bulk-banner {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 22px 4px;
+  padding: 9px 14px;
+  background: var(--qf-accent-dim);
+  border: 1px solid var(--qf-border-active);
+  border-radius: var(--qf-radius-md);
+}
+
+#mp-view .mp-bulk-banner-text {
+  font-size: 12.5px;
+  color: var(--qf-text-heading);
+  font-weight: 500;
+}
+
+#mp-view .mp-bulk-count {
+  font-size: 11.5px;
+  color: var(--qf-accent);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- section card ---- */
+
+#mp-view .mp-section {
+  background: var(--qf-bg-elevated);
+  border: 1px solid var(--qf-border);
+  border-radius: var(--qf-radius-lg);
+  overflow: hidden;
+}
+
+#mp-view .mp-section-head {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 12px 18px;
+  border-bottom: 1px solid var(--qf-border);
+}
+
+#mp-view .mp-section-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--qf-text-heading);
+}
+
+#mp-view .mp-section-count {
+  padding: 1px 8px;
+  border-radius: var(--qf-radius-pill);
+  background: var(--qf-surface);
+  border: 1px solid var(--qf-border);
+  color: var(--qf-text-faint);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+/* No inner scroller: the panel's scroll container handles both axes, so a
+   nested overflow here would produce a second horizontal scrollbar and clip
+   the header inside it. */
+#mp-view .mp-section-scroll {
+  overflow: visible;
+}
+
+#mp-view .mp-section-table {
+  min-width: 1000px;
+}
+
+/* ---- build list rows ---- */
+
+/* Build Plan narrowed from 1.3fr and Actions from 1.15fr: the badge needs far
+   less room than a full dropdown, and the surplus was pushing Actions off to
+   the right. */
+#mp-view .mp-build-row {
+  display: grid;
+  grid-template-columns: 2.5fr 0.6fr 0.8fr 0.7fr 0.55fr 0.55fr 1.5fr 1fr 0.8fr;
+  column-gap: 12px;
+  align-items: center;
+  padding: 10px 18px;
+  font-size: 12.5px;
+  border-bottom: 1px solid var(--qf-border-subtle);
+}
+
+/* Every grid cell must be allowed to shrink, or a long value widens its track
+   and truncation never kicks in. */
+#mp-view .mp-build-row > * {
+  min-width: 0;
+}
+
+#mp-view .mp-build-header {
+  padding: 9px 18px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--qf-text-faint);
+  font-weight: 700;
+}
+
+#mp-view .mp-build-item {
+  min-width: 0;
+}
+
+#mp-view .mp-build-item-main {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+  max-width: 100%;
+}
+
+#mp-view .mp-build-item-name {
+  color: var(--qf-text-heading);
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Editable Build List dropdowns. Native selects: the OS draws the open list,
+   so it can extend past the column rather than being squeezed inside it. */
+#mp-view .mp-row-select {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 3px 6px;
+  font-size: 11.5px;
+  background-color: var(--qf-surface-sunken);
+  border: 1px solid var(--qf-border);
+  border-radius: var(--qf-radius-md);
+  color: var(--qf-text-primary);
+}
+
+/* Compact numeric editors used inside build rows (rule 4: sunken bg). */
+#mp-view .mp-build-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 3px 6px;
+  font-size: 12px;
+  text-align: right;
+  background: var(--qf-surface-sunken);
+  border: 1px solid var(--qf-border);
+  border-radius: var(--qf-radius-sm);
+  color: var(--qf-text-heading);
+  font-family: var(--qf-font-mono);
+}
+
+#mp-view .mp-build-input:focus {
+  outline: none;
+  border-color: var(--qf-border-active);
+}
+
+#mp-view .mp-build-static {
+  font-family: var(--qf-font-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--qf-text-muted);
+}
+
+#mp-view .mp-build-facility {
+  min-width: 0;
+  color: var(--qf-text-muted);
+  font-size: 11.5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+#mp-view .mp-build-actions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  font-size: 11.5px;
+  font-weight: 600;
+}
+
+#mp-view .mp-link-action {
+  border: none;
+  background: none;
+  padding: 0;
+  font-family: inherit;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--qf-accent);
+  cursor: pointer;
+}
+
+#mp-view .mp-link-action.mp-link-muted {
+  color: var(--qf-text-muted);
+}
+
+#mp-view .mp-link-action.mp-link-danger {
+  color: var(--qf-error);
+}
+
+/* Build-plan badge (raw materials / components / buy). */
+#mp-view .mp-plan-badge {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: var(--qf-radius-pill);
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--qf-text-muted);
+  background-color: var(--qf-surface);
+}
+
+#mp-view .mp-plan-badge[data-plan="raw_materials"] {
+  color: var(--qf-accent);
+  background-color: var(--qf-accent-dim);
+}
+
+#mp-view .mp-plan-badge[data-plan="buy"] {
+  color: var(--qf-warning);
+  background-color: var(--qf-warning-dim);
+}
+
+/* Instances of this type disagree - not a value, a state. */
+#mp-view .mp-plan-badge[data-plan="mixed"] {
+  color: var(--qf-text-faint);
+  background-color: transparent;
+  border: 1px dashed var(--qf-border);
+}
+
+/* ---- blueprint tree ---- */
+
+#mp-view .mp-tree-node {
+  border-bottom: 1px solid var(--qf-border-subtle);
+}
+
+#mp-view .mp-tree-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 8px 18px;
+  font-size: 12.5px;
+  color: var(--qf-text-primary);
+}
+
+#mp-view .mp-tree-name {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+#mp-view .mp-tree-qty {
+  font-family: var(--qf-font-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--qf-text-muted);
+}
+
+/* -------------------------------------------------- products & matches */
+
+#mp-view .mp-product-row {
+  display: grid;
+  grid-template-columns: 2.4fr 0.9fr 1fr 1.1fr 1.2fr;
+  column-gap: 14px;
+  align-items: center;
+  padding: 10px 18px;
+  font-size: 12.5px;
+  border-bottom: 1px solid var(--qf-border-subtle);
+}
+
+#mp-view .mp-product-row > * {
+  min-width: 0;
+}
+
+/* Jobs: Blueprint, Character, Job ID, Runs, Status, Facility, Started,
+   Conf., Actions. */
+#mp-view .mp-job-row {
+  display: grid;
+  grid-template-columns: 1.9fr 1fr 0.8fr 0.55fr 0.95fr 1.7fr 1fr 0.9fr 1.05fr;
+  column-gap: 12px;
+  align-items: center;
+  padding: 10px 18px;
+  font-size: 12.5px;
+  border-bottom: 1px solid var(--qf-border-subtle);
+}
+
+#mp-view .mp-job-row > * {
+  min-width: 0;
+}
+
+/* Transactions: Item, Character, Tx ID, Date, Qty, Price, Total, Type,
+   Conf., Actions. */
+#mp-view .mp-tx-row {
+  display: grid;
+  grid-template-columns: 1.7fr 1fr 0.9fr 1.1fr 0.75fr 0.9fr 1fr 0.7fr 0.8fr 1.05fr;
+  column-gap: 12px;
+  align-items: center;
+  padding: 10px 18px;
+  font-size: 12.5px;
+  border-bottom: 1px solid var(--qf-border-subtle);
+}
+
+#mp-view .mp-tx-row > * {
+  min-width: 0;
+}
+
+/* Job status. Every variant sets colour AND background so switching between
+   them cannot leave a stale tint (rule 3). */
+#mp-view .mp-job-status {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: var(--qf-radius-pill);
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--qf-text-muted);
+  background-color: var(--qf-surface);
+}
+
+#mp-view .mp-job-status[data-status="active"] {
+  color: var(--qf-accent);
+  background-color: var(--qf-accent-dim);
+}
+
+#mp-view .mp-job-status[data-status="delivered"] {
+  color: var(--qf-success);
+  background-color: var(--qf-success-dim);
+}
+
+#mp-view .mp-job-status[data-status="cancelled"] {
+  color: var(--qf-error);
+  background-color: var(--qf-error-dim);
+}
+
+/* Buy is money out, sell money in. */
+#mp-view .mp-tx-type {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: var(--qf-radius-pill);
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--qf-text-muted);
+  background-color: var(--qf-surface);
+}
+
+#mp-view .mp-tx-type[data-tx-type="buy"] {
+  color: var(--qf-error);
+  background-color: var(--qf-error-dim);
+}
+
+#mp-view .mp-tx-type[data-tx-type="sell"] {
+  color: var(--qf-success);
+  background-color: var(--qf-success-dim);
+}
+
+/* Blueprints tab: what the plan contains, read-only. */
+#mp-view .mp-bp-row {
+  display: grid;
+  grid-template-columns: 2.6fr 0.7fr 0.9fr 0.5fr 0.5fr 1.5fr 1.1fr 1.2fr;
+  column-gap: 12px;
+  align-items: center;
+  padding: 10px 18px;
+  font-size: 12.5px;
+  border-bottom: 1px solid var(--qf-border-subtle);
+}
+
+#mp-view .mp-bp-name-cell {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+/* Sits under the name, aligned past the tree marker and icon. Badges live
+   here too - beside the name they ate the width the name needed. */
+#mp-view .mp-bp-subline {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 3px;
+  margin-left: 28px;
+  min-width: 0;
+}
+
+#mp-view .mp-bp-produces {
+  font-size: 11px;
+  color: var(--qf-text-faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+#mp-view .mp-bp-row > * {
+  min-width: 0;
+}
+
+/* Indent by tree depth. Padding on the row's FIRST cell rather than the row
+   itself, so only the name column shifts and every other column stays aligned
+   down the table. */
+#mp-view .mp-bp-row > .mp-bp-name-cell {
+  padding-left: calc(var(--mp-depth, 0) * 18px);
+}
+
+#mp-view .mp-bp-intermediate {
+  background-color: var(--qf-surface-sunken);
+}
+
+#mp-view .mp-tree-marker {
+  color: var(--qf-text-faint);
+  font-family: var(--qf-font-mono);
+  flex-shrink: 0;
+}
+
+#mp-view .mp-built-badge {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  padding: 1px 7px;
+  border-radius: var(--qf-radius-pill);
+  font-size: 9.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  white-space: nowrap;
+  color: var(--qf-warning);
+  background-color: var(--qf-warning-dim);
+}
+
+/* Green only at 100% - partial progress is still outstanding work. */
+#mp-view .mp-built-badge.mp-built-full {
+  color: var(--qf-success);
+  background-color: var(--qf-success-dim);
+}
+
+#mp-view .mp-built-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+#mp-view .mp-built-item-meta {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+#mp-view .mp-built-item-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--qf-text-heading);
+}
+
+#mp-view .mp-built-item-total {
+  font-size: 12px;
+  color: var(--qf-text-muted);
+}
+
+#mp-view .mp-built-quick {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+#mp-view .mp-built-progress-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 16px;
+}
+
+#mp-view .mp-built-pct {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--qf-accent);
+}
+
+#mp-view .mp-built-bar {
+  height: 6px;
+  margin-top: 6px;
+  border-radius: var(--qf-radius-pill);
+  background-color: var(--qf-surface-sunken);
+  overflow: hidden;
+}
+
+#mp-view .mp-built-bar-fill {
+  height: 100%;
+  width: 0;
+  background-color: var(--qf-accent);
+  transition: width 0.15s ease;
+}
+
+#mp-view .mp-built-assets {
+  margin-top: 18px;
+  border-top: 1px solid var(--qf-border-subtle);
+  padding-top: 12px;
+}
+
+#mp-view .mp-built-assets-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+#mp-view .mp-built-owned-total {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--qf-text-heading);
+}
+
+#mp-view .mp-built-assets-group {
+  margin-top: 10px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--qf-text-muted);
+}
+
+#mp-view .mp-built-asset-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  column-gap: 12px;
+  padding: 3px 0;
+  font-size: 12px;
+}
+
+#mp-view .mp-built-asset-row > * {
+  min-width: 0;
+}
+
+#mp-view .mp-built-no-assets {
+  margin-top: 6px;
+  font-size: 12px;
+}
+
+/* Reactions are CARDS, not table rows: each is a chain with its own inputs,
+   so a flat table could not show what feeds what. */
+#mp-view .mp-tab-note {
+  padding: 0 4px 12px;
+  font-size: 12px;
+  color: var(--qf-text-faint);
+}
+
+#mp-view .mp-reaction-card {
+  margin-bottom: 14px;
+}
+
+#mp-view .mp-reaction-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--qf-border);
+}
+
+#mp-view .mp-reaction-info {
+  min-width: 0;
+}
+
+#mp-view .mp-reaction-title {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+#mp-view .mp-reaction-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--qf-text-heading);
+}
+
+#mp-view .mp-reaction-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 22px;
+  margin-top: 11px;
+}
+
+#mp-view .mp-reaction-stat {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+#mp-view .mp-reaction-stat-label {
+  font-size: 9.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--qf-text-faint);
+}
+
+#mp-view .mp-reaction-stat-value {
+  font-family: var(--qf-font-mono);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--qf-text-heading);
+}
+
+#mp-view .mp-reaction-stat-accent {
+  color: var(--qf-accent);
+}
+
+#mp-view .mp-reaction-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 22px;
+  margin-top: 11px;
+  font-size: 12px;
+}
+
+#mp-view .mp-reaction-meta-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+#mp-view .mp-reaction-built {
+  flex-shrink: 0;
+}
+
+/* The tree scrolls sideways on its own so the card never widens the page. */
+#mp-view .mp-reaction-tree-scroll {
+  overflow-x: auto;
+}
+
+#mp-view .mp-reaction-tree {
+  min-width: 560px;
+  padding: 6px 0;
+}
+
+#mp-view .mp-reaction-node {
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr) auto auto auto auto;
+  align-items: center;
+  column-gap: 9px;
+  padding: 7px 18px;
+  padding-left: calc(18px + var(--mp-depth, 0) * 22px);
+  font-size: 12.5px;
+  border-bottom: 1px solid var(--qf-border-subtle);
+}
+
+#mp-view .mp-reaction-node > * {
+  min-width: 0;
+}
+
+#mp-view .mp-node-glyph {
+  font-size: 12px;
+  text-align: center;
+}
+
+#mp-view .mp-node-name {
+  color: var(--qf-text-heading);
+}
+
+#mp-view .mp-node-runs,
+#mp-view .mp-node-qty {
+  font-size: 11px;
+}
+
+/* Always present, often empty - it holds the column open so the quantity
+   stays aligned whether or not a node has non-default sourcing. */
+#mp-view .mp-node-sourcing {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+#mp-view .mp-node-badge {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  padding: 1px 7px;
+  border-radius: var(--qf-radius-pill);
+  font-size: 8.5px;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+}
+
+/* Role colours carry the same meaning as everywhere else in the plan:
+   accent = this plan makes it, warning = bought, muted = raw input. */
+#mp-view .mp-node-badge.mp-node-intermediate,
+#mp-view .mp-node-glyph.mp-node-intermediate {
+  color: var(--qf-accent);
+}
+
+#mp-view .mp-node-badge.mp-node-intermediate {
+  background-color: var(--qf-accent-dim);
+}
+
+#mp-view .mp-node-badge.mp-node-manufactured,
+#mp-view .mp-node-glyph.mp-node-manufactured {
+  color: var(--qf-success);
+}
+
+#mp-view .mp-node-badge.mp-node-manufactured {
+  background-color: var(--qf-success-dim);
+}
+
+#mp-view .mp-node-badge.mp-node-raw,
+#mp-view .mp-node-glyph.mp-node-raw {
+  color: var(--qf-text-muted);
+}
+
+#mp-view .mp-node-badge.mp-node-raw {
+  background-color: var(--qf-surface);
+}
+
+/* Material tree: same columns at every depth, with the name cell indenting. */
+#mp-view .mp-tree-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+#mp-view .mp-tree-bar-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding-bottom: 12px;
+}
+
+/* The tree scrolls sideways on its own so nine columns never widen the page. */
+#mp-view .mp-tree-scroll {
+  overflow-x: auto;
+}
+
+#mp-view .mp-tree-body {
+  min-width: 620px;
+}
+
+/* The name is DECOUPLED from its data row and gets this full-width line.
+   Indentation therefore costs the name nothing: a capital-ship tree can
+   nest many levels deep and the name still has the whole card to run in,
+   while the figures below stay in fixed columns and the table never widens
+   as the tree deepens. */
+#mp-view .mp-tree-name-line {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 9px 18px 2px;
+  color: var(--qf-text-heading);
+  font-size: 12.5px;
+}
+
+#mp-view .mp-tree-name-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Figures for the node named directly above. Indented slightly so a row
+   reads as belonging to its name without tracking the full tree depth. */
+#mp-view .mp-tree-grid {
+  display: grid;
+  grid-template-columns: 1fr 0.7fr 0.5fr 1.2fr 1.1fr 1.1fr 0.9fr 0.7fr;
+  column-gap: 12px;
+  align-items: center;
+  padding: 2px 18px 9px 44px;
+  font-size: 12.5px;
+  border-bottom: 1px solid var(--qf-border-subtle);
+}
+
+/* The header labels the columns, so it aligns with the rows, not the names. */
+#mp-view .mp-tree-grid.mp-build-header {
+  padding-top: 9px;
+  padding-bottom: 9px;
+}
+
+#mp-view .mp-tree-caret {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: none;
+  background: none;
+  cursor: pointer;
+  color: var(--qf-text-muted);
+  font-size: 10px;
+}
+
+/* Keeps a leaf's name aligned with the nodes above it. */
+#mp-view .mp-tree-caret-spacer {
+  width: 16px;
+  flex-shrink: 0;
+}
+
+#mp-view .mp-tree-source,
+#mp-view .mp-tree-actions {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+}
+
+#mp-view .mp-tree-actions {
+  justify-content: flex-end;
+}
+
+#mp-view .mp-tree-price {
+  color: var(--qf-accent);
+}
+
+#mp-view .mp-center {
+  text-align: center;
+}
+
+#mp-view .mp-tree-detail {
+  padding: 13px 20px 15px;
+  background-color: var(--qf-surface-sunken);
+  border-bottom: 1px solid var(--qf-border-subtle);
+}
+
+#mp-view .mp-detail-heading {
+  margin: 12px 0 7px;
+  font-size: 9.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--qf-text-faint);
+}
+
+#mp-view .mp-detail-materials {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+#mp-view .mp-detail-material {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  column-gap: 12px;
+  max-width: 420px;
+  font-size: 12px;
+}
+
+#mp-view .mp-detail-material > * {
+  min-width: 0;
+}
+
+#mp-view .mp-tree-grid > * {
+  min-width: 0;
+}
+
+/* A plan-scoped override replaces the market lock - marked so the figure is
+   not mistaken for a market price. */
+#mp-view .mp-overridden {
+  color: var(--qf-warning);
+}
+
+#mp-view .mp-overridden::after {
+  content: ' *';
+  color: var(--qf-warning);
+}
+
+/* Section count badges carry meaning: amber = waiting on you, green = done. */
+#mp-view .mp-section-count.mp-count-warning {
+  color: var(--qf-warning);
+  background-color: var(--qf-warning-dim);
+  border-color: transparent;
+}
+
+#mp-view .mp-section-count.mp-count-success {
+  color: var(--qf-success);
+  background-color: var(--qf-success-dim);
+  border-color: transparent;
+}
+
+/* ------------------------------------------------------------ analytics */
+
+#mp-view .mp-analytics {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+#mp-view .mp-analytics-label {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--qf-text-faint);
+  font-weight: 700;
+}
+
+#mp-view .mp-analytics-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+}
+
+#mp-view .mp-analytics-sub {
+  font-size: 11.5px;
+  color: var(--qf-text-faint);
+}
+
+/* Cards, not stacked bars - the redesign puts each metric in its own card. */
+#mp-view .mp-analytics-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 14px;
+  margin-bottom: 12px;
+}
+
+#mp-view .mp-analytics-grid > .mp-card {
+  min-width: 0;
+}
+
+#mp-view .mp-analytics-card-body {
+  padding: 15px 16px;
+}
+
+#mp-view .mp-progress-card-label {
+  font-size: 12px;
+  color: var(--qf-text-muted);
+  font-weight: 500;
+}
+
+#mp-view .mp-analytics-card-body .mp-progress-track {
+  margin: 12px 0 9px;
+  height: 8px;
+}
+
+#mp-view .mp-progress-card-value {
+  font-size: 12.5px;
+  color: var(--qf-text-heading);
+  font-variant-numeric: tabular-nums;
+}
+
+#mp-view .mp-cost-cat-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 16px 20px;
+}
+
+#mp-view .mp-cost-cat-line {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 6px;
+}
+
+#mp-view .mp-cost-cat-name {
+  font-size: 12.5px;
+  color: var(--qf-text-primary);
+}
+
+#mp-view .mp-cost-cat-value {
+  font-size: 12px;
+  color: var(--qf-text-muted);
+}
+
+#mp-view .mp-progress {
+  margin-bottom: 14px;
+}
+
+#mp-view .mp-progress:last-child {
+  margin-bottom: 0;
+}
+
+#mp-view .mp-progress-track {
+  height: 6px;
+  border-radius: var(--qf-radius-pill);
+  background: var(--qf-surface-sunken);
+  overflow: hidden;
+}
+
+#mp-view .mp-progress-fill {
+  height: 100%;
+  border-radius: var(--qf-radius-pill);
+  background: var(--qf-accent-gradient-h);
+}
+
+#mp-view .mp-compare-rows {
+  margin-top: 10px;
+}
+
+#mp-view .mp-compare-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 5px 0;
+  font-size: 12.5px;
+}
+
+#mp-view .mp-compare-delta {
+  margin-top: 4px;
+  padding-top: 8px;
+  border-top: 1px solid var(--qf-border-subtle);
+  font-weight: 600;
+}
+
+/* --------------------------------------------------------------- ledger */
+
+#mp-view .mp-ledger-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 12px;
+}
+
+/* Grid children default to min-width:auto, which lets a long value force the
+   track wider than its share. This is what pushed values out of the cards. */
+#mp-view .mp-ledger-cards > .mp-card {
+  min-width: 0;
+}
+
+#mp-view .mp-ledger-card-body {
+  padding: 13px 14px;
+}
+
+/* ISK figures run long and the cards are narrow. cqi units scale the value
+   against the CARD's own width rather than the viewport's, so a card in a
+   4-up row shrinks its text while the same card in a 2-up row does not - which
+   viewport units cannot express. */
+#mp-view .mp-ledger-cards > .mp-card {
+  container-type: inline-size;
+}
+
+#mp-view .mp-ledger-value {
+  margin-top: 8px;
+  font-size: clamp(11px, 9cqi, 18px);
+  font-weight: 700;
+  color: var(--qf-text-heading);
+  font-family: var(--qf-font-mono);
+  font-variant-numeric: tabular-nums;
+  /* Belt and braces: if it still cannot fit, ellipsise rather than spill. */
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#mp-view .mp-ledger-tag {
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: var(--qf-radius-pill);
+  background: var(--qf-warning-dim);
+  color: var(--qf-warning);
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+#mp-view .mp-recon {
+  display: flex;
+  align-items: center;
+  gap: 26px;
+  flex-wrap: wrap;
+  padding: 12px 18px;
+  background: var(--qf-bg-elevated);
+  border: 1px solid var(--qf-border);
+  border-radius: var(--qf-radius-md);
+  font-size: 12.5px;
+}
+
+#mp-view .mp-strong {
+  color: var(--qf-text-heading);
+  font-weight: 600;
+  margin-left: 4px;
+}
+
+#mp-view .mp-ledger-section-left {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+}
+
+#mp-view .mp-ledger-total {
+  font-size: 13px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+#mp-view .mp-ledger-row {
+  display: grid;
+  grid-template-columns: 2fr 1.5fr 1fr 1.5fr 1.1fr 0.9fr;
+  column-gap: 14px;
+  align-items: center;
+  padding: 10px 18px;
+  font-size: 12.5px;
+  border-bottom: 1px solid var(--qf-border-subtle);
+}
+
+/* ------------------------------------------------------------- settings */
+
+#mp-view .mp-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  max-width: 940px;
+}
+
+#mp-view .mp-settings-intro h3 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--qf-text-heading);
+}
+
+#mp-view .mp-settings-intro p {
+  margin: 5px 0 0;
+  font-size: 12.5px;
+  color: var(--qf-text-muted);
+  line-height: 1.5;
+}
+
+#mp-view .mp-settings-intro strong {
+  color: var(--qf-text-primary);
+}
+
+/* Card head: accent icon + title, then an explanation. Matches the redesign's
+   treatment for every settings group. */
+#mp-view .mp-settings-head {
+  padding: 15px 18px 13px;
+  border-bottom: 1px solid var(--qf-border-subtle);
+}
+
+#mp-view .mp-settings-title {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--qf-text-heading);
+}
+
+#mp-view .mp-settings-head p {
+  margin: 7px 0 0;
+  font-size: 12px;
+  color: var(--qf-text-muted);
+  line-height: 1.5;
+}
+
+#mp-view .mp-settings-body {
+  padding: 12px 18px 16px;
+}
+
+
+#mp-view .mp-axis-avatar {
+  width: 22px;
+  height: 22px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  object-fit: cover;
+}
+
+#mp-view .mp-division-summary {
+  font-size: 11.5px;
+  color: var(--qf-text-faint);
+  white-space: nowrap;
+}
+
+/* Marks a division whose real corporation name has been fetched, as opposed
+   to the generic "Division N". */
+#mp-view .mp-custom-badge {
+  margin-left: 7px;
+  padding: 1px 7px;
+  border-radius: var(--qf-radius-pill);
+  background: var(--qf-accent-dim);
+  color: var(--qf-accent);
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+
+#mp-view .mp-refresh-names {
+  margin-left: auto;
+  font-size: 11px;
+}
+
+#mp-view .mp-modal-note {
+  margin-top: 10px;
+  font-size: 11.5px;
+  color: var(--qf-text-muted);
+}
+
+#mp-view .mp-per-line {
+  font-size: 11px;
+}
+
+/* Two INDEPENDENT axes - assets and blueprints - in one grid, matching
+   Settings > Industry. Keep the two screens in step. */
+#mp-view .mp-axis-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+#mp-view .mp-axis-row {
+  display: grid;
+  grid-template-columns: 1fr 72px 72px;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 0;
+  font-size: 12.5px;
+  color: var(--qf-text-primary);
+}
+
+#mp-view .mp-axis-head {
+  padding-bottom: 6px;
+  margin-bottom: 2px;
+  border-bottom: 1px solid var(--qf-border-subtle);
+}
+
+#mp-view .mp-axis-label {
+  text-align: center;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  font-weight: 700;
+  color: var(--qf-text-faint);
+}
+
+#mp-view .mp-axis-cell {
+  display: flex;
+  justify-content: center;
+  cursor: pointer;
+}
+
+#mp-view .mp-axis-cell input {
+  width: 15px;
+  height: 15px;
+  accent-color: var(--qf-accent);
+  cursor: pointer;
+}
+
+#mp-view .mp-axis-name {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+}
+
+#mp-view .mp-axis-name > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Each character's divisions sit in their own bordered block, so which
+   settings belong to whom is unambiguous. */
+#mp-view .mp-division-section {
+  margin-bottom: 8px;
+  border: 1px solid var(--qf-border-subtle);
+  border-radius: var(--qf-radius-md);
+  background: var(--qf-surface);
+  overflow: hidden;
+}
+
+#mp-view .mp-division-section:last-child {
+  margin-bottom: 0;
+}
+
+#mp-view .mp-division-character {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 10px 13px;
+  border-bottom: 1px solid var(--qf-border-subtle);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--qf-text-heading);
+}
+
+#mp-view .mp-division-section .mp-axis-grid {
+  padding: 8px 13px 12px;
+}
+
+#mp-view .mp-override-row {
+  display: grid;
+  grid-template-columns: 2fr 1fr 1fr 0.8fr 1.2fr 0.4fr;
+  column-gap: 14px;
+  align-items: center;
+  padding: 8px 0;
+  font-size: 12.5px;
+  border-bottom: 1px solid var(--qf-border-subtle);
+}
+
+#mp-view .mp-override-row > * {
+  min-width: 0;
+}
+
+#mp-view .mp-override-row .mp-icon-btn {
+  width: 26px;
+  height: 26px;
+}
+
+/* Click-to-edit price cell. The cursor is the only affordance, so it has to
+   be unambiguous. */
+#mp-view .mp-price-cell {
+  cursor: pointer;
+  border-radius: var(--qf-radius-sm);
+}
+
+#mp-view .mp-price-cell:hover {
+  box-shadow: inset 0 0 0 1px var(--qf-border-active);
+}
+
+#mp-view .mp-price-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 2px 6px;
+  text-align: right;
+  background: var(--qf-surface-sunken);
+  border: 1px solid var(--qf-border-active);
+  border-radius: var(--qf-radius-sm);
+  color: var(--qf-text-heading);
+  font-family: var(--qf-font-mono);
+  font-size: 12.5px;
+}
+
+#mp-view .mp-price-input:focus {
+  outline: none;
+}
+
+#mp-view .mp-toggle-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  max-width: 420px;
+  font-size: 12.5px;
+  color: var(--qf-text-primary);
+  cursor: pointer;
+}
+
+/* --------------------------------------------------------------- modals */
+
+#mp-view .mp-modal {
+  width: 480px;
+  max-width: 100%;
+}
+
+#mp-view .mp-field-label {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 11.5px;
+  color: var(--qf-text-muted);
+  font-weight: 500;
+}
+
+#mp-view .mp-field-spaced {
+  margin-top: 14px;
+}
+
+#mp-view .mp-textarea {
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+  font-family: inherit;
+}
+
+#mp-view .mp-blueprint-config {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+  margin-top: 14px;
+}
+
+#mp-view .mp-acquire-host,
+#mp-view .mp-blueprint-host {
+  width: 100%;
+}
+
+/* ------------------------------------------------------------ helpers */
+
+#mp-view .mp-mono {
+  font-family: var(--qf-font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+#mp-view .mp-accent {
+  color: var(--qf-accent);
+}
+
+#mp-view .mp-right {
+  text-align: right;
+}
+
+#mp-view .mp-center {
+  text-align: center;
+}
+
+#mp-view .mp-muted {
+  color: var(--qf-text-muted);
+}
+
+#mp-view .mp-faint {
+  color: var(--qf-text-faint);
+}
+
+#mp-view .mp-positive {
+  color: var(--qf-success);
+}
+
+#mp-view .mp-negative {
+  color: var(--qf-error);
+}

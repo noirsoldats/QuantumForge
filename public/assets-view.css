@@ -1,0 +1,590 @@
+/* Asset Manager — ported from "Character Assets (1a).dc.html" */
+
+/* Binding rule 6a: `hidden` is only display:none at browser-default level, so
+   any explicit display (flex/grid/table) beats it. This view toggles the table,
+   empty state, loading state, selection bar and modal via `hidden`, all of
+   which set a display. View-wide catch-all so a new element cannot reintroduce
+   the bug. jsdom applies no stylesheets, so a renderer test CANNOT catch this -
+   assert on stylesheet text instead. */
+#assets-view [hidden] { display: none !important; }
+
+.as-view {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--qf-bg-app-gradient, var(--qf-bg-base));
+  color: var(--qf-text-primary);
+}
+
+/* ---------------------------------------------------------------- header */
+
+.as-header {
+  flex-shrink: 0;
+  padding: 14px 22px;
+  border-bottom: 1px solid var(--qf-border-subtle);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.as-identity { display: flex; align-items: center; gap: 14px; }
+
+.as-portrait {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  border: 2px solid var(--qf-gold);
+  background: var(--qf-surface);
+  flex-shrink: 0;
+}
+
+.as-name {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--qf-text-heading);
+}
+
+.as-subtitle {
+  margin: 3px 0 0;
+  font-size: 12px;
+  color: var(--qf-text-muted);
+}
+
+.as-header-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+
+.as-field-label { font-size: 12px; color: var(--qf-text-faint); white-space: nowrap; }
+
+.as-market-set { width: 180px; }
+
+/* --------------------------------------------------------- summary strip */
+
+.as-summary {
+  flex-shrink: 0;
+  display: flex;
+  gap: 0;
+  padding: 0 22px;
+  border-bottom: 1px solid var(--qf-border);
+  overflow-x: auto;
+}
+
+.as-stat {
+  padding: 11px 22px 11px 0;
+  margin-right: 22px;
+  border-right: 1px solid var(--qf-border-subtle);
+  white-space: nowrap;
+}
+.as-stat:last-child { border-right: none; margin-right: 0; }
+
+.as-stat-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--qf-text-faint);
+  font-weight: 700;
+}
+
+.as-stat-value {
+  font-size: 15px;
+  font-weight: 700;
+  margin-top: 4px;
+  font-family: var(--qf-font-mono);
+  color: var(--qf-text-heading);
+}
+.as-stat-value.is-accent { color: var(--qf-accent); }
+
+/* ---------------------------------------------------------- tabs/toolbar */
+
+.as-toolbar {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 22px;
+  border-bottom: 1px solid var(--qf-border);
+  flex-wrap: wrap;
+}
+
+.as-tabs { display: flex; align-items: center; gap: 4px; }
+
+.as-spacer { flex: 1; }
+
+.as-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  border-radius: var(--qf-radius-md);
+  border: none;
+  font-family: inherit;
+  /* Binding rule 1: highlight via box-shadow only, background stays constant. */
+  background-color: transparent;
+  color: var(--qf-text-muted);
+  box-shadow: none;
+}
+.as-tab.is-active {
+  color: var(--qf-accent);
+  box-shadow: inset 0 0 0 200px var(--qf-accent-dim);
+}
+
+.as-tab-count {
+  font-size: 10px;
+  font-weight: 700;
+  border-radius: var(--qf-radius-pill);
+  padding: 1px 7px;
+  color: var(--qf-text-faint);
+  background: var(--qf-surface);
+}
+.as-tab.is-active .as-tab-count {
+  color: var(--qf-accent);
+  background: var(--qf-surface-sunken);
+}
+
+.as-group-select { width: 130px; }
+
+.as-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  padding: 5px 10px;
+  border-radius: var(--qf-radius-md);
+  border: 1px solid var(--qf-border);
+  background-color: var(--qf-surface-sunken);
+  font-size: 12px;
+  color: var(--qf-text-primary);
+  white-space: nowrap;
+}
+.as-toggle.is-on {
+  border-color: var(--qf-border-active);
+  background-color: var(--qf-accent-dim);
+}
+
+/* ------------------------------------------------------------------ body */
+
+.as-body { flex: 1; min-height: 0; display: flex; }
+
+.as-sidebar {
+  width: 250px;
+  flex-shrink: 0;
+  border-right: 1px solid var(--qf-border);
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  overflow-y: auto;
+}
+
+/* Binding rule 4: inputs use --qf-surface-sunken so they match the dropdowns
+   sitting beside them; --qf-surface reads as "no background" on a card. */
+.as-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 12px;
+  font-size: var(--qf-text-sm);
+  background: var(--qf-surface-sunken);
+  border: 1px solid var(--qf-border);
+  border-radius: var(--qf-radius-md);
+  color: var(--qf-text-primary);
+  font-family: inherit;
+}
+.as-input:focus { outline: none; border-color: var(--qf-border-active); }
+
+.as-search-wrap { position: relative; display: flex; align-items: center; }
+
+/* Room for the clear button so long queries do not run underneath it. */
+.as-search-input { padding-right: 30px; }
+
+.as-search-clear {
+  position: absolute;
+  right: 6px;
+  width: 20px;
+  height: 20px;
+  display: grid;
+  place-items: center;
+  border: none;
+  background: none;
+  color: var(--qf-text-faint);
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+  padding: 0;
+  border-radius: var(--qf-radius-sm);
+}
+.as-search-clear:hover { color: var(--qf-text-primary); background: var(--qf-surface); }
+.as-search-clear:focus-visible { outline: 1px solid var(--qf-border-active); outline-offset: 1px; }
+
+
+.as-facet-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+.as-facet-head h4 {
+  margin: 0;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--qf-text-faint);
+  font-weight: 700;
+}
+
+.as-clear {
+  font-size: 11px;
+  color: var(--qf-accent);
+  cursor: pointer;
+  background: none;
+  border: none;
+  padding: 0;
+  font-family: inherit;
+}
+
+.as-facet-list { display: flex; flex-direction: column; gap: 2px; }
+
+.as-facet {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 6px;
+  cursor: pointer;
+  border-radius: var(--qf-radius-sm);
+  /* Binding rule 1 again — never toggle background-color for a row highlight. */
+  background-color: transparent;
+  box-shadow: none;
+}
+.as-facet.is-on { box-shadow: inset 0 0 0 200px var(--qf-accent-dim); }
+.as-facet.is-empty { opacity: 0.5; }
+
+.as-facet-label {
+  flex: 1;
+  min-width: 0;
+  font-size: 12.5px;
+  color: var(--qf-text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.as-facet-count {
+  font-size: 10.5px;
+  font-family: var(--qf-font-mono);
+  color: var(--qf-text-faint);
+}
+
+/* Base is the INACTIVE state. Active is a modifier, so exactly one row - the
+   default "All Assets" or a saved view - can be highlighted at a time.
+   Both branches set the same three properties (binding rule 3) so the
+   highlight always clears. */
+.as-preset {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 9px;
+  border-radius: var(--qf-radius-sm);
+  cursor: pointer;
+  color: var(--qf-text-muted);
+  background-color: var(--qf-surface-sunken);
+  border: 1px solid var(--qf-border);
+}
+.as-preset.is-active {
+  color: var(--qf-accent);
+  background-color: var(--qf-accent-dim);
+  border-color: var(--qf-border-active);
+}
+.as-preset-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.as-preset-reset { font-size: 10px; color: var(--qf-accent); font-weight: 700; }
+
+/* Saved views inherit the active/inactive styling from .as-preset above; they
+   only need spacing from the default row. */
+.as-preset.as-saved-view { margin-top: 4px; }
+
+/* Delete affordance: hidden until the row is hovered or focused, so a list of
+   saved views is not a wall of × buttons. */
+.as-view-delete {
+  flex-shrink: 0;
+  border: none;
+  background: none;
+  color: var(--qf-text-faint);
+  cursor: pointer;
+  font-size: 15px;
+  line-height: 1;
+  padding: 0 2px;
+  opacity: 0;
+}
+.as-preset:hover .as-view-delete,
+.as-preset:focus-within .as-view-delete,
+.as-view-delete:focus-visible { opacity: 1; }
+.as-view-delete:hover { color: var(--qf-error); }
+
+.as-save-modal { width: 420px; max-width: 100%; }
+
+.as-save-label {
+  display: block;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--qf-text-faint);
+  font-weight: 700;
+  margin-bottom: 6px;
+}
+
+.as-save-summary {
+  margin-top: 12px;
+  padding: 10px 12px;
+  background: var(--qf-surface-sunken);
+  border: 1px solid var(--qf-border);
+  border-radius: var(--qf-radius-md);
+  font-size: 11.5px;
+  color: var(--qf-text-muted);
+  line-height: 1.7;
+}
+.as-save-summary strong { color: var(--qf-text-primary); font-weight: 600; }
+.as-save-summary .as-save-empty { color: var(--qf-text-faint); font-style: italic; }
+
+/* --------------------------------------------------------------- content */
+
+.as-content { flex: 1; min-width: 0; overflow: auto; }
+
+.as-selection-bar {
+  position: sticky;
+  top: 0;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 9px 18px;
+  background: var(--qf-accent-dim);
+  border-bottom: 1px solid var(--qf-border-active);
+}
+.as-selected-count { font-size: 12.5px; color: var(--qf-accent); font-weight: 600; }
+.as-selected-value { font-size: 12px; color: var(--qf-text-muted); font-family: var(--qf-font-mono); }
+
+.as-loading {
+  padding: 60px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  color: var(--qf-text-muted);
+  font-size: 13px;
+}
+
+.as-spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--qf-border);
+  border-top-color: var(--qf-accent);
+  border-radius: 50%;
+  animation: as-spin 0.7s linear infinite;
+}
+
+@keyframes as-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Tabular data in a real <table>: the browser aligns the columns, and a screen
+   reader announces them as a table. */
+.as-table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 900px;
+}
+
+.as-th {
+  padding: 8px 12px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--qf-text-faint);
+  font-weight: 700;
+  white-space: nowrap;
+  cursor: pointer;
+  user-select: none;
+  position: sticky;
+  top: 0;
+  background: var(--qf-bg-elevated);
+  z-index: 3;
+  text-align: left;
+}
+.as-th.is-sorted { color: var(--qf-accent); }
+.as-th.is-numeric { text-align: right; }
+.as-th.is-check { text-align: center; width: 34px; cursor: default; }
+
+.as-td {
+  padding: 8px 12px;
+  font-size: 12.5px;
+  white-space: nowrap;
+  border-bottom: 1px solid var(--qf-border-subtle);
+}
+.as-td.is-numeric { text-align: right; font-family: var(--qf-font-mono); }
+.as-td.is-check { text-align: center; }
+
+.as-row { background-color: transparent; box-shadow: none; }
+.as-row.is-selected { box-shadow: inset 0 0 0 200px var(--qf-accent-dim); }
+
+.as-item-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  color: var(--qf-text-heading);
+  font-weight: 500;
+}
+
+.as-item-icon {
+  width: 26px;
+  height: 26px;
+  border-radius: 4px;
+  flex-shrink: 0;
+  background: var(--qf-surface);
+  border: 1px solid var(--qf-border);
+}
+
+.as-bp-badge {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+  border-radius: 4px;
+  padding: 1px 6px;
+  border: 1px solid var(--qf-border);
+  margin-left: 7px;
+}
+.as-bp-badge.is-bpo { color: var(--qf-success); background: var(--qf-success-dim); }
+.as-bp-badge.is-bpc { color: var(--qf-accent); background: var(--qf-accent-dim); }
+
+.as-muted { color: var(--qf-text-muted); }
+
+/* A nested item's location carries a full chain in its tooltip. The dotted
+   underline is the affordance that something is there to hover. */
+.as-has-chain {
+  text-decoration: underline dotted var(--qf-border-active);
+  text-underline-offset: 3px;
+  cursor: help;
+}
+.as-has-chain:focus-visible {
+  outline: 1px solid var(--qf-border-active);
+  outline-offset: 2px;
+}
+.as-faint { color: var(--qf-text-faint); font-size: 11.5px; }
+.as-value { font-family: var(--qf-font-mono); color: var(--qf-accent); font-weight: 600; }
+.as-mono { font-family: var(--qf-font-mono); color: var(--qf-text-primary); }
+
+/* group header row */
+.as-group-cell { padding: 0; }
+.as-group {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+  background: rgba(0, 0, 0, 0.28);
+  border-bottom: 1px solid var(--qf-border);
+  cursor: pointer;
+}
+.as-group-chevron { flex-shrink: 0; transition: transform 0.12s ease; transform: rotate(0deg); }
+.as-group.is-open .as-group-chevron { transform: rotate(90deg); }
+.as-group-label {
+  flex: 1;
+  min-width: 0;
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--qf-text-heading);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.as-group-count {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--qf-text-faint);
+  background: var(--qf-surface);
+  border: 1px solid var(--qf-border);
+  border-radius: var(--qf-radius-pill);
+  padding: 1px 8px;
+}
+.as-group-value {
+  font-family: var(--qf-font-mono);
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--qf-accent);
+  min-width: 96px;
+  text-align: right;
+}
+
+/* empty state */
+.as-empty {
+  padding: 60px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  text-align: center;
+}
+.as-empty-icon {
+  width: 56px;
+  height: 56px;
+  border-radius: var(--qf-radius-lg);
+  background: var(--qf-surface);
+  border: 1px solid var(--qf-border);
+  display: grid;
+  place-items: center;
+  color: var(--qf-text-faint);
+}
+.as-empty-title { font-size: 16px; font-weight: 600; color: var(--qf-text-heading); }
+.as-empty-text { font-size: 13px; color: var(--qf-text-muted); line-height: 1.55; max-width: 380px; }
+
+/* ------------------------------------------------------------ status line */
+
+.as-statusline {
+  height: 26px;
+  flex-shrink: 0;
+  border-top: 1px solid var(--qf-border);
+  display: flex;
+  align-items: center;
+  padding: 0 12px;
+  gap: 18px;
+  font-size: 11.5px;
+  color: var(--qf-text-muted);
+}
+.as-cache-status { color: var(--qf-text-faint); }
+
+/* ----------------------------------------------------------- columns modal */
+
+.as-columns-modal { width: 380px; max-width: 100%; }
+
+.as-columns-hint {
+  margin: 0 0 10px;
+  font-size: 11.5px;
+  color: var(--qf-text-faint);
+}
+
+.as-columns-list { display: flex; flex-direction: column; gap: 4px; }
+
+.as-column-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: var(--qf-radius-sm);
+  background: var(--qf-surface);
+  border-top: 2px solid transparent;
+}
+.as-column-row.is-dragging { opacity: 0.4; }
+.as-column-row.is-drop-target { border-top-color: var(--qf-accent); }
+
+.as-column-grip { color: var(--qf-text-faint); cursor: grab; user-select: none; }
+.as-column-label { flex: 1; font-size: 12.5px; color: var(--qf-text-primary); cursor: pointer; }

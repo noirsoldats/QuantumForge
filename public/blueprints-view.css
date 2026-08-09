@@ -1,0 +1,538 @@
+/* Blueprint Manager — ported from "Character Blueprints (1a).dc.html" */
+
+/* Binding rule 6a: `hidden` is only display:none at browser-default level, so
+   any explicit display (flex/grid) beats it. This view toggles the group list,
+   empty state, loading state, both modals and each group's expanded copies via
+   `hidden`. jsdom applies no stylesheets, so a renderer test CANNOT catch a
+   regression here - assert on stylesheet text instead. */
+#blueprints-view [hidden] { display: none !important; }
+
+.bp-view {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--qf-bg-app-gradient, var(--qf-bg-base));
+  color: var(--qf-text-primary);
+}
+
+/* ---------------------------------------------------------------- header */
+
+.bp-header {
+  flex-shrink: 0;
+  padding: 14px 22px;
+  border-bottom: 1px solid var(--qf-border-subtle);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.bp-identity { display: flex; align-items: center; gap: 14px; }
+
+.bp-portrait {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  border: 2px solid var(--qf-gold);
+  background: var(--qf-surface);
+  flex-shrink: 0;
+}
+
+.bp-name {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--qf-text-heading);
+}
+
+.bp-subtitle { margin: 3px 0 0; font-size: 12px; color: var(--qf-text-muted); }
+.bp-mono { font-family: var(--qf-font-mono); color: var(--qf-text-primary); }
+
+.bp-header-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+
+/* Refresh while the ESI cache is still valid. Looks unavailable but stays
+   CLICKABLE: a disabled <button> swallows the click, so the user gets no
+   feedback at all. Clicking explains why nothing was fetched. */
+.btn.is-gated {
+  opacity: 0.55;
+  cursor: help;
+}
+.btn.is-gated:hover { opacity: 0.75; }
+
+/* --------------------------------------------------------- summary strip */
+
+.bp-summary {
+  flex-shrink: 0;
+  display: flex;
+  padding: 0 22px;
+  border-bottom: 1px solid var(--qf-border);
+  overflow-x: auto;
+}
+
+.bp-stat {
+  padding: 11px 22px 11px 0;
+  margin-right: 22px;
+  border-right: 1px solid var(--qf-border-subtle);
+  white-space: nowrap;
+}
+.bp-stat:last-child { border-right: none; margin-right: 0; }
+
+.bp-stat-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--qf-text-faint);
+  font-weight: 700;
+}
+
+.bp-stat-value {
+  font-size: 15px;
+  font-weight: 700;
+  margin-top: 4px;
+  font-family: var(--qf-font-mono);
+  color: var(--qf-text-heading);
+}
+.bp-stat-value.is-accent { color: var(--qf-accent); }
+.bp-stat-value.is-success { color: var(--qf-success); }
+
+/* ------------------------------------------------------------------ body */
+
+.bp-body { flex: 1; min-height: 0; display: flex; }
+
+.bp-sidebar {
+  width: 240px;
+  flex-shrink: 0;
+  border-right: 1px solid var(--qf-border);
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  overflow-y: auto;
+}
+
+/* Binding rule 4: inputs use --qf-surface-sunken so they match the dropdowns
+   sitting beside them; --qf-surface reads as "no background" on a card. */
+.bp-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 12px;
+  font-size: var(--qf-text-sm);
+  background: var(--qf-surface-sunken);
+  border: 1px solid var(--qf-border);
+  border-radius: var(--qf-radius-md);
+  color: var(--qf-text-primary);
+  font-family: inherit;
+}
+.bp-input:focus { outline: none; border-color: var(--qf-border-active); }
+
+.bp-search-wrap { position: relative; display: flex; align-items: center; }
+
+/* Room for the clear button so long queries do not run underneath it. */
+.bp-search-input { padding-right: 30px; }
+
+.bp-search-clear {
+  position: absolute;
+  right: 6px;
+  width: 20px;
+  height: 20px;
+  display: grid;
+  place-items: center;
+  border: none;
+  background: none;
+  color: var(--qf-text-faint);
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+  padding: 0;
+  border-radius: var(--qf-radius-sm);
+}
+.bp-search-clear:hover { color: var(--qf-text-primary); background: var(--qf-surface); }
+.bp-search-clear:focus-visible { outline: 1px solid var(--qf-border-active); outline-offset: 1px; }
+
+/* A nested blueprint's location carries the full chain in its tooltip. The
+   dotted underline is the affordance that something is there to hover. */
+.bp-has-chain {
+  text-decoration: underline dotted var(--qf-border-active);
+  text-underline-offset: 3px;
+  cursor: help;
+}
+.bp-has-chain:focus-visible { outline: 1px solid var(--qf-border-active); outline-offset: 2px; }
+
+.bp-facet-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+.bp-facet-head h4 {
+  margin: 0;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--qf-text-faint);
+  font-weight: 700;
+}
+
+.bp-facet-list { display: flex; flex-direction: column; gap: 2px; }
+
+/* Binding rule 1: row highlights are box-shadow only. A toggled
+   background-color does not clear reliably on a row highlighted on first
+   paint; background-color stays constant in the base. */
+.bp-facet {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 6px;
+  cursor: pointer;
+  border-radius: var(--qf-radius-sm);
+  background-color: transparent;
+  box-shadow: none;
+}
+.bp-facet.is-on { box-shadow: inset 0 0 0 200px var(--qf-accent-dim); }
+
+.bp-facet-label {
+  flex: 1;
+  min-width: 0;
+  font-size: 12.5px;
+  color: var(--qf-text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.bp-facet-count {
+  font-size: 10.5px;
+  font-family: var(--qf-font-mono);
+  color: var(--qf-text-faint);
+}
+
+.bp-hint {
+  padding: 10px 12px;
+  background: var(--qf-surface-sunken);
+  border: 1px solid var(--qf-border);
+  border-radius: var(--qf-radius-md);
+  font-size: 11px;
+  color: var(--qf-text-muted);
+  line-height: 1.5;
+}
+.bp-hint-accent { color: var(--qf-accent); font-weight: 600; }
+
+/* --------------------------------------------------------------- content */
+
+.bp-content {
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+  padding: 14px 22px 26px;
+}
+
+.bp-loading {
+  padding: 60px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  color: var(--qf-text-muted);
+  font-size: 13px;
+}
+
+.bp-spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--qf-border);
+  border-top-color: var(--qf-accent);
+  border-radius: 50%;
+  animation: bp-spin 0.7s linear infinite;
+}
+
+@keyframes bp-spin {
+  to { transform: rotate(360deg); }
+}
+
+.bp-groups { display: flex; flex-direction: column; gap: 8px; }
+
+.bp-group {
+  background: var(--qf-bg-elevated);
+  border: 1px solid var(--qf-border);
+  border-radius: var(--qf-radius-lg);
+  overflow: hidden;
+}
+.bp-group.is-overridden { border-color: var(--qf-border-active); }
+
+.bp-group-accent { height: 2px; background: var(--qf-accent-gradient-h); }
+
+.bp-group-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+}
+
+.bp-group-icon {
+  width: 34px;
+  height: 34px;
+  border-radius: 4px;
+  flex-shrink: 0;
+  background: var(--qf-surface);
+  border: 1px solid var(--qf-border);
+}
+
+.bp-group-info { flex: 1; min-width: 0; }
+
+.bp-group-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.bp-group-name {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--qf-text-heading);
+}
+
+.bp-badge {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  border-radius: var(--qf-radius-sm);
+  padding: 1px 7px;
+  white-space: nowrap;
+}
+.bp-badge.is-bpo {
+  color: var(--qf-success);
+  background: var(--qf-success-dim);
+  border: 1px solid rgba(52, 211, 153, 0.35);
+}
+.bp-badge.is-bpc {
+  color: var(--qf-accent);
+  background: var(--qf-accent-dim);
+  border: 1px solid var(--qf-border-active);
+}
+.bp-badge.is-manual {
+  color: var(--qf-gold);
+  background: rgba(255, 215, 0, 0.12);
+  border: 1px solid rgba(255, 215, 0, 0.35);
+  text-transform: uppercase;
+}
+.bp-badge.is-override {
+  color: var(--qf-accent);
+  background: var(--qf-accent-dim);
+  border: 1px solid var(--qf-border-active);
+  text-transform: uppercase;
+}
+
+.bp-group-meta {
+  font-size: 11.5px;
+  color: var(--qf-text-faint);
+  margin-top: 4px;
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+.bp-group-meta .bp-mono-muted {
+  color: var(--qf-text-muted);
+  font-family: var(--qf-font-mono);
+}
+
+/* ME / TE editors */
+
+.bp-eff {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.bp-eff-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--qf-text-faint);
+  font-weight: 700;
+}
+
+.bp-eff-row { display: flex; align-items: center; gap: 5px; }
+
+/* Both states set the same three properties (binding rule 3) so the override
+   styling always clears when the override is removed. */
+.bp-eff-input {
+  width: 52px;
+  box-sizing: border-box;
+  padding: 5px 8px;
+  font-size: 12.5px;
+  text-align: right;
+  border-radius: var(--qf-radius-sm);
+  font-family: var(--qf-font-mono);
+  border: 1px solid var(--qf-border);
+  background-color: var(--qf-surface-sunken);
+  color: var(--qf-text-primary);
+}
+.bp-eff-input.is-override {
+  border-color: var(--qf-border-active);
+  background-color: var(--qf-accent-dim);
+  color: var(--qf-accent);
+}
+.bp-eff-input:focus { outline: none; border-color: var(--qf-border-active); }
+
+.bp-eff-reset {
+  font-size: 10px;
+  color: var(--qf-accent);
+  cursor: pointer;
+  background: none;
+  border: none;
+  padding: 0;
+  font-family: inherit;
+}
+
+.bp-icon-btn {
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--qf-radius-md);
+  border: 1px solid var(--qf-border);
+  background-color: var(--qf-surface-sunken);
+  color: var(--qf-text-muted);
+  cursor: pointer;
+  padding: 0;
+}
+.bp-icon-btn:hover { color: var(--qf-accent); border-color: var(--qf-border-active); }
+.bp-icon-btn.is-open { color: var(--qf-accent); border-color: var(--qf-border-active); }
+.bp-icon-btn .bp-chevron { transition: transform 0.12s ease; transform: rotate(0deg); }
+.bp-icon-btn.is-open .bp-chevron { transform: rotate(180deg); }
+
+/* expanded individual copies */
+
+.bp-copies {
+  border-top: 1px solid var(--qf-border);
+  background: rgba(0, 0, 0, 0.18);
+}
+
+.bp-copy {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 9px 16px 9px 62px;
+  border-bottom: 1px solid var(--qf-border-subtle);
+  font-size: 12px;
+}
+.bp-copy:last-child { border-bottom: none; }
+
+.bp-copy-info { flex: 1; min-width: 0; color: var(--qf-text-muted); }
+.bp-copy-location { color: var(--qf-text-muted); font-size: 12px; }
+
+.bp-copy-delete {
+  flex-shrink: 0;
+  border: none;
+  background: none;
+  color: var(--qf-text-faint);
+  cursor: pointer;
+  font-size: 15px;
+  line-height: 1;
+  padding: 2px 6px;
+  border-radius: var(--qf-radius-sm);
+}
+.bp-copy-delete:hover { color: var(--qf-error); background: rgba(239, 75, 91, 0.1); }
+
+/* ----------------------------------------------------------- empty state */
+
+.bp-empty {
+  padding: 60px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  text-align: center;
+}
+.bp-empty-icon {
+  width: 56px;
+  height: 56px;
+  border-radius: var(--qf-radius-lg);
+  background: var(--qf-surface);
+  border: 1px solid var(--qf-border);
+  display: grid;
+  place-items: center;
+  color: var(--qf-text-faint);
+}
+.bp-empty-title { font-size: 16px; font-weight: 600; color: var(--qf-text-heading); }
+.bp-empty-text { font-size: 13px; color: var(--qf-text-muted); line-height: 1.55; max-width: 420px; }
+
+/* ------------------------------------------------------------ status line */
+
+.bp-statusline {
+  height: 26px;
+  flex-shrink: 0;
+  border-top: 1px solid var(--qf-border);
+  display: flex;
+  align-items: center;
+  padding: 0 12px;
+  gap: 18px;
+  font-size: 11.5px;
+  color: var(--qf-text-muted);
+}
+.bp-spacer { flex: 1; }
+.bp-cache-status { color: var(--qf-text-faint); }
+
+/* ---------------------------------------------------------------- modals */
+
+.bp-add-modal { width: 460px; max-width: 100%; }
+.bp-confirm-modal { width: 420px; max-width: 100%; }
+
+.bp-add-results {
+  margin-top: 12px;
+  max-height: 320px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.bp-add-result {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 9px 10px;
+  border-radius: var(--qf-radius-sm);
+  cursor: pointer;
+  background-color: transparent;
+  box-shadow: none;
+  border: none;
+  width: 100%;
+  text-align: left;
+  font-family: inherit;
+}
+.bp-add-result:hover,
+.bp-add-result.is-hi { box-shadow: inset 0 0 0 200px var(--qf-accent-dim); }
+
+.bp-add-result-icon {
+  width: 30px;
+  height: 30px;
+  border-radius: 4px;
+  flex-shrink: 0;
+  background: var(--qf-surface);
+  border: 1px solid var(--qf-border);
+}
+.bp-add-result-name { font-size: 13px; color: var(--qf-text-heading); font-weight: 500; }
+.bp-add-result-group { font-size: 11px; color: var(--qf-text-faint); }
+
+.bp-add-prompt {
+  padding: 30px 20px;
+  text-align: center;
+  color: var(--qf-text-faint);
+  font-size: 12.5px;
+}
+
+.bp-confirm-text { margin: 0; font-size: 13px; color: var(--qf-text-primary); line-height: 1.6; }
+.bp-confirm-note {
+  margin: 10px 0 0;
+  font-size: 11.5px;
+  color: var(--qf-text-faint);
+  line-height: 1.5;
+}

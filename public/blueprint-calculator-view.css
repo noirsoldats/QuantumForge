@@ -1,0 +1,1061 @@
+/*
+  Blueprint Calculator view styles.
+
+  Scoped under #bpc-view so nothing here can leak into the shell or another
+  view. Everything shared (buttons, badges, modals, .qf-input/.qf-select,
+  .qf-scroll, QFSearchSelect) comes from shared/components.css - only styles
+  specific to this screen live here.
+
+  Ported from "Blueprint Calculator (1a).dc.html".
+
+  Binding rules that apply to this file (CLAUDE.md "UI Redesign Conventions"):
+    - row/tab highlights toggle box-shadow, never a background (rule 1)
+    - any conditional style sets the SAME properties in both branches (rule 3)
+    - inputs use --qf-surface-sunken and keep box-sizing: border-box (rules 4, 6)
+*/
+
+/* The `hidden` attribute is only `display: none` at the browser-default level,
+   so ANY explicit `display` in this file beats it and the element stays
+   visible. Several elements here are flex/grid AND toggled via `hidden`
+   (the empty state, tab panels, loading, bonuses strip), so this rule makes
+   `hidden` authoritative for the whole view.
+
+   Without it the calculator opens showing the empty state, both tab panels and
+   the Add to Plan modal all at once. Do not remove it, and keep any new
+   `display` rule below compatible with it. */
+#bpc-view [hidden] {
+  display: none !important;
+}
+
+#bpc-view.bpc-root {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* ------------------------------------------------------------------ header */
+
+#bpc-view .bpc-header {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding: 15px 22px 14px;
+  border-bottom: 1px solid var(--qf-border-subtle);
+}
+
+#bpc-view .bpc-title {
+  margin: 0;
+  font-size: 21px;
+  font-weight: 700;
+  color: var(--qf-text-heading);
+  letter-spacing: -0.3px;
+}
+
+#bpc-view .bpc-subtitle {
+  margin: 6px 0 0;
+  font-size: 12.5px;
+  color: var(--qf-text-muted);
+}
+
+#bpc-view .bpc-header-market {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+#bpc-view .bpc-market-label {
+  font-size: 12px;
+  color: var(--qf-text-faint);
+  white-space: nowrap;
+}
+
+#bpc-view .bpc-market-host {
+  width: 190px;
+}
+
+/* -------------------------------------------------------------------- body */
+
+#bpc-view .bpc-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 18px 22px 26px;
+}
+
+#bpc-view .bpc-inner {
+  max-width: 1180px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* The inline QFSearchSelect needs a stacking context so its absolutely
+   positioned results panel sits above the cards below it. */
+#bpc-view .bpc-search-host {
+  position: relative;
+  z-index: 5;
+}
+
+/* ------------------------------------------------------- search result rows */
+
+/* Decorations added by renderRow. The row itself (.qf-ss-row) keeps its shared
+   styling and box-shadow highlight - these only describe the extra content. */
+#bpc-view .bpc-sr-icon,
+.qf-ss-inline-list .bpc-sr-icon {
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  border-radius: var(--qf-radius-sm);
+  background: var(--qf-surface-sunken);
+  object-fit: cover;
+}
+
+.qf-ss-inline-list .bpc-sr-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.qf-ss-inline-list .bpc-sr-name {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--qf-text-heading);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.qf-ss-inline-list .bpc-sr-cat {
+  font-size: 11px;
+  color: var(--qf-text-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* --------------------------------------------------------------- empty state */
+
+#bpc-view .bpc-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 64px 20px;
+  color: var(--qf-text-faint);
+  text-align: center;
+}
+
+#bpc-view .bpc-empty svg {
+  opacity: 0.3;
+}
+
+#bpc-view .bpc-empty p {
+  margin: 0;
+  font-size: 13.5px;
+}
+
+/* -------------------------------------------------------------------- cards */
+
+#bpc-view .bpc-card {
+  background: var(--qf-bg-elevated);
+  border: 1px solid var(--qf-border);
+  border-radius: var(--qf-radius-lg);
+  overflow: hidden;
+}
+
+#bpc-view .bpc-card-accent {
+  height: 2px;
+  background: var(--qf-accent-gradient-h);
+}
+
+#bpc-view .bpc-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 13px 16px;
+  border-bottom: 1px solid var(--qf-border);
+}
+
+#bpc-view .bpc-card-head-split {
+  justify-content: flex-start;
+  gap: 9px;
+}
+
+#bpc-view .bpc-card-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--qf-text-heading);
+}
+
+#bpc-view .bpc-pill {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--qf-text-faint);
+  background: var(--qf-surface);
+  border: 1px solid var(--qf-border);
+  border-radius: var(--qf-radius-pill);
+  padding: 1px 8px;
+}
+
+#bpc-view .bpc-grid-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  align-items: start;
+}
+
+@media (max-width: 900px) {
+  #bpc-view .bpc-grid-2 {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* --------------------------------------------------------- blueprint card */
+
+#bpc-view .bpc-bp-card-inner {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+  flex-wrap: wrap;
+  padding: 18px;
+}
+
+#bpc-view .bpc-bp-identity {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-width: 0;
+}
+
+#bpc-view .bpc-bp-icon img,
+#bpc-view .bpc-inv-icon img {
+  width: 48px;
+  height: 48px;
+  border-radius: var(--qf-radius-md);
+  background: var(--qf-surface-sunken);
+  object-fit: cover;
+}
+
+#bpc-view .bpc-bp-name-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+#bpc-view .bpc-bp-name {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--qf-text-heading);
+}
+
+#bpc-view .bpc-tech {
+  font-size: 10px;
+  font-weight: 700;
+  border-radius: var(--qf-radius-sm);
+  padding: 2px 7px;
+  color: var(--qf-accent);
+  background: var(--qf-accent-dim);
+}
+
+#bpc-view .bpc-tech[data-tech="T2"] {
+  color: var(--qf-warning);
+  background: var(--qf-warning-dim);
+}
+
+#bpc-view .bpc-bp-produces {
+  font-size: 12.5px;
+  color: var(--qf-text-muted);
+  margin-top: 5px;
+}
+
+#bpc-view .bpc-bp-controls {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+#bpc-view .bpc-field-label,
+#bpc-view .bpc-section-label {
+  display: block;
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--qf-text-faint);
+  font-weight: 700;
+  margin-bottom: 5px;
+}
+
+#bpc-view .bpc-section-label {
+  padding: 12px 0 4px;
+  margin-bottom: 0;
+}
+
+#bpc-view .bpc-section-label-accent {
+  color: var(--qf-accent);
+}
+
+#bpc-view .bpc-section-label-warning {
+  color: var(--qf-warning);
+}
+
+#bpc-view .bpc-section-split {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+/* Numeric inputs: sunken background to match the dropdowns beside them, and an
+   explicit width so they never stretch across the row (binding rule 4). */
+#bpc-view .bpc-num {
+  width: 66px;
+  box-sizing: border-box;
+  padding: 7px 9px;
+  font-size: 13.5px;
+  background: var(--qf-surface-sunken);
+  border: 1px solid var(--qf-border);
+  border-radius: var(--qf-radius-sm);
+  color: var(--qf-text-heading);
+  font-family: var(--qf-font-mono);
+  text-align: right;
+}
+
+#bpc-view .bpc-num-wide {
+  width: 82px;
+}
+
+#bpc-view .bpc-num:focus {
+  outline: none;
+  border-color: var(--qf-border-active);
+}
+
+#bpc-view .bpc-facility-host {
+  width: 240px;
+}
+
+/* --------------------------------------------------------------------- tabs */
+
+#bpc-view .bpc-tabs {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid var(--qf-border);
+}
+
+/* Both states set the same properties so nothing sticks (binding rule 3). */
+#bpc-view .bpc-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 9px 15px;
+  border: none;
+  border-bottom: 2px solid transparent;
+  background-color: transparent;
+  color: var(--qf-text-muted);
+  font-size: 12.5px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+#bpc-view .bpc-tab.is-active {
+  border-bottom-color: var(--qf-accent);
+  background-color: transparent;
+  color: var(--qf-accent);
+}
+
+#bpc-view .bpc-tab:hover:not(.is-active) {
+  color: var(--qf-text-primary);
+}
+
+#bpc-view .bpc-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  animation: bpc-fade-up 0.2s ease;
+}
+
+@keyframes bpc-fade-up {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ------------------------------------------------------------------ loading */
+
+#bpc-view .bpc-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 48px 20px;
+  color: var(--qf-text-muted);
+  font-size: 13px;
+}
+
+#bpc-view .bpc-loading p {
+  margin: 0;
+}
+
+#bpc-view .bpc-spinner {
+  width: 28px;
+  height: 28px;
+  border: 2px solid var(--qf-border);
+  border-top-color: var(--qf-accent);
+  border-radius: 50%;
+  animation: bpc-spin 0.8s linear infinite;
+}
+
+@keyframes bpc-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* -------------------------------------------------------- facility bonuses */
+
+#bpc-view .bpc-bonuses {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  background: var(--qf-bg-elevated);
+  border: 1px solid var(--qf-border);
+  border-radius: var(--qf-radius-md);
+  padding: 12px 16px;
+}
+
+#bpc-view .bpc-bonuses-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--qf-text-muted);
+  font-weight: 600;
+}
+
+#bpc-view .bpc-bonuses-sep {
+  width: 1px;
+  height: 16px;
+  background: var(--qf-border);
+}
+
+#bpc-view .bpc-bonuses-list {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+#bpc-view .bpc-bonus {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11.5px;
+  color: var(--qf-text-muted);
+}
+
+#bpc-view .bpc-bonus-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--qf-accent);
+}
+
+#bpc-view .bpc-bonus-value {
+  color: var(--qf-success);
+  font-family: var(--qf-font-mono);
+  font-weight: 600;
+}
+
+/* ---------------------------------------------------------- material rows */
+
+#bpc-view .bpc-mat-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--qf-border-subtle);
+}
+
+#bpc-view .bpc-mat-icon {
+  width: 24px;
+  height: 24px;
+  flex-shrink: 0;
+  border-radius: var(--qf-radius-sm);
+  background: var(--qf-surface-sunken);
+  object-fit: cover;
+}
+
+#bpc-view .bpc-mat-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 12.5px;
+  color: var(--qf-text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+#bpc-view .bpc-mat-qty {
+  font-family: var(--qf-font-mono);
+  font-size: 12.5px;
+  color: var(--qf-text-heading);
+  font-variant-numeric: tabular-nums;
+}
+
+/* --------------------------------------------------------- costs & profit */
+
+#bpc-view .bpc-cost-body,
+#bpc-view .bpc-inv-body {
+  padding: 6px 16px 14px;
+}
+
+#bpc-view .bpc-kv {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 0;
+  font-size: 12.5px;
+  border-bottom: 1px solid var(--qf-border-subtle);
+}
+
+#bpc-view .bpc-kv-total {
+  padding: 11px 0 4px;
+  font-size: 13px;
+  border-bottom: none;
+}
+
+#bpc-view .bpc-kv-topline {
+  border-bottom: none;
+  border-top: 1px solid var(--qf-border);
+  padding: 10px 0 2px;
+}
+
+#bpc-view .bpc-kv-label {
+  color: var(--qf-text-muted);
+}
+
+#bpc-view .bpc-kv-strong {
+  color: var(--qf-text-heading);
+  font-weight: 700;
+}
+
+#bpc-view .bpc-mono {
+  font-family: var(--qf-font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+#bpc-view .bpc-accent {
+  color: var(--qf-accent);
+}
+
+#bpc-view .bpc-strong {
+  color: var(--qf-text-primary);
+  font-weight: 600;
+}
+
+#bpc-view .bpc-faint {
+  color: var(--qf-text-faint);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+#bpc-view .bpc-right {
+  text-align: right;
+}
+
+/* Profit box. Both the profit and loss variants set the same three properties
+   so switching between them cannot leave a stale tint (binding rule 3). */
+#bpc-view .bpc-profit {
+  margin-top: 10px;
+  padding: 12px 14px;
+  border-radius: var(--qf-radius-md);
+  background-color: var(--qf-success-dim);
+  border: 1px solid rgba(74, 222, 128, 0.3);
+}
+
+#bpc-view .bpc-profit.is-loss {
+  background-color: var(--qf-error-dim);
+  border-color: rgba(239, 75, 91, 0.3);
+}
+
+#bpc-view .bpc-profit-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+#bpc-view .bpc-profit-label {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--qf-success);
+}
+
+#bpc-view .bpc-profit-value {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--qf-success);
+}
+
+#bpc-view .bpc-profit.is-loss .bpc-profit-label,
+#bpc-view .bpc-profit.is-loss .bpc-profit-value,
+#bpc-view .bpc-profit.is-loss .bpc-profit-sub span:last-child {
+  color: var(--qf-error);
+}
+
+#bpc-view .bpc-profit-sub {
+  margin-top: 5px;
+  font-size: 11.5px;
+  color: var(--qf-text-muted);
+}
+
+#bpc-view .bpc-profit-sub span:last-child {
+  font-size: 12.5px;
+  color: var(--qf-success);
+}
+
+/* ------------------------------------------------------- fee breakdown grid */
+
+#bpc-view .bpc-fee-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+}
+
+@media (max-width: 900px) {
+  #bpc-view .bpc-fee-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+#bpc-view .bpc-fee-col {
+  padding: 12px 16px;
+  min-width: 0;
+}
+
+#bpc-view .bpc-fee-col-left {
+  border-right: 1px solid var(--qf-border-subtle);
+}
+
+#bpc-view .bpc-price-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--qf-border-subtle);
+}
+
+#bpc-view .bpc-price-text {
+  flex: 1;
+  min-width: 0;
+}
+
+#bpc-view .bpc-price-name {
+  font-size: 12px;
+  color: var(--qf-text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+#bpc-view .bpc-price-detail {
+  font-size: 10.5px;
+  color: var(--qf-text-faint);
+  font-family: var(--qf-font-mono);
+}
+
+#bpc-view .bpc-price-total {
+  font-family: var(--qf-font-mono);
+  font-size: 12px;
+  color: var(--qf-text-heading);
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+}
+
+#bpc-view .bpc-fee-sub {
+  font-size: 11px;
+  color: var(--qf-text-faint);
+  font-weight: 600;
+  padding: 7px 0 2px;
+}
+
+#bpc-view .bpc-fee-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 5px 0;
+  font-size: 12.5px;
+}
+
+#bpc-view .bpc-fee-row-indent {
+  padding-left: 12px;
+}
+
+#bpc-view .bpc-output-value {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 10px;
+  padding: 11px 13px;
+  border-radius: var(--qf-radius-md);
+  background: var(--qf-surface);
+  border: 1px solid var(--qf-border);
+  font-size: 12px;
+}
+
+/* --------------------------------------------------------------- breakdown */
+
+#bpc-view .bpc-breakdown-body {
+  padding: 14px 16px;
+}
+
+#bpc-view .bpc-breakdown-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+#bpc-view .bpc-breakdown-name {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--qf-text-heading);
+}
+
+#bpc-view .bpc-breakdown-badges {
+  display: flex;
+  gap: 6px;
+}
+
+#bpc-view .bpc-badge {
+  font-size: 10px;
+  font-weight: 700;
+  border-radius: var(--qf-radius-sm);
+  padding: 2px 8px;
+  color: var(--qf-text-muted);
+  background: var(--qf-surface);
+  border: 1px solid var(--qf-border);
+}
+
+#bpc-view .bpc-badge-accent {
+  color: var(--qf-accent);
+  background: var(--qf-accent-dim);
+  border-color: transparent;
+}
+
+#bpc-view .bpc-badge-warning {
+  color: var(--qf-warning);
+  background: var(--qf-warning-dim);
+  border-color: transparent;
+  margin-left: 7px;
+  font-size: 9px;
+  padding: 1px 6px;
+}
+
+#bpc-view .bpc-mat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 2px 20px;
+  margin-bottom: 16px;
+}
+
+#bpc-view .bpc-mat-grid .bpc-mat-row {
+  padding: 6px 0;
+  border-bottom: none;
+}
+
+#bpc-view .bpc-mat-grid .bpc-mat-name {
+  font-size: 12px;
+  color: var(--qf-text-muted);
+}
+
+#bpc-view .bpc-mat-grid .bpc-mat-qty {
+  font-size: 12px;
+  color: var(--qf-text-primary);
+}
+
+/* --------------------------------------------------------------- invention */
+
+#bpc-view .bpc-inv-banner {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  background: var(--qf-bg-elevated);
+  border: 1px solid var(--qf-border);
+  border-radius: var(--qf-radius-lg);
+  padding: 14px 18px;
+  overflow: hidden;
+}
+
+#bpc-view .bpc-inv-from {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--qf-text-faint);
+  font-size: 12.5px;
+}
+
+#bpc-view .bpc-inv-target-name {
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--qf-text-heading);
+}
+
+#bpc-view .bpc-inv-target-sub {
+  font-size: 12px;
+  color: var(--qf-text-muted);
+  margin-top: 2px;
+}
+
+#bpc-view .bpc-inline-label {
+  display: block;
+  font-size: 11px;
+  color: var(--qf-text-muted);
+  font-weight: 500;
+  margin-bottom: 6px;
+}
+
+#bpc-view .bpc-inline-label-spaced {
+  margin-top: 14px;
+}
+
+#bpc-view .bpc-inv-econ-col {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+#bpc-view .bpc-inv-savings {
+  background: var(--qf-success-dim);
+  border: 1px solid rgba(74, 222, 128, 0.3);
+  border-radius: var(--qf-radius-lg);
+  padding: 13px 16px;
+}
+
+#bpc-view .bpc-inv-savings-title {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--qf-success);
+  font-weight: 700;
+  margin-bottom: 8px;
+}
+
+#bpc-view .bpc-inv-savings .bpc-kv {
+  border-bottom: none;
+  padding: 4px 0;
+}
+
+#bpc-view .bpc-inv-savings .bpc-kv span:last-child {
+  color: var(--qf-success);
+  font-weight: 600;
+}
+
+/* ------------------------------------------------------- decryptor compare */
+
+#bpc-view .bpc-dec-scroll {
+  overflow-x: auto;
+}
+
+#bpc-view .bpc-dec-table {
+  min-width: 720px;
+}
+
+#bpc-view .bpc-dec-head,
+#bpc-view .bpc-dec-row {
+  display: grid;
+  grid-template-columns: 1.8fr 0.8fr 0.7fr 0.55fr 0.55fr 1fr;
+  column-gap: 12px;
+  padding: 10px 16px;
+  align-items: center;
+  border-bottom: 1px solid var(--qf-border-subtle);
+}
+
+#bpc-view .bpc-dec-head {
+  padding: 9px 16px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--qf-text-faint);
+  font-weight: 700;
+}
+
+/* Selected / best rows use box-shadow only - never a toggled background
+   (binding rule 1). Base keeps background-color transparent at all times. */
+#bpc-view .bpc-dec-row {
+  font-size: 12.5px;
+  background-color: transparent;
+  box-shadow: none;
+}
+
+#bpc-view .bpc-dec-row.is-selected {
+  box-shadow: inset 0 0 0 200px var(--qf-accent-dim), inset 3px 0 0 var(--qf-accent);
+}
+
+#bpc-view .bpc-dec-row.is-best {
+  box-shadow: inset 0 0 0 200px var(--qf-success-dim);
+}
+
+/* A row that is both keeps the accent marker so the selection stays legible. */
+#bpc-view .bpc-dec-row.is-best.is-selected {
+  box-shadow: inset 0 0 0 200px var(--qf-accent-dim), inset 3px 0 0 var(--qf-accent);
+}
+
+#bpc-view .bpc-dec-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--qf-text-primary);
+  min-width: 0;
+}
+
+#bpc-view .bpc-dec-best-badge {
+  font-size: 9px;
+  font-weight: 700;
+  color: var(--qf-success);
+  background: var(--qf-success-dim);
+  border-radius: var(--qf-radius-pill);
+  padding: 1px 7px;
+  flex-shrink: 0;
+}
+
+#bpc-view .bpc-dec-cell {
+  text-align: right;
+  font-family: var(--qf-font-mono);
+  color: var(--qf-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+#bpc-view .bpc-dec-cost {
+  text-align: right;
+  font-family: var(--qf-font-mono);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--qf-text-primary);
+}
+
+/* ------------------------------------------------------------------- modal */
+
+#bpc-view .bpc-modal-content {
+  width: 480px;
+  max-width: 100%;
+}
+
+#bpc-view .bpc-modal-bp {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  background: var(--qf-surface);
+  border: 1px solid var(--qf-border);
+  border-radius: var(--qf-radius-md);
+}
+
+#bpc-view .bpc-modal-bp-icon img {
+  width: 34px;
+  height: 34px;
+  border-radius: var(--qf-radius-sm);
+  object-fit: cover;
+}
+
+#bpc-view .bpc-modal-bp-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--qf-text-heading);
+}
+
+#bpc-view .bpc-modal-bp-sub {
+  font-size: 11.5px;
+  color: var(--qf-text-muted);
+}
+
+#bpc-view .bpc-modal-hint {
+  margin: 12px 0 10px;
+  font-size: 12.5px;
+  color: var(--qf-text-muted);
+}
+
+#bpc-view .bpc-plan-options {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* Selected / unselected both set border-color and box-shadow (binding rule 3). */
+#bpc-view .bpc-plan-option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: var(--qf-radius-md);
+  border: 1px solid var(--qf-border);
+  background-color: var(--qf-surface);
+  box-shadow: none;
+  cursor: pointer;
+  text-align: left;
+  width: 100%;
+  font-family: inherit;
+}
+
+#bpc-view .bpc-plan-option.is-selected {
+  border-color: var(--qf-border-active);
+  background-color: var(--qf-surface);
+  box-shadow: inset 0 0 0 200px var(--qf-accent-dim);
+}
+
+#bpc-view .bpc-plan-dot {
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  border: 2px solid var(--qf-border-active);
+  background-color: transparent;
+  flex-shrink: 0;
+}
+
+#bpc-view .bpc-plan-option.is-selected .bpc-plan-dot {
+  border-color: var(--qf-accent);
+  background-color: var(--qf-accent);
+}
+
+#bpc-view .bpc-plan-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  color: var(--qf-text-heading);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+#bpc-view .bpc-plan-status {
+  font-size: 10px;
+  font-weight: 700;
+  border-radius: var(--qf-radius-pill);
+  padding: 2px 8px;
+  color: var(--qf-text-muted);
+  background: var(--qf-surface-sunken);
+}
+
+#bpc-view .bpc-plan-status[data-status="active"] {
+  color: var(--qf-success);
+  background: var(--qf-success-dim);
+}
+
+#bpc-view .bpc-new-plan-label {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--qf-text-heading);
+}

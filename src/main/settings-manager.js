@@ -40,10 +40,94 @@ const defaultSettings = {
     speculativeInvention: {
       enabled: false,
       decryptorStrategy: 'total-per-item',
-      customVolume: 1,
-      showOnlyProfitable: true,
-      minProfitThreshold: 0,
     },
+    // Pre-calculation market filters. The engine applies these while costing,
+    // so they are configuration of what to build rather than a view filter.
+    marketThresholds: {
+      svrPeriod: 30,
+      svrThreshold: null,
+      iphEnabled: false,
+      iphThreshold: null,
+      profitEnabled: false,
+      profitThreshold: null,
+    },
+    // Source and facility selections. characterId only applies when
+    // characterFilter is 'specific'. The market set is NOT here - it uses the
+    // shared per-tool toolPreferences.manufacturingSummaryMarketSetId.
+    selections: {
+      blueprintFilter: 'owned',
+      characterFilter: 'all',
+      characterId: null,
+      facilityId: null,
+      reactionFacilityId: null,
+    },
+    // Which tech levels and product categories go into the calculation.
+    // null means "not configured yet" and resolves to everything selected -
+    // distinct from an empty array, which is a deliberate "select nothing".
+    blueprintChips: {
+      tech: null,
+      category: null,
+    },
+    // Which result columns are shown. null = the default set.
+    visibleColumns: null,
+    // Drag-reordered column sequence, covering every column. null = default.
+    columnOrder: null,
+  },
+  // What Can I Build? UI state. Same rule as the categories around it: this
+  // MUST be declared or updateSettings() silently drops the save.
+  //
+  // Migrated once out of the nine `cleanup-tool-*` localStorage keys the
+  // un-ported screen used. The market set is NOT here - it uses the shared
+  // per-tool toolPreferences.cleanupToolMarketSetId.
+  whatCanIBuild: {
+    blueprintFilter: 'owned',
+    characterFilter: 'all',
+    characterId: null,
+    facilityId: null,
+    includeT2Invention: false,
+    // Percentage of a run's materials that must be on hand to list an item.
+    threshold: 90,
+    // { personal: [{characterId}], corporation: [{characterId, divisions}] }
+    assetSources: null,
+    // Arrays of the SELECTED names; null means "never configured".
+    blueprintChips: { tech: null, category: null },
+    visibleColumns: null,
+    columnOrder: null,
+    sort: null,
+  },
+  // Loot Analyzer UI state. Same rule as manufacturingSummary above: this
+  // category MUST be declared or updateSettings() silently drops the save.
+  //
+  // These lived in localStorage on the un-ported screen and are migrated once
+  // on first load - localStorage is per-origin, invisible to the user, and
+  // does not travel with quantum_config.json.
+  lootAnalyzer: {
+    // { regionId, locationId } per market slot. null = nothing chosen.
+    market1: null,
+    market2: null,
+    minSvr: 0,
+    reprocessing: {
+      stationType: 'npc',
+      rig: 'none',
+      rig2: 'none',
+      reprocessing: 0,
+      reprocessingEfficiency: 0,
+      implantBonus: 0,
+    },
+    // element id -> level (0-5), for the 15 ore processing skills.
+    oreSkills: {},
+  },
+  // Asset Manager UI state. A top-level per-tool category, matching
+  // manufacturingSummary above - NOT a key in toolPreferences, which holds one
+  // scalar market-set id per tool and is read that way by
+  // getToolMarketSet/setToolMarketSet.
+  //
+  // MUST be declared here: updateSettings() silently no-ops for a category that
+  // does not already exist, so without this the first save would vanish with
+  // only a console error.
+  assets: {
+    // [{ id, name, config: { cats, locs, bp, groupBy, aggregate } }]
+    savedViews: [],
   },
   owned_blueprints: [],
   sde: {
@@ -75,6 +159,13 @@ function loadSettings() {
       }
       // Migrate settings.market → settings.marketSets (idempotent)
       migrateMarketToMarketSets(loadedSettings);
+
+      // Legacy window-state keys → the generic view host's names. Persisted
+      // immediately so it does not re-run; the old keys are gone afterwards,
+      // so the next load finds nothing to do.
+      if (migrateWindowStateKeys(loadedSettings)) {
+        saveSettings(loadedSettings);
+      }
 
       // Merge with defaults to ensure all keys exist
       return mergeWithDefaults(loadedSettings, defaultSettings);
@@ -319,11 +410,25 @@ function addCharacter(characterData) {
 
       // Automatically set as default if this is the first character
       const characterCount = db.prepare('SELECT COUNT(*) as count FROM characters').get().count;
-      if (characterCount === 1) {
+      const isFirstCharacter = characterCount === 1;
+      if (isFirstCharacter) {
         settings.accounts.defaultCharacterId = characterData.character.characterId;
         saveSettings(settings);
         console.log('[Settings] Automatically set first character as default:', characterData.character.characterName);
       }
+
+      // Every character gets a settings row so nothing has to cope with an
+      // absent one. The FIRST character is also enrolled as a blueprint source:
+      // without it a brand-new user gets ME 0 everywhere with nothing on screen
+      // explaining why (migration 026 cannot help them - it runs before any
+      // character exists). Later characters stay opt-in, which is the whole
+      // point of the feature.
+      //
+      // Corp divisions are NOT enabled here - corp blueprints are always
+      // opt-in, for the first character too.
+      ensureCharacterSettingsRow(characterData.character.characterId, {
+        useBlueprintsFrom: isFirstCharacter,
+      });
 
       console.log('[Settings] New character added successfully.');
     }
@@ -345,15 +450,40 @@ function removeCharacter(characterId) {
     const db = getCharacterDatabase();
     const settings = loadSettings();
 
-    // Clear default character if this was it
-    if (settings.accounts.defaultCharacterId === characterId) {
-      delete settings.accounts.defaultCharacterId;
-      saveSettings(settings);
-      console.log('Cleared default character as it was removed');
-    }
+    const wasDefault = settings.accounts.defaultCharacterId === characterId;
 
     // Delete character (CASCADE will handle related skills, blueprints, etc.)
     const result = db.prepare('DELETE FROM characters WHERE character_id = ?').run(characterId);
+
+    // Promote a successor rather than leaving "characters but no default" -
+    // a state where skills, blueprints and pricing all silently degrade.
+    if (wasDefault) {
+      const successor = db
+        .prepare('SELECT character_id FROM characters ORDER BY added_at LIMIT 1')
+        .get();
+
+      if (successor) {
+        settings.accounts.defaultCharacterId = successor.character_id;
+        saveSettings(settings);
+        console.log(`Promoted character ${successor.character_id} to default after removal`);
+
+        // The successor may never have been enrolled as a blueprint source
+        // (only the FIRST character is auto-enrolled), which would leave the
+        // user with a default character and no blueprint sources at all.
+        const sources = getBlueprintSources();
+        if (sources.characterIds.length === 0) {
+          setUseBlueprintsFrom(successor.character_id, true);
+          console.log(
+            `Enrolled ${successor.character_id} as a blueprint source ` +
+            '(no other character was enabled)'
+          );
+        }
+      } else {
+        delete settings.accounts.defaultCharacterId;
+        saveSettings(settings);
+        console.log('Cleared default character - no characters remain');
+      }
+    }
 
     console.log('Removed character:', characterId);
     console.log(`Cascade deleted all related data (skills, blueprints, etc.) for character ${characterId}`);
@@ -509,6 +639,41 @@ function updateCharacterSkills(characterId, skillsData) {
     const character = db.prepare('SELECT character_id FROM characters WHERE character_id = ?').get(characterId);
     if (!character) {
       console.error('Character not found:', characterId);
+      return false;
+    }
+
+    // REFUSE to write a result that carries no skills.
+    //
+    // This is a delete-then-insert, so an empty payload does not "update
+    // nothing" - it DESTROYS every skill the character has, and stamps
+    // total_sp = 0 over the real figure.
+    //
+    // A fetch returns exactly that shape whenever esiFetch declines to call:
+    // the per-endpoint gate (called again inside the 5-minute window), the
+    // error-budget reserve, or a 420 all yield `{ skipped: true, skills: {},
+    // totalSp: 0 }`. The background cycle checks `.skipped`; the direct
+    // skills:fetch handler did not, so one extra Refresh click inside the
+    // cache window wiped the character's skills - and, because the wipe was
+    // persisted, they stayed gone across restarts.
+    //
+    // Guarding on the DATA rather than only on the `skipped` flag also covers
+    // an ESI 200 that legitimately carries nothing, and any future caller that
+    // forgets the flag. A character with genuinely zero skills does not exist
+    // in EVE - every capsuleer starts with some.
+    if (skillsData && skillsData.skipped) {
+      console.log(
+        `[Skills] Skipped update for character ${characterId}: the fetch was gated, ` +
+        'so there is nothing to write (existing skills kept).'
+      );
+      return false;
+    }
+
+    const incomingSkills = (skillsData && skillsData.skills) || {};
+    if (Object.keys(incomingSkills).length === 0) {
+      console.warn(
+        `[Skills] Refusing to write an EMPTY skill set for character ${characterId} - ` +
+        'this would delete every stored skill. Existing skills kept.'
+      );
       return false;
     }
 
@@ -788,6 +953,20 @@ function clearDefaultCharacter() {
   try {
     const settings = loadSettings();
 
+    // "Characters exist, but none is default" is not a state worth supporting:
+    // every tool that resolves skills, blueprints or pricing has to invent a
+    // fallback for it, and the user gets silently degraded results. If any
+    // character remains, refuse and keep the current default.
+    const db = getCharacterDatabase();
+    const remaining = db.prepare('SELECT COUNT(*) AS n FROM characters').get().n;
+    if (remaining > 0) {
+      console.warn(
+        `[Settings] Refusing to clear the default character while ${remaining} ` +
+        'character(s) exist; pick a different default instead.'
+      );
+      return false;
+    }
+
     if (settings.accounts) {
       delete settings.accounts.defaultCharacterId;
       console.log('Cleared default character');
@@ -815,6 +994,22 @@ function updateCharacterBlueprints(characterId, blueprintsData) {
     const character = db.prepare('SELECT character_id FROM characters WHERE character_id = ?').get(characterId);
     if (!character) {
       console.error('Character not found:', characterId);
+      return false;
+    }
+
+    // A gated fetch returns an empty list, and this is a delete-then-insert, so
+    // writing it would delete every stored blueprint. See the fuller note in
+    // updateCharacterSkills.
+    //
+    // Guarded on `skipped` ONLY, not on emptiness: unlike skills, having zero
+    // blueprints is a legitimate state (a new character, or one who sold them
+    // all), and refusing an empty write would make that state impossible to
+    // reach.
+    if (blueprintsData && blueprintsData.skipped) {
+      console.log(
+        `[Blueprints] Skipped update for character ${characterId}: the fetch was gated, ` +
+        'so there is nothing to write (existing blueprints kept).'
+      );
       return false;
     }
 
@@ -1119,6 +1314,82 @@ const DEFAULT_MARKET_SET_TEMPLATE = {
   },
   warningThreshold: 0.3,
 };
+
+/**
+ * Legacy window-state keys → the generic view host's `view-<key>` names.
+ *
+ * Every screen used to own a bespoke window module that stored its bounds under
+ * its own name. They are all served by `view-window.js` now, which keys bounds
+ * as `view-${windowKey(viewId, params)}`. Without this rename every user's
+ * remembered size and position is silently abandoned the first time a screen is
+ * popped out.
+ *
+ * THREE SHAPES - a blind `view-` prefix is wrong for the per-character ones:
+ *
+ *   cleanup-tool          -> view-what-can-i-build        (id also renamed)
+ *   loot-analyzer         -> view-loot-analyzer           (prefix only)
+ *   skills-133585695      -> view-skills?characterId=133585695   (id + params)
+ *
+ * The params form must match `windowKey` EXACTLY. That function runs values
+ * through `JSON.stringify`, which quotes strings - so `characterId` must be
+ * emitted as a bare number (`characterId=133585695`). Emitting
+ * `characterId="133585695"` produces a key nothing ever reads, losing the
+ * placement this migration exists to preserve.
+ */
+const LEGACY_WINDOW_KEYS = {
+  'cleanup-tool': 'view-what-can-i-build',
+  'loot-analyzer': 'view-loot-analyzer',
+  'manufacturing-summary': 'view-manufacturing-summary',
+  'manufacturing-plans': 'view-manufacturing-plans',
+  'esi-status': 'view-esi-status',
+  'audit-log': 'view-audit-log',
+  settings: 'view-settings',
+};
+
+/** Per-character prefixes: `<prefix>-<characterId>` -> `view-<viewId>?characterId=<id>`. */
+const LEGACY_CHARACTER_WINDOWS = {
+  skills: 'skills',
+  blueprints: 'blueprints',
+  assets: 'assets',
+};
+
+/**
+ * Rename legacy window-state keys in place (idempotent).
+ * @param {Object} settings - Settings object (mutated in-place)
+ * @returns {boolean} true when anything was renamed
+ */
+function migrateWindowStateKeys(settings) {
+  const states = settings.windowStates;
+  if (!states || typeof states !== 'object') return false;
+
+  let changed = false;
+
+  const rename = (oldKey, newKey) => {
+    if (!Object.prototype.hasOwnProperty.call(states, oldKey)) return;
+    // Unconditional: a config holding BOTH keys only exists on a machine that
+    // already ran a newer build, which is not the upgrade path this migration
+    // serves. Guarding for it would complicate the common case for nobody.
+    states[newKey] = states[oldKey];
+    delete states[oldKey];
+    changed = true;
+    console.log(`[Settings Migration] Window state "${oldKey}" → "${newKey}"`);
+  };
+
+  Object.entries(LEGACY_WINDOW_KEYS).forEach(([oldKey, newKey]) => rename(oldKey, newKey));
+
+  // Snapshot the keys first: `rename` adds and deletes as it goes, and
+  // iterating a live object while mutating it is how entries get skipped.
+  Object.keys(states).slice().forEach((key) => {
+    const match = /^([a-z]+)-(\d+)$/.exec(key);
+    if (!match) return;
+    const viewId = LEGACY_CHARACTER_WINDOWS[match[1]];
+    if (!viewId) return;
+    // Bare number, matching windowKey's JSON.stringify of a numeric id.
+    rename(key, `view-${viewId}?characterId=${match[2]}`);
+  });
+
+  return changed;
+}
 
 /**
  * Migrate settings.market → settings.marketSets (idempotent, mutates the passed object).
@@ -1585,15 +1856,21 @@ function getCharacterDivisionSettings(characterId) {
     const enabledDivisions = JSON.parse(settings.enabled_divisions || '[]');
     const divisionNames = settings.division_names ? JSON.parse(settings.division_names) : {};
 
-    // Check if cache is still valid
+    // Whether the cache is FRESH is a different question from whether custom
+    // names EXIST. Conflating them made the "using generic division names"
+    // warning reappear once the TTL lapsed, even though the real names were
+    // still stored and still being displayed.
     const now = Date.now();
-    const cacheValid = settings.division_names_cache_expires_at &&
+    const cacheValid = !!settings.division_names_cache_expires_at &&
                       settings.division_names_cache_expires_at > now;
 
     return {
       enabledDivisions: enabledDivisions,
       divisionNames: divisionNames,
-      hasCustomNames: Object.keys(divisionNames).length > 0 && cacheValid,
+      // Do we have names at all? Drives the warning.
+      hasCustomNames: Object.keys(divisionNames).length > 0,
+      // Are they still fresh? Drives whether a refresh is worth offering.
+      namesCacheValid: cacheValid,
     };
   } catch (error) {
     console.error('[Division Settings] Error getting character division settings:', error);
@@ -1606,21 +1883,19 @@ function getCharacterDivisionSettings(characterId) {
 }
 
 /**
- * Update character-specific enabled divisions
+ * Update character-specific enabled ASSET divisions. UNGUARDED.
+ *
+ * Does not check that the character exists. Prefer the guarded
+ * `updateCharacterEnabledDivisions`; this variant exists for bootstrap paths
+ * that legitimately write outside the normal lifecycle.
+ *
  * @param {number} characterId - Character ID
  * @param {Array<number>} enabledDivisions - Array of enabled division IDs (1-7)
  * @returns {boolean} Success status
  */
-function updateCharacterEnabledDivisions(characterId, enabledDivisions) {
+function updateCharacterEnabledDivisions_Unsafe(characterId, enabledDivisions) {
   try {
     const db = getCharacterDatabase();
-
-    // Verify character exists
-    const character = db.prepare('SELECT character_id FROM characters WHERE character_id = ?').get(characterId);
-    if (!character) {
-      console.error('[Division Settings] Character not found:', characterId);
-      return false;
-    }
 
     // Validate divisions array
     if (!Array.isArray(enabledDivisions)) {
@@ -1652,6 +1927,269 @@ function updateCharacterEnabledDivisions(characterId, enabledDivisions) {
     return false;
   }
 }
+
+/**
+ * Update character-specific enabled ASSET divisions.
+ *
+ * Refuses to write for a character that does not exist. This preserves the
+ * behaviour this function has always had; the check simply moved into the
+ * shared guard so the asset and blueprint setters cannot drift apart.
+ *
+ * @param {number} characterId
+ * @param {Array<number>} enabledDivisions division ids (1-7)
+ * @returns {boolean} success
+ */
+const updateCharacterEnabledDivisions = guardCharacterExists(
+  'Division Settings',
+  updateCharacterEnabledDivisions_Unsafe
+);
+
+/**
+ * Does this character exist?
+ *
+ * Shared by the guarded source-setting wrappers below so the check reads the
+ * same everywhere.
+ *
+ * @param {number} characterId
+ * @returns {boolean}
+ */
+function characterExists(characterId) {
+  try {
+    const db = getCharacterDatabase();
+    return !!db
+      .prepare('SELECT 1 FROM characters WHERE character_id = ?')
+      .get(characterId);
+  } catch (error) {
+    console.error('[Settings] Error checking character existence:', error);
+    return false;
+  }
+}
+
+/**
+ * Guard wrapper: refuse to write settings for a character that does not exist.
+ *
+ * Writing settings for a non-existent character leaves an orphan row that no
+ * UI shows and nothing cleans up, and it usually means the caller passed the
+ * wrong id. Every public setter goes through this; the `_Unsafe` variants
+ * remain available for bootstrap paths that legitimately write before or
+ * outside the normal lifecycle.
+ *
+ * @param {string} label for the log line
+ * @param {Function} unsafeFn the raw setter
+ * @returns {Function} the guarded setter
+ */
+function guardCharacterExists(label, unsafeFn) {
+  return function guarded(characterId, ...rest) {
+    if (!characterExists(characterId)) {
+      console.error(`[${label}] Character not found: ${characterId}`);
+      return false;
+    }
+    return unsafeFn(characterId, ...rest);
+  };
+}
+
+/**
+ * Ensure a character_settings row exists.
+ *
+ * These rows were historically created lazily - only when a user edited
+ * division settings - so most characters had no row at all. That was harmless
+ * while every setting in the table defaulted to "off and irrelevant", but
+ * `use_blueprints_from` is neither: an absent row means blueprint ME silently
+ * resolves to 0 with nothing on screen to explain why.
+ *
+ * Callers that create or first touch a character should call this so the row
+ * is always there to be read and updated.
+ *
+ * @param {number} characterId
+ * @param {Object} [defaults]
+ * @param {boolean} [defaults.useBlueprintsFrom=false]
+ * @returns {boolean} success
+ */
+function ensureCharacterSettingsRow(characterId, defaults = {}) {
+  try {
+    const db = getCharacterDatabase();
+    db.prepare(`
+      INSERT INTO character_settings (character_id, enabled_divisions, use_blueprints_from)
+      VALUES (?, '[]', ?)
+      ON CONFLICT(character_id) DO NOTHING
+    `).run(characterId, defaults.useBlueprintsFrom ? 1 : 0);
+    return true;
+  } catch (error) {
+    console.error('[Blueprint Sources] Error ensuring character_settings row:', error);
+    return false;
+  }
+}
+
+/**
+ * Characters and corp divisions enabled as BLUEPRINT sources.
+ *
+ * Separate from the asset sources on purpose: a corp may keep BPOs in a
+ * library division while materials live in a production division, so enabling
+ * one must not implicitly enable the other.
+ *
+ * @returns {{characterIds: number[], divisionsByCharacter: Object}}
+ */
+function getBlueprintSources() {
+  try {
+    const db = getCharacterDatabase();
+    const rows = db.prepare(`
+      SELECT character_id, use_blueprints_from, blueprint_enabled_divisions
+        FROM character_settings
+       WHERE use_blueprints_from = 1
+    `).all();
+
+    const characterIds = [];
+    const divisionsByCharacter = {};
+
+    for (const row of rows) {
+      characterIds.push(row.character_id);
+      try {
+        divisionsByCharacter[row.character_id] = JSON.parse(row.blueprint_enabled_divisions || '[]');
+      } catch (error) {
+        console.error(
+          `[Blueprint Sources] Unparseable blueprint_enabled_divisions for ${row.character_id}; treating as none:`,
+          error
+        );
+        divisionsByCharacter[row.character_id] = [];
+      }
+    }
+
+    return { characterIds, divisionsByCharacter };
+  } catch (error) {
+    console.error('[Blueprint Sources] Error reading blueprint sources:', error);
+    return { characterIds: [], divisionsByCharacter: {} };
+  }
+}
+
+/**
+ * One character's blueprint-source settings.
+ *
+ * Separate from getBlueprintSources (which returns only ENABLED characters,
+ * for resolution) - the Settings UI needs to render a row for every character,
+ * including the ones that are turned off.
+ *
+ * @param {number} characterId
+ * @returns {{useBlueprintsFrom: boolean, enabledDivisions: number[]}}
+ */
+function getCharacterBlueprintSettings(characterId) {
+  try {
+    const db = getCharacterDatabase();
+    const row = db.prepare(`
+      SELECT use_blueprints_from, blueprint_enabled_divisions
+        FROM character_settings
+       WHERE character_id = ?
+    `).get(characterId);
+
+    if (!row) {
+      // No row yet: absent means opted out, which is the correct default.
+      return { useBlueprintsFrom: false, enabledDivisions: [] };
+    }
+
+    let enabledDivisions = [];
+    try {
+      enabledDivisions = JSON.parse(row.blueprint_enabled_divisions || '[]');
+    } catch (error) {
+      console.error(
+        `[Blueprint Sources] Unparseable divisions for ${characterId}; treating as none:`,
+        error
+      );
+    }
+
+    return {
+      useBlueprintsFrom: !!row.use_blueprints_from,
+      enabledDivisions,
+    };
+  } catch (error) {
+    console.error('[Blueprint Sources] Error reading character blueprint settings:', error);
+    return { useBlueprintsFrom: false, enabledDivisions: [] };
+  }
+}
+
+/**
+ * Turn a character on or off as a blueprint source. UNGUARDED.
+ *
+ * Writes without checking that the character exists. Use the guarded
+ * `setUseBlueprintsFrom` unless you are a bootstrap path that must write
+ * before or outside the normal character lifecycle.
+ *
+ * @param {number} characterId
+ * @param {boolean} enabled
+ * @returns {boolean} success
+ */
+function setUseBlueprintsFrom_Unsafe(characterId, enabled) {
+  try {
+    const db = getCharacterDatabase();
+    db.prepare(`
+      INSERT INTO character_settings (character_id, enabled_divisions, use_blueprints_from)
+      VALUES (?, '[]', ?)
+      ON CONFLICT(character_id) DO UPDATE SET
+        use_blueprints_from = excluded.use_blueprints_from
+    `).run(characterId, enabled ? 1 : 0);
+    return true;
+  } catch (error) {
+    console.error('[Blueprint Sources] Error setting use_blueprints_from:', error);
+    return false;
+  }
+}
+
+/**
+ * Set which corp divisions supply BLUEPRINTS for a character. UNGUARDED.
+ *
+ * See setUseBlueprintsFrom_Unsafe - prefer the guarded
+ * `setBlueprintEnabledDivisions`.
+ *
+ * @param {number} characterId
+ * @param {number[]} divisions division ids (1-7); invalid ids are dropped
+ * @returns {boolean} success
+ */
+function setBlueprintEnabledDivisions_Unsafe(characterId, divisions) {
+  try {
+    const db = getCharacterDatabase();
+    const valid = (divisions || [])
+      .filter((id) => Number.isInteger(id) && id >= 1 && id <= 7)
+      .sort((a, b) => a - b);
+
+    db.prepare(`
+      INSERT INTO character_settings (character_id, enabled_divisions, blueprint_enabled_divisions)
+      VALUES (?, '[]', ?)
+      ON CONFLICT(character_id) DO UPDATE SET
+        blueprint_enabled_divisions = excluded.blueprint_enabled_divisions
+    `).run(characterId, JSON.stringify(valid));
+    return true;
+  } catch (error) {
+    console.error('[Blueprint Sources] Error setting blueprint divisions:', error);
+    return false;
+  }
+}
+
+/**
+ * Turn a character on or off as a blueprint source.
+ *
+ * Refuses to write for a character that does not exist, matching the asset
+ * setters. Use setUseBlueprintsFrom_Unsafe if you need to bypass that.
+ *
+ * @param {number} characterId
+ * @param {boolean} enabled
+ * @returns {boolean} success
+ */
+const setUseBlueprintsFrom = guardCharacterExists(
+  'Blueprint Sources',
+  setUseBlueprintsFrom_Unsafe
+);
+
+/**
+ * Set which corp divisions supply BLUEPRINTS for a character.
+ *
+ * Guarded; see setBlueprintEnabledDivisions_Unsafe for the raw variant.
+ *
+ * @param {number} characterId
+ * @param {number[]} divisions division ids (1-7)
+ * @returns {boolean} success
+ */
+const setBlueprintEnabledDivisions = guardCharacterExists(
+  'Blueprint Sources',
+  setBlueprintEnabledDivisions_Unsafe
+);
 
 /**
  * Update character division names from ESI
@@ -1913,6 +2451,19 @@ module.exports = {
   getManufacturingFacility,
   getCharacterDivisionSettings,
   updateCharacterEnabledDivisions,
+  // Blueprint sources - separate axis from the asset sources above.
+  ensureCharacterSettingsRow,
+  getBlueprintSources,
+  getCharacterBlueprintSettings,
+  setUseBlueprintsFrom,
+  setBlueprintEnabledDivisions,
+  // Unguarded variants: skip the "character exists" check. For bootstrap paths
+  // that legitimately write before or outside the normal lifecycle - prefer the
+  // guarded names above.
+  updateCharacterEnabledDivisions_Unsafe,
+  setUseBlueprintsFrom_Unsafe,
+  setBlueprintEnabledDivisions_Unsafe,
+  characterExists,
   updateCharacterDivisionNames,
   getDivisionNamesCacheStatus,
   migrateGlobalDivisionsToCharacters,

@@ -1,0 +1,116 @@
+<!--
+  Audit Log - native shell view.
+
+  A session-only ring buffer of pricing / material / invention calculations,
+  captured while Audit Mode is on. List on the left, full breakdown on the
+  right. Records arrive live, so nothing here reloads on a timer.
+
+  Deliberately <div>, not <header>/<main>: styles.css styles those bare tags as
+  page-level chrome and they would repaint these blocks by tag name alone
+  (binding rule 6b).
+-->
+<div id="audit-log-view" class="al-view">
+
+  <!-- header: status, counts, actions -->
+  <div class="al-header">
+    <div class="al-title-block">
+      <h1 class="al-title">Audit Log</h1>
+      <span class="al-status" id="al-status">
+        <span class="pulse-dot" id="al-status-dot" aria-hidden="true"></span>
+        <span id="al-status-text">Checking…</span>
+      </span>
+    </div>
+
+    <div class="al-spacer"></div>
+
+    <div class="al-summary" id="al-summary">
+      <div class="al-stat">
+        <span class="al-stat-value" id="al-count-total">0</span>
+        <span class="al-stat-label">Total</span>
+      </div>
+      <div class="al-stat">
+        <span class="al-stat-value is-pricing" id="al-count-pricing">0</span>
+        <span class="al-stat-label">Pricing</span>
+      </div>
+      <div class="al-stat">
+        <span class="al-stat-value is-materials" id="al-count-materials">0</span>
+        <span class="al-stat-label">Materials</span>
+      </div>
+      <div class="al-stat">
+        <span class="al-stat-value is-invention" id="al-count-invention">0</span>
+        <span class="al-stat-label">Invention</span>
+      </div>
+    </div>
+
+    <div class="al-actions">
+      <button type="button" class="btn btn-secondary btn-sm" id="al-settings-btn">Settings</button>
+      <button type="button" class="btn btn-secondary btn-sm" id="al-clear-btn">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+             stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <polyline points="3 6 5 6 21 6"></polyline>
+          <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+        </svg>
+        Clear
+      </button>
+    </div>
+  </div>
+
+  <!-- filters -->
+  <div class="al-filters">
+    <div class="al-search">
+      <svg class="al-search-icon" width="15" height="15" viewBox="0 0 24 24" fill="none"
+           stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+           aria-hidden="true">
+        <circle cx="11" cy="11" r="8"></circle>
+        <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+      </svg>
+      <input type="text" id="al-search" class="qf-input al-search-input"
+             placeholder="Search by item, blueprint, or source…"
+             aria-label="Search records">
+    </div>
+
+    <!-- Four and five fixed options: plain selects, not QFSearchSelect (rule 5). -->
+    <select id="al-filter-type" class="qf-select al-select" aria-label="Filter by type">
+      <option value="">All Types</option>
+      <option value="pricing">Pricing</option>
+      <option value="materials">Materials</option>
+      <option value="invention">Invention</option>
+    </select>
+
+    <select id="al-filter-confidence" class="qf-select al-select" aria-label="Filter by confidence">
+      <option value="">All Confidence</option>
+      <option value="high">High</option>
+      <option value="medium">Medium</option>
+      <option value="low">Low</option>
+      <option value="none">None</option>
+    </select>
+
+    <div class="al-spacer"></div>
+
+    <span class="al-shown-count" id="al-shown-count"></span>
+  </div>
+
+  <!-- body: list + detail -->
+  <div class="al-body">
+    <div class="al-list qf-scroll">
+      <table class="al-table" id="al-table">
+        <thead>
+          <tr id="al-thead-row">
+            <th class="al-th" data-sort="timestamp" scope="col">Time</th>
+            <th class="al-th" data-sort="type" scope="col">Type</th>
+            <th class="al-th" data-sort="name" scope="col">Item / Blueprint</th>
+            <th class="al-th" data-sort="method" scope="col">Method</th>
+            <th class="al-th" data-sort="price" scope="col">Price</th>
+            <th class="al-th" data-sort="confidence" scope="col">Confidence</th>
+            <th class="al-th" data-sort="marketSetName" scope="col">Market Set</th>
+          </tr>
+        </thead>
+        <tbody id="al-tbody"></tbody>
+      </table>
+      <div id="al-empty" class="al-empty" hidden></div>
+    </div>
+
+    <div class="al-detail qf-scroll" id="al-detail"></div>
+  </div>
+
+</div>

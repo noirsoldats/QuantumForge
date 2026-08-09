@@ -16,6 +16,10 @@ function openAuthErrorWindow(errorInfo) {
     minimizable: false,
     maximizable: false,
     alwaysOnTop: true,
+    // Without this the window paints WHITE until the document loads. Every
+    // other window in the app sets it; this one is the most jarring place to
+    // miss it, because it appears unprompted over whatever the user is doing.
+    backgroundColor: '#1e1e2e',
     title: 'Authentication Required — Quantum Forge',
     webPreferences: {
       preload: path.join(__dirname, '../preload/preload.js'),

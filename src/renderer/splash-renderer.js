@@ -12,9 +12,108 @@ const errorPanel = document.getElementById('error-panel');
 const errorMessage = document.getElementById('error-message');
 const errorButtons = document.getElementById('error-buttons');
 const overallStatus = document.getElementById('overall-status');
+const overallFill = document.getElementById('overall-fill');
+const versionLabel = document.getElementById('splash-version');
 
 // Track current state
 let currentAction = null;
+
+/**
+ * Advance the overall progress bar.
+ *
+ * Derived from how many task rows have finished rather than reported by main:
+ * the startup sequence emits per-task progress only, and a second source of
+ * truth would drift from what the list actually shows. Hidden rows (the SDE
+ * download only appears when there IS one) are excluded so the bar reflects
+ * the work actually being done.
+ */
+function updateOverallProgress() {
+  if (!overallFill || !tasksContainer) return;
+
+  const visible = [...tasksContainer.querySelectorAll('.task-item')].filter(
+    (item) => item.style.display !== 'none'
+  );
+  if (visible.length === 0) return;
+
+  const done = visible.filter((item) => item.classList.contains('completed')).length;
+
+  // An in-progress task counts as a partial step, so the bar moves during a
+  // long download instead of sitting still between whole tasks.
+  const active = visible.find((item) => item.classList.contains('in-progress'));
+  let partial = 0;
+  if (active) {
+    const fill = active.querySelector('.progress-fill');
+    const pct = fill ? parseFloat(fill.style.width) : 0;
+    partial = Number.isFinite(pct) ? pct / 100 : 0;
+  }
+
+  const ratio = Math.min((done + partial) / visible.length, 1);
+  overallFill.style.width = `${Math.round(ratio * 100)}%`;
+}
+
+/**
+ * Ask main to fit the window to the card.
+ *
+ * The card's height is not fixed: the SDE download row appears only when there
+ * IS a download, and the action / error panels replace the task list with
+ * something taller. A fixed window left a visible margin around the smaller
+ * states, so the window follows the content instead.
+ *
+ * Measured off the CARD, not the body: the body is a full-height grid used to
+ * centre the card, so `body.scrollHeight` always reports the viewport and the
+ * window could only ever grow.
+ *
+ * Deferred to rAF because a class or display change made in the same tick has
+ * not been laid out yet, and measuring first yields the PREVIOUS height.
+ */
+let fitPending = false;
+function fitWindowToContent() {
+  if (fitPending) return;
+  fitPending = true;
+
+  requestAnimationFrame(() => {
+    fitPending = false;
+
+    const card = document.querySelector('.splash-card');
+    const api = window.electronAPI && window.electronAPI.startup;
+    if (!card || !api || !api.fitToContent) return;
+
+    // The card fills the window edge to edge - no container padding to add.
+    const height = Math.ceil(card.getBoundingClientRect().height);
+    api.fitToContent(height).catch(() => {
+      /* the window is closing; nothing to fit */
+    });
+  });
+}
+
+/*
+ * Watch the card and re-fit whenever its height changes.
+ *
+ * A ResizeObserver rather than a call at each mutation site: the card changes
+ * shape from several places (a task row appearing, a panel swapping in, a
+ * populated error path adding a log block, even a long status string wrapping),
+ * and hooking each one by hand guarantees the one that gets missed is the one
+ * that looks wrong. The observer catches all of them, including any added
+ * later.
+ *
+ * Safe against feedback: main ignores a delta of <= 2px, so a resize triggered
+ * by our own fit cannot start a loop.
+ */
+if (typeof ResizeObserver !== 'undefined') {
+  const card = document.querySelector('.splash-card');
+  if (card) {
+    new ResizeObserver(() => fitWindowToContent()).observe(card);
+  }
+}
+
+// The version is shown in the footer; failing to read it is not worth a
+// visible error on a splash screen, so it simply stays blank.
+if (versionLabel && window.electronAPI && window.electronAPI.app) {
+  window.electronAPI.app
+    .getVersion()
+    .then((v) => { versionLabel.textContent = v ? `v${v}` : ''; })
+    .catch(() => {});
+}
 
 // Listen for progress updates
 window.electronAPI.startup.onProgress((progress) => {
@@ -105,6 +204,11 @@ function updateTaskStatus(task, status, percentage, complete) {
   } else {
     taskElement.classList.add('in-progress');
   }
+
+  updateOverallProgress();
+
+  // A task row can appear (the SDE download) or change height, so re-fit.
+  fitWindowToContent();
 }
 
 // Show action panel
@@ -309,6 +413,7 @@ function showSDEOptionalAction(data) {
 function hideActionPanel() {
   actionPanel.style.display = 'none';
   tasksContainer.style.display = 'flex';
+  fitWindowToContent();
 }
 
 // Show error panel
@@ -366,6 +471,7 @@ async function showErrorPanel(error) {
 function hideErrorPanel() {
   errorPanel.style.display = 'none';
   tasksContainer.style.display = 'flex';
+  fitWindowToContent();
 }
 
 // Utility: Format bytes to human readable

@@ -1,129 +1,174 @@
+/* ============================================================
+   Loading Splash
+
+   Ported from the "Loading Splash (1a)" mockup: a centred card rather than the
+   previous full-bleed list. Every class and data-task the renderer drives is
+   preserved.
+
+   The action and error panels are NOT in the mockup - it only depicts the
+   happy path - but they are how a failed SDE download recovers, so they are
+   designed here in the same language rather than dropped.
+
+   This page loads shared/variables.css; it previously loaded no design tokens
+   at all and hardcoded the token values by hand.
+   ============================================================ */
+
 * {
   margin: 0;
   padding: 0;
   box-sizing: border-box;
 }
 
+/*
+ * No padding and no centring: the window is sized to exactly this card, so the
+ * card IS the window. Padding here would show as a gradient margin around it.
+ */
 body {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-  background: linear-gradient(135deg, #1e1e2e 0%, #2d2d44 100%);
-  color: #e0e0e0;
+  font-family: var(--qf-font-sans);
+  background: var(--qf-bg-elevated);
+  color: var(--qf-text-primary);
   height: 100vh;
   overflow: hidden;
-  display: flex;
-  align-items: center;
-  justify-content: center;
 }
 
 #splash-container {
   width: 100%;
   height: 100%;
-  display: flex;
-  flex-direction: column;
-  padding: 40px;
-}
-
-/* Header */
-.splash-header {
-  text-align: center;
-  margin-bottom: 40px;
-}
-
-.splash-header h1 {
-  font-size: 2.5em;
-  background: linear-gradient(135deg, #64b4ff 0%, #9d7fff 100%);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
-  margin-bottom: 8px;
-}
-
-.splash-header .subtitle {
-  color: #a0a0b0;
-  font-size: 0.95em;
-}
-
-/* Content Area */
-.splash-content {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
+  /* If main had to clamp the window to the display work area, the card is
+     taller than the window - scroll it rather than clipping the footer. */
   overflow-y: auto;
 }
 
-/* Tasks Container */
+.splash-card {
+  width: 100%;
+  background: var(--qf-bg-elevated);
+  /* Border and radius dropped with the margin: with the card filling the
+     window there is nothing outside them to separate it from, and a rounded
+     corner would expose the desktop behind a frameless window. */
+  overflow: hidden;
+}
+
+.splash-accent-bar {
+  height: 3px;
+  background: var(--qf-accent-gradient-h);
+}
+
+/* ---------- Header ---------- */
+
+.splash-header {
+  padding: 30px 32px 22px;
+  text-align: center;
+  border-bottom: 1px solid var(--qf-border-subtle);
+}
+
+.splash-mark {
+  width: 56px;
+  height: 56px;
+  margin-bottom: 14px;
+  filter: drop-shadow(0 0 12px var(--qf-accent-glow));
+}
+
+.splash-header h1 {
+  font-size: 26px;
+  font-weight: 700;
+  letter-spacing: -0.4px;
+  background: var(--qf-accent-gradient);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.splash-header .subtitle {
+  margin-top: 6px;
+  font-size: 12.5px;
+  color: var(--qf-text-muted);
+  letter-spacing: 0.3px;
+}
+
+/* ---------- Content ---------- */
+
+/*
+ * No max-height here, deliberately. The window is sized to this content, so a
+ * `vh` cap would be circular: the window shrinks to fit, which shrinks the cap,
+ * which scrolls the content instead of letting the window grow. The real
+ * ceiling is the display work area, enforced in the main process where the
+ * screen size is actually known.
+ */
+.splash-content {
+  padding: 18px 26px 8px;
+}
+
+/* ---------- Tasks ---------- */
+
 .tasks-container {
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  margin-bottom: 20px;
+  gap: 3px;
 }
 
+/*
+ * Flat rows, not bordered cards: state is carried by the icon and the status
+ * text, so a per-row border competed with the card's own frame.
+ */
 .task-item {
   display: flex;
   align-items: center;
-  gap: 15px;
-  padding: 15px 20px;
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(100, 180, 255, 0.2);
-  border-radius: 8px;
-  transition: all 0.3s ease;
+  gap: 13px;
+  padding: 9px 4px;
+  border-radius: var(--qf-radius-sm);
+  background-color: transparent;
+  transition: background-color 0.3s ease;
 }
 
-.task-item.pending {
-  opacity: 0.5;
-}
+.task-item.pending { opacity: 0.55; }
 
-.task-item.in-progress {
-  border-color: rgba(100, 180, 255, 0.5);
-  background: rgba(100, 180, 255, 0.08);
-}
-
-.task-item.completed {
-  border-color: rgba(74, 222, 128, 0.5);
-  background: rgba(74, 222, 128, 0.05);
-}
-
-.task-item.error {
-  border-color: rgba(239, 68, 68, 0.5);
-  background: rgba(239, 68, 68, 0.05);
-}
-
-.task-item.warning {
-  border-color: rgba(255, 152, 0, 0.5);
-  background: rgba(255, 152, 0, 0.05);
-}
+.task-item.in-progress { background-color: var(--qf-accent-dim); }
 
 /* Task Icon */
 .task-icon {
-  width: 24px;
-  height: 24px;
-  position: relative;
+  width: 20px;
+  height: 20px;
   flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  position: relative;
+}
+
+/* Pending marker: a dot until the task starts. Hidden once the spinner or
+   checkmark takes over. */
+.task-icon::before {
+  content: '';
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--qf-border-active);
+}
+
+.task-item.in-progress .task-icon::before,
+.task-item.completed .task-icon::before,
+.task-item.error .task-icon::before,
+.task-item.warning .task-icon::before {
+  display: none;
 }
 
 .task-icon .spinner {
   display: none;
-  width: 20px;
-  height: 20px;
-  border: 3px solid rgba(100, 180, 255, 0.3);
-  border-top-color: #64b4ff;
+  width: 18px;
+  height: 18px;
+  border: 2px solid var(--qf-border);
+  border-top-color: var(--qf-accent);
   border-radius: 50%;
-  animation: spin 1s linear infinite;
+  animation: spin 0.7s linear infinite;
 }
 
-.task-item.in-progress .task-icon .spinner {
-  display: block;
-}
+.task-item.in-progress .task-icon .spinner { display: block; }
 
 .task-icon .checkmark {
   display: none;
-  color: #4ade80;
+  color: var(--qf-success);
 }
 
-.task-item.completed .task-icon .checkmark {
-  display: block;
-}
+.task-item.completed .task-icon .checkmark { display: block; }
 
 @keyframes spin {
   to { transform: rotate(360deg); }
@@ -136,260 +181,289 @@ body {
 }
 
 .task-name {
-  font-weight: 600;
-  font-size: 0.95em;
-  color: #ffffff;
-  margin-bottom: 4px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--qf-text-heading);
 }
+
+.task-item.pending .task-name { color: var(--qf-text-faint); }
 
 .task-status {
-  font-size: 0.85em;
-  color: #a0a0b0;
+  font-size: 11px;
+  color: var(--qf-text-faint);
+  margin-top: 2px;
 }
 
-.task-item.completed .task-status {
-  color: #4ade80;
-}
+.task-item.in-progress .task-status { color: var(--qf-accent); }
+.task-item.completed .task-status { color: var(--qf-success); }
+.task-item.error .task-status { color: var(--qf-error); }
+.task-item.warning .task-status { color: var(--qf-warning); }
 
-.task-item.error .task-status {
-  color: #ef4444;
-}
-
-.task-item.warning .task-status {
-  color: #ff9800;
-}
-
-/* Task Progress (for downloads) */
+/* Task Progress (per-task, e.g. the SDE download) */
 .task-progress {
-  display: flex;
-  align-items: center;
-  gap: 12px;
+  width: 110px;
   flex-shrink: 0;
-  min-width: 150px;
 }
 
 .progress-bar {
-  flex: 1;
-  height: 8px;
-  background: rgba(100, 180, 255, 0.2);
-  border-radius: 4px;
+  height: 5px;
+  border-radius: var(--qf-radius-pill);
+  background: var(--qf-surface-sunken);
   overflow: hidden;
 }
 
 .progress-fill {
   height: 100%;
-  background: linear-gradient(90deg, #64b4ff 0%, #9d7fff 100%);
-  border-radius: 4px;
-  transition: width 0.3s ease;
   width: 0%;
+  background: var(--qf-accent-gradient-h);
+  border-radius: var(--qf-radius-pill);
+  transition: width 0.3s ease;
 }
 
 .progress-text {
-  font-size: 0.85em;
-  color: #64b4ff;
-  font-weight: 600;
-  min-width: 45px;
+  font-size: 10px;
+  font-family: var(--qf-font-mono);
+  color: var(--qf-text-faint);
   text-align: right;
+  margin-top: 3px;
 }
 
-/* Action Panel */
-.action-panel {
-  background: rgba(100, 180, 255, 0.1);
-  border: 2px solid rgba(100, 180, 255, 0.3);
-  border-radius: 12px;
-  padding: 30px;
+/* ---------- Action / Error panels ----------
+   Not in the mockup (it shows only the happy path), but they are the recovery
+   path for a failed startup. Styled to sit inside the card. */
+
+.action-panel,
+.error-panel {
+  border-radius: var(--qf-radius-md);
+  padding: 20px;
   text-align: center;
-  margin-top: 20px;
+  margin-top: 14px;
+}
+
+.action-panel {
+  background: var(--qf-accent-dim);
+  border: 1px solid var(--qf-border-active);
+}
+
+.error-panel {
+  background: var(--qf-error-dim);
+  border: 1px solid var(--qf-error);
 }
 
 .action-icon {
-  color: #64b4ff;
-  margin-bottom: 20px;
-}
-
-.action-panel h2 {
-  font-size: 1.5em;
-  color: #ffffff;
+  color: var(--qf-accent);
   margin-bottom: 12px;
 }
 
-.action-panel p {
-  color: #c0c0d0;
-  font-size: 0.95em;
-  line-height: 1.5;
-  margin-bottom: 20px;
+.error-icon {
+  color: var(--qf-error);
+  margin-bottom: 12px;
+}
+
+.action-panel h2,
+.error-panel h2 {
+  font-size: 15px;
+  font-weight: 700;
+  margin-bottom: 8px;
+}
+
+.action-panel h2 { color: var(--qf-text-heading); }
+.error-panel h2 { color: var(--qf-error); }
+
+.action-panel p,
+.error-panel p {
+  color: var(--qf-text-primary);
+  font-size: 12.5px;
+  line-height: 1.55;
+  margin-bottom: 14px;
 }
 
 .action-details {
-  background: rgba(0, 0, 0, 0.3);
-  border-radius: 8px;
-  padding: 15px;
-  margin-bottom: 20px;
-  font-size: 0.9em;
+  background: var(--qf-surface-sunken);
+  border-radius: var(--qf-radius-md);
+  padding: 12px;
+  margin-bottom: 14px;
+  font-size: 12px;
+  text-align: left;
 }
 
 .action-details .detail-row {
   display: flex;
   justify-content: space-between;
-  padding: 8px 0;
-  border-bottom: 1px solid rgba(100, 180, 255, 0.1);
+  gap: 12px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--qf-border-subtle);
 }
 
-.action-details .detail-row:last-child {
-  border-bottom: none;
-}
+.action-details .detail-row:last-child { border-bottom: none; }
 
-.action-details .detail-label {
-  color: #a0a0b0;
-}
+.action-details .detail-label { color: var(--qf-text-muted); }
 
 .action-details .detail-value {
-  color: #ffffff;
+  color: var(--qf-text-heading);
   font-weight: 600;
+  font-family: var(--qf-font-mono);
 }
 
-.action-details .detail-value.highlight {
-  color: #4ade80;
-}
+.action-details .detail-value.highlight { color: var(--qf-success); }
 
-/* Action Buttons */
-.action-buttons {
-  display: flex;
-  gap: 12px;
-  justify-content: center;
-  flex-wrap: wrap;
-}
-
-.primary-button {
-  padding: 12px 30px;
-  background: linear-gradient(135deg, #64b4ff 0%, #9d7fff 100%);
-  color: #ffffff;
-  border: none;
-  border-radius: 8px;
-  font-size: 0.95em;
-  font-weight: 600;
-  cursor: pointer;
-  transition: all 0.3s ease;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.primary-button:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 8px 20px rgba(100, 180, 255, 0.4);
-}
-
-.primary-button:active {
-  transform: translateY(0);
-}
-
-.secondary-button {
-  padding: 12px 30px;
-  background: rgba(255, 255, 255, 0.05);
-  color: #e0e0e0;
-  border: 1px solid rgba(100, 180, 255, 0.3);
-  border-radius: 8px;
-  font-size: 0.95em;
-  font-weight: 600;
-  cursor: pointer;
-  transition: all 0.3s ease;
-}
-
-.secondary-button:hover {
-  background: rgba(255, 255, 255, 0.1);
-  border-color: rgba(100, 180, 255, 0.5);
-}
-
-.secondary-button:active {
-  transform: scale(0.98);
-}
-
-/* Error Panel */
-.error-panel {
-  background: rgba(239, 68, 68, 0.1);
-  border: 2px solid rgba(239, 68, 68, 0.3);
-  border-radius: 12px;
-  padding: 30px;
-  text-align: center;
-  margin-top: 20px;
-}
-
-.error-icon {
-  color: #ef4444;
-  margin-bottom: 20px;
-}
-
-.error-panel h2 {
-  font-size: 1.5em;
-  color: #ef4444;
-  margin-bottom: 12px;
-}
-
-.error-panel p {
-  color: #c0c0d0;
-  font-size: 0.95em;
-  line-height: 1.5;
-  margin-bottom: 20px;
-}
-
-/* Error Log Info Section */
+/* Error log info */
 .error-log-info {
-  background: rgba(0, 0, 0, 0.3);
-  border-radius: 8px;
-  padding: 15px 20px;
-  margin-bottom: 20px;
+  background: var(--qf-surface-sunken);
+  border-radius: var(--qf-radius-md);
+  padding: 12px 14px;
+  margin-bottom: 14px;
   text-align: left;
 }
 
 .error-log-info .log-info-label {
-  color: #a0a0b0;
-  font-size: 0.85em;
-  margin-bottom: 8px;
+  color: var(--qf-text-muted);
+  font-size: 11.5px;
+  margin-bottom: 6px;
 }
 
 .error-log-info .log-path {
-  color: #64b4ff;
-  font-size: 0.8em;
-  font-family: 'Monaco', 'Menlo', 'Consolas', monospace;
+  color: var(--qf-accent);
+  font-size: 11px;
+  font-family: var(--qf-font-mono);
   word-break: break-all;
-  background: rgba(100, 180, 255, 0.1);
-  padding: 8px 12px;
-  border-radius: 4px;
-  margin-bottom: 12px;
+  background: var(--qf-accent-dim);
+  padding: 8px 10px;
+  border-radius: var(--qf-radius-sm);
+  margin-bottom: 10px;
 }
 
 .error-log-info .report-instructions {
-  color: #a0a0b0;
-  font-size: 0.85em;
+  color: var(--qf-text-muted);
+  font-size: 11.5px;
   line-height: 1.5;
   margin-bottom: 0;
 }
 
 .error-log-info .github-link {
-  color: #9d7fff;
+  color: var(--qf-accent-bright);
   font-weight: 600;
 }
 
-/* Secondary button with icon */
-.secondary-button {
+/* ---------- Buttons ----------
+   Local classes, because this page deliberately does NOT load
+   components.css: it must paint before the app is ready, and the shared
+   sheet pulls in far more than three buttons need. Values match .btn. */
+
+.action-buttons {
   display: flex;
+  gap: 10px;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+.primary-button,
+.secondary-button {
+  display: inline-flex;
   align-items: center;
   gap: 8px;
+  padding: 9px 18px;
+  border-radius: var(--qf-radius-md);
+  font-family: var(--qf-font-sans);
+  font-size: var(--qf-text-sm);
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
 }
 
-.secondary-button svg {
-  flex-shrink: 0;
+.primary-button {
+  background: var(--qf-accent-gradient);
+  color: var(--qf-text-on-accent);
+  border: none;
 }
 
-/* Footer */
+.primary-button:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 16px var(--qf-accent-glow);
+}
+
+.primary-button:active { transform: translateY(0); }
+
+.secondary-button {
+  background: var(--qf-surface);
+  color: var(--qf-text-primary);
+  border: 1px solid var(--qf-border);
+}
+
+.secondary-button:hover {
+  background: var(--qf-surface-hover);
+  border-color: var(--qf-border-active);
+}
+
+.secondary-button:active { transform: scale(0.98); }
+
+.secondary-button svg { flex-shrink: 0; }
+
+/* ---------- Footer ---------- */
+
 .splash-footer {
-  padding-top: 20px;
-  border-top: 1px solid rgba(100, 180, 255, 0.2);
-  text-align: center;
+  padding: 14px 26px 18px;
+  border-top: 1px solid var(--qf-border-subtle);
+}
+
+.overall-bar {
+  height: 6px;
+  border-radius: var(--qf-radius-pill);
+  background: var(--qf-surface-sunken);
+  overflow: hidden;
+  margin-bottom: 11px;
+}
+
+.overall-fill {
+  height: 100%;
+  width: 0%;
+  background: var(--qf-accent-gradient-h);
+  border-radius: var(--qf-radius-pill);
+  transition: width 0.3s ease;
+}
+
+.splash-footer-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.overall-status-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.splash-pulse {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: var(--qf-accent);
+  animation: splash-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes splash-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
 }
 
 .overall-status {
-  color: #a0a0b0;
-  font-size: 0.9em;
+  font-size: 12px;
+  color: var(--qf-text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
+
+.splash-version {
+  font-size: 11px;
+  font-family: var(--qf-font-mono);
+  color: var(--qf-text-faint);
+  flex-shrink: 0;
+}
+
+/* Utility */
+.hidden { display: none !important; }

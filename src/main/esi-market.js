@@ -47,6 +47,25 @@ async function retryFetch(fetchFn, maxRetries = 3, initialDelay = 1000) {
 }
 
 /**
+ * Minimum gap between USER-INITIATED refreshes of the same market location.
+ *
+ * 5 minutes, matching `market_orders` in esi-fetch.js's policy table and ESI's
+ * own 300s cache: asking again sooner cannot return different data.
+ *
+ * This replaced a 30-minute gate that applied to REGIONS ONLY. Structures were
+ * fetched with `forceRefresh: true` and bypassed their gate entirely, so a
+ * manual refresh always updated a private structure while silently skipping
+ * NPC regions - with no log line and no elapsed time, so it looked like the
+ * region had been refreshed when it had not. Two endpoints with identical
+ * cache semantics behaving six times differently is not something a user can
+ * be expected to reason about.
+ *
+ * `canFetch` still honours ESI's `expires_at` header on top of this, which is
+ * the authoritative signal.
+ */
+const MANUAL_REFRESH_MIN_INTERVAL_MS = 5 * 60 * 1000;
+
+/**
  * Check if we can fetch from ESI (rate limiting)
  * @param {string} key - Cache key
  * @param {number} minInterval - Minimum interval in milliseconds
@@ -89,6 +108,53 @@ function updateFetchMetadata(key, expiresAt = null) {
 }
 
 /**
+ * Metadata key recording that an item has NO market history.
+ * Kept in fetch_metadata rather than as a market_history row, because a
+ * sentinel row would pollute every average and volume calculation.
+ */
+function emptyHistoryKey(regionId, typeId) {
+  return `market_history_empty_${regionId}_${typeId}`;
+}
+
+/**
+ * Remember that ESI reports no history for this item.
+ *
+ * Without this the item is re-fetched on every pricing pass forever:
+ * isHistoryStale() derives freshness from rows in market_history, and an item
+ * with no history leaves no rows to date-stamp. Plenty of items legitimately
+ * have no history - blueprints, unlisted or newly introduced types.
+ *
+ * Measured on the reporting machine: 6,981 history fetch-metadata keys against
+ * only 5,113 types with rows, so ~1,900 types were being re-fetched on every
+ * pass to be told "empty" again.
+ *
+ * @param {number} regionId
+ * @param {number} typeId
+ * @param {number|null} [cacheExpiresAt] - ESI's own expiry, when it gave one
+ */
+function recordEmptyHistory(regionId, typeId, cacheExpiresAt = null) {
+  updateFetchMetadata(emptyHistoryKey(regionId, typeId), cacheExpiresAt);
+}
+
+/**
+ * Whether a known-empty history result is still within its cache window.
+ * @returns {boolean}
+ */
+function hasFreshEmptyHistory(regionId, typeId) {
+  const db = getMarketDatabase();
+  const row = db.prepare(
+    'SELECT last_fetch, expires_at FROM fetch_metadata WHERE key = ?'
+  ).get(emptyHistoryKey(regionId, typeId));
+
+  if (!row) return false;
+
+  // Prefer ESI's own expiry; otherwise fall back to the same 11:05 UTC daily
+  // cutoff that governs real history, so both age out together.
+  if (row.expires_at) return Date.now() < row.expires_at;
+  return !isPastDailyHistoryCutoff(row.last_fetch);
+}
+
+/**
  * Get cache expiry from ESI response headers
  * @param {Response} response - Fetch response
  * @returns {number|null} Expiry timestamp
@@ -118,9 +184,10 @@ async function fetchMarketOrders(regionId, typeId = null, locationFilter = null,
   }
 
   const cacheKey = `market_orders_${regionId}_${typeId || 'all'}`;
-  const minInterval = 30 * 60 * 1000; // 30 minutes
 
-  if (!canFetch(cacheKey, minInterval)) {
+  // Same interval as every other market-orders path - see
+  // MANUAL_REFRESH_MIN_INTERVAL_MS.
+  if (!canFetch(cacheKey, MANUAL_REFRESH_MIN_INTERVAL_MS)) {
     console.log(`Market orders for region ${regionId} type ${typeId} recently fetched, using cache`);
     return getCachedMarketOrders(regionId, typeId, locationFilter);
   }
@@ -146,11 +213,13 @@ async function fetchMarketOrders(regionId, typeId = null, locationFilter = null,
       parallelPages: true,
       emptyStatuses: [400, 404],
       onProgress: (p) => {
-        const { BrowserWindow } = require('electron');
-        const mainWindow = BrowserWindow.getAllWindows()[0];
-        if (mainWindow) {
-          mainWindow.webContents.send('market:fetchProgress', p);
-        }
+        // Sent to the requesting frame only, like the stage events - a window
+        // that did not start the refresh should not animate for it.
+        //
+        // The region is attached here because esiFetch only knows about pages.
+        // Without it a refresh spanning several regions is unattributable - the
+        // caller could show "page 3 of 9" but not WHICH region it belongs to.
+        emitFetchProgress({ ...p, regionId });
       },
     });
 
@@ -242,6 +311,15 @@ function storeMarketOrders(orders, regionId) {
  * @returns {Array} Market orders
  */
 function getCachedMarketOrders(regionId, typeId = null, locationFilter = null) {
+  // Inside a calculation this read is memoised, because one invention run can
+  // ask for the same order book ~180 times. Outside one it is a pass-through.
+  const { cachedOrders } = require('./market-read-cache');
+  return cachedOrders(regionId, typeId, locationFilter, () =>
+    readMarketOrdersFromDb(regionId, typeId, locationFilter)
+  );
+}
+
+function readMarketOrdersFromDb(regionId, typeId = null, locationFilter = null) {
   const db = getMarketDatabase();
 
   let query = 'SELECT * FROM market_orders WHERE region_id = ?';
@@ -310,10 +388,30 @@ function isHistoryStale(regionId, typeId) {
     return true;
   }
 
-  const lastFetchedTime = new Date(result.last_fetched);
+  const isStale = isPastDailyHistoryCutoff(result.last_fetched);
 
-  // Calculate today's 11:05 UTC cutoff
+  if (isStale) {
+    console.log(`[isHistoryStale] Data stale for typeId ${typeId} - last fetched: ${new Date(result.last_fetched).toISOString()}`);
+  }
+
+  return isStale;
+}
+
+/**
+ * True when a timestamp predates the most recent 11:05 UTC history update.
+ *
+ * ESI regenerates market history once a day at 11:05 UTC, so anything fetched
+ * before the latest occurrence of that time is stale and anything after it is
+ * current. Shared by the real-history and known-empty paths so both age out on
+ * the same schedule.
+ *
+ * @param {number|string|Date} fetchedAt
+ * @returns {boolean}
+ */
+function isPastDailyHistoryCutoff(fetchedAt) {
+  const fetchedTime = new Date(fetchedAt);
   const now = new Date();
+
   const todayUpdate = new Date(Date.UTC(
     now.getUTCFullYear(),
     now.getUTCMonth(),
@@ -323,17 +421,12 @@ function isHistoryStale(regionId, typeId) {
     0
   ));
 
-  // If current time is before today's update, use yesterday's update time
-  const cutoffTime = now >= todayUpdate ? todayUpdate : new Date(todayUpdate.getTime() - 86400000);
+  // Before today's update, the last regeneration was yesterday's.
+  const cutoffTime = now >= todayUpdate
+    ? todayUpdate
+    : new Date(todayUpdate.getTime() - 86400000);
 
-  // Data is stale if it was fetched before the cutoff
-  const isStale = lastFetchedTime < cutoffTime;
-
-  if (isStale) {
-    console.log(`[isHistoryStale] Data stale for typeId ${typeId} - last fetched: ${lastFetchedTime.toISOString()}, cutoff: ${cutoffTime.toISOString()}`);
-  }
-
-  return isStale;
+  return fetchedTime < cutoffTime;
 }
 
 /**
@@ -361,15 +454,28 @@ async function fetchHistoryFromESI(regionId, typeId) {
     });
 
     if (result.empty) {
-      console.log(`Item ${typeId} not available in market - returning empty array`);
+      // Record the miss so we do not ask again today.
+      //
+      // isHistoryStale() derives freshness from rows in market_history, so an
+      // item with NO history had nothing to date-stamp and was therefore
+      // permanently stale - re-fetched on every single pricing pass, forever.
+      // Assets pricing over a hangar of blueprints and unlisted items made that
+      // hundreds of guaranteed-empty ESI calls per load.
+      console.log(`Item ${typeId} not available in market - caching the miss`);
+      recordEmptyHistory(regionId, typeId, result.cacheExpiresAt);
       return [];
     }
 
     const history = result.data || [];
-    console.log(`Fetched ${history.length} days of market history for type ${typeId} in region ${regionId}`);
 
     // Store in database
     storeMarketHistory(history, regionId, typeId);
+
+    // Same problem as `result.empty`: a 200 carrying zero days would leave no
+    // rows behind and re-fetch forever.
+    if (history.length === 0) {
+      recordEmptyHistory(regionId, typeId, result.cacheExpiresAt);
+    }
 
     // Update fetch metadata
     const cacheKey = `market_history_${regionId}_${typeId}`;
@@ -403,16 +509,21 @@ async function fetchMarketHistory(regionId, typeId, forceRefresh = false) {
     return await fetchHistoryFromESI(regionId, typeId);
   }
 
+  // Known to have NO history, and that answer is still fresh. Checked before
+  // the staleness test because an item with no history has no rows to date, so
+  // isHistoryStale() always reports stale and would re-fetch forever.
+  if (hasFreshEmptyHistory(regionId, typeId)) {
+    return [];
+  }
+
   // Auto-refresh check: is data stale (before today's 11:05 UTC)?
   const stale = isHistoryStale(regionId, typeId);
 
   if (stale) {
-    console.log(`Market history stale for type ${typeId} (before 11:05 UTC cutoff), auto-fetching from ESI`);
     return await fetchHistoryFromESI(regionId, typeId);
   }
 
   // Data is fresh, return cached
-  console.log(`Returning fresh cached market history for type ${typeId}`);
   return getCachedMarketHistory(regionId, typeId);
 }
 
@@ -490,6 +601,13 @@ function hasFreshHistoryCache(regionId, typeId) {
  * @returns {Array} Market history
  */
 function getCachedMarketHistory(regionId, typeId, days = null) {
+  const { cachedHistory } = require('./market-read-cache');
+  return cachedHistory(regionId, typeId, days, () =>
+    readMarketHistoryFromDb(regionId, typeId, days)
+  );
+}
+
+function readMarketHistoryFromDb(regionId, typeId, days = null) {
   const db = getMarketDatabase();
 
   let query = `
@@ -632,11 +750,10 @@ function getHistoryDataStatus(regionId) {
 async function manualRefreshMarketData(regionId) {
   const lastFetch = getLastMarketFetchTimeForRegion(regionId);
   const now = Date.now();
-  const minInterval = 30 * 60 * 1000; // 30 minutes
 
   // Check if we can refresh this specific region
-  if (lastFetch && (now - lastFetch) < minInterval) {
-    const remainingTime = Math.ceil((minInterval - (now - lastFetch)) / 60000);
+  if (lastFetch && (now - lastFetch) < MANUAL_REFRESH_MIN_INTERVAL_MS) {
+    const remainingTime = Math.ceil((MANUAL_REFRESH_MIN_INTERVAL_MS - (now - lastFetch)) / 60000);
     return {
       success: false,
       rateLimited: true,
@@ -678,15 +795,25 @@ async function manualRefreshMarketData(regionId) {
  */
 async function manualRefreshHistoryData(regionId) {
   const lastFetch = getLastHistoryFetchTime();
-  const now = Date.now();
-  const minInterval = 30 * 60 * 1000; // 30 minutes
 
-  // Check if we can refresh
-  if (lastFetch && (now - lastFetch) < minInterval) {
-    const remainingTime = Math.ceil((minInterval - (now - lastFetch)) / 60000);
+  /*
+   * Gated by the 11:05 UTC publication, not a timer.
+   *
+   * ESI regenerates market history once a day, so "has anything changed since
+   * I last fetched?" is answered by `isPastDailyHistoryCutoff` - the rule the
+   * rest of this file already uses (see the fetch path and the staleness
+   * check). This used a flat 30-minute window, which was wrong in both
+   * directions: it blocked a legitimate refresh 20 minutes after publication,
+   * and allowed a pointless one 31 minutes later when nothing had changed.
+   *
+   * Deliberately NOT the 5-minute orders interval either - different endpoint,
+   * different cadence.
+   */
+  if (lastFetch && !isPastDailyHistoryCutoff(lastFetch)) {
     return {
       success: false,
-      error: `Please wait ${remainingTime} minutes before refreshing history again.`,
+      rateLimited: true,
+      error: 'Market history is already current - ESI publishes it once a day at 11:05 UTC.',
       lastFetch: lastFetch
     };
   }
@@ -706,8 +833,7 @@ async function manualRefreshHistoryData(regionId) {
       };
     }
 
-    const { BrowserWindow } = require('electron');
-    const mainWindow = BrowserWindow.getAllWindows()[0];
+    const { broadcast } = require('./broadcast');
 
     // Fetch history for each type ID
     let completed = 0;
@@ -715,9 +841,9 @@ async function manualRefreshHistoryData(regionId) {
       await fetchMarketHistory(regionId, typeId, true);
       completed++;
 
-      // Send progress update
-      if (mainWindow) {
-        mainWindow.webContents.send('market:historyProgress', {
+      // Send progress update to every window/frame.
+      {
+        broadcast('market:historyProgress', {
           currentItem: completed,
           totalItems: typeIds.length,
           progress: (completed / typeIds.length) * 100
@@ -807,6 +933,55 @@ async function manualRefreshAdjustedPrices() {
 }
 
 /**
+ * Where refresh-stage events go: the frame that asked for the refresh.
+ *
+ * NOT a broadcast. Progress belongs to the window the user clicked in - a
+ * Market view sitting open in another window must not pop a dialog for work it
+ * did not start. Set for the duration of one refresh and cleared after.
+ */
+let refreshProgressTarget = null;
+
+/** Point stage events at one sender (an `event.sender` from ipcMain). */
+function setRefreshProgressTarget(sender) {
+  refreshProgressTarget = sender || null;
+}
+
+/**
+ * Announce which stage of a market refresh is running.
+ *
+ * A full refresh is five phases over regions AND structures, and neither
+ * decomposes cleanly per market set - a set can span several regions, and a
+ * region can belong to several sets. So progress is reported for the OPERATION
+ * rather than per set, and the UI shows it in one place.
+ *
+ * @param {Object} stage - { phase, current, total, regionId?, structureId?, label? }
+ */
+function emitRefreshStage(stage) {
+  sendToRequester('market:refreshStage', { ...stage, at: Date.now() });
+}
+
+/**
+ * ESI page counts within whatever location is being fetched.
+ *
+ * Same targeting as the stage events: a refresh started in one window must not
+ * animate a progress bar in another.
+ */
+function emitFetchProgress(payload) {
+  sendToRequester('market:fetchProgress', payload);
+}
+
+function sendToRequester(channel, payload) {
+  const target = refreshProgressTarget;
+  if (!target) return;
+
+  try {
+    if (!target.isDestroyed()) target.send(channel, payload);
+  } catch (_) {
+    /* progress is cosmetic; never fail a refresh over it */
+  }
+}
+
+/**
  * Refresh market data for multiple regions (deduplicates region IDs)
  * Each region has its own 30-minute rate limit
  * @param {Array<number>} regionIds - Array of region IDs to refresh
@@ -819,8 +994,20 @@ async function refreshMultipleRegions(regionIds) {
   console.log(`[Market] Refreshing ${uniqueRegionIds.length} unique regions:`, uniqueRegionIds);
 
   const results = [];
+  let index = 0;
 
   for (const regionId of uniqueRegionIds) {
+    index += 1;
+    // Announce the PLAN, not just page progress. Only main knows how many
+    // regions a refresh covers, so without this the UI can show "page 3 of 9"
+    // with no idea whether that is the first region of one or of twelve.
+    emitRefreshStage({
+      phase: 'regions',
+      current: index,
+      total: uniqueRegionIds.length,
+      regionId,
+    });
+
     try {
       const result = await manualRefreshMarketData(regionId);
       results.push({ regionId, ...result });
@@ -959,9 +1146,9 @@ async function searchStructures(characterId, accessToken, searchTerm) {
  */
 async function fetchStructureMarketOrders(structureId, regionId, accessToken, forceRefresh = false) {
   const cacheKey = `market_orders_structure_${structureId}`;
-  const minInterval = 30 * 60 * 1000; // 30 minutes
 
-  if (!forceRefresh && !canFetch(cacheKey, minInterval)) {
+  // Same interval as regions - see MANUAL_REFRESH_MIN_INTERVAL_MS.
+  if (!forceRefresh && !canFetch(cacheKey, MANUAL_REFRESH_MIN_INTERVAL_MS)) {
     console.log(`[Structure Market] Structure ${structureId} recently fetched, using cache`);
     return getCachedMarketOrders(regionId, null, { stationId: structureId });
   }
@@ -992,6 +1179,27 @@ async function fetchStructureMarketOrders(structureId, regionId, accessToken, fo
 
     let allOrders = [...firstPageOrders];
 
+    /*
+     * Progress for a structure is keyed by structureId, NOT regionId.
+     *
+     * This loop is hand-rolled rather than going through esiFetch, so it
+     * emitted nothing at all - a 20-page structure fetch showed an anonymous
+     * pulsing bar. Reporting it under its region would be worse than nothing:
+     * a set pinned to Jita 4-4 would light up from The Forge's region-wide
+     * fetch and claim progress it had not made.
+     */
+    const reportProgress = (currentPage) => {
+      emitFetchProgress({
+        currentPage,
+        totalPages,
+        progress: (currentPage / totalPages) * 100,
+        structureId,
+        regionId,
+      });
+    };
+
+    reportProgress(1);
+
     if (totalPages > 1) {
       for (let page = 2; page <= totalPages; page++) {
         try {
@@ -1013,6 +1221,9 @@ async function fetchStructureMarketOrders(structureId, regionId, accessToken, fo
         } catch (err) {
           console.error(`[Structure Market] Failed to fetch page ${page}: ${err.message}`);
         }
+        // After the attempt, so a failed page still advances the count rather
+        // than stalling the bar at the last success.
+        reportProgress(page);
       }
     }
 
@@ -1102,8 +1313,21 @@ async function refreshStructuresInRegion(regionId, marketSets = null) {
 
   const refreshed = [];
   const errors = [];
+  /** Structures still inside the cache window - skipped, not failed. */
+  const rateLimited = [];
+
+  let structureIndex = 0;
 
   for (const loc of uniqueStructures) {
+    structureIndex += 1;
+    emitRefreshStage({
+      phase: 'structures',
+      current: structureIndex,
+      total: uniqueStructures.length,
+      structureId: loc.structureId,
+      label: loc.structureName || `Structure ${loc.structureId}`,
+    });
+
     try {
       let character = getCharacter(loc.characterId);
       if (!character) {
@@ -1115,15 +1339,34 @@ async function refreshStructuresInRegion(regionId, marketSets = null) {
         updateCharacterTokens(loc.characterId, newTokens);
         character = getCharacter(loc.characterId);
       }
-      await fetchStructureMarketOrders(loc.structureId, loc.regionId, character.accessToken, true);
-      refreshed.push(loc.structureId);
+      // NOT forceRefresh. Structures used to bypass their gate entirely while
+      // regions were held to a 30-minute one, so the same button refreshed a
+      // private structure every time and an NPC region almost never. Both now
+      // honour the same 5-minute interval.
+      const wasRateLimited = !canFetch(
+        `market_orders_structure_${loc.structureId}`,
+        MANUAL_REFRESH_MIN_INTERVAL_MS
+      );
+
+      await fetchStructureMarketOrders(loc.structureId, loc.regionId, character.accessToken, false);
+
+      // Counted separately: reporting a skipped structure as "refreshed" is
+      // exactly the silence that made a region look updated when it was not.
+      if (wasRateLimited) {
+        rateLimited.push({
+          structureId: loc.structureId,
+          structureName: loc.structureName || `Structure ${loc.structureId}`,
+        });
+      } else {
+        refreshed.push(loc.structureId);
+      }
     } catch (err) {
       console.error(`[Structure Market] Failed to refresh structure ${loc.structureId}:`, err);
       errors.push({ structureId: loc.structureId, structureName: loc.structureName, message: err.message });
     }
   }
 
-  return { refreshed, errors };
+  return { refreshed, errors, rateLimited };
 }
 
 module.exports = {
@@ -1145,4 +1388,6 @@ module.exports = {
   searchStructures,
   fetchStructureMarketOrders,
   refreshStructuresInRegion,
+  emitRefreshStage,
+  setRefreshProgressTarget,
 };

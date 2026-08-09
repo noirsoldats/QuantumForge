@@ -1,0 +1,763 @@
+/* ==========================================================================
+   Reactions Calculator — native shell view.
+   Scoped to #rx-view so nothing here can leak into another tool.
+   Measurements follow "Reactions Calculator (1a).dc.html".
+   ========================================================================== */
+
+/* Rule 6a: `hidden` is only a browser-default display:none, so any explicit
+   display beats it. This catch-all wins it back for the whole view. */
+#rx-view [hidden] {
+  display: none !important;
+}
+
+/* styles.css styles the BARE `header` element for the legacy pages - a dark
+   fill, padding and a 2px bottom border. That is page chrome; the headers
+   here are section labels, so reset it and let each define its own look. */
+#rx-view header {
+  background: none;
+  padding: 0;
+  border-bottom: none;
+}
+
+#rx-view {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* ------------------------------------------------------------------ header */
+
+#rx-view .rx-head {
+  flex-shrink: 0;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding: 18px 22px 14px;
+}
+
+#rx-view .rx-head h1 {
+  margin: 0;
+  font-size: 21px;
+  font-weight: 700;
+  letter-spacing: -0.3px;
+  color: var(--qf-text-heading);
+}
+
+#rx-view .rx-subtitle {
+  margin: 6px 0 0;
+  max-width: 620px;
+  font-size: 12.5px;
+  color: var(--qf-text-muted);
+}
+
+#rx-view .rx-head-market {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+#rx-view .rx-market-label {
+  font-size: 11.5px;
+  color: var(--qf-text-faint);
+  white-space: nowrap;
+}
+
+/* ------------------------------------------------------------------ layout */
+
+#rx-view .rx-scroll {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  overflow: auto;
+  padding: 18px 22px 26px;
+}
+
+/* Centred column with a consistent gap between every block - the mockup's
+   own layout, and what keeps the pricing card aligned with the cards above. */
+#rx-view .rx-inner {
+  max-width: 1180px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+#rx-view .rx-results,
+#rx-view .rx-output {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* ------------------------------------------------------------------ search */
+
+/* The inline dropdown is absolutely positioned, so this needs a positioning
+   context AND a stacking context above the cards below it. It is deliberately
+   NOT inside a card: a card's overflow:hidden would clip the results. */
+#rx-view .rx-search-host {
+  position: relative;
+  z-index: 5;
+}
+
+#rx-view .rx-search-icon {
+  width: 26px;
+  height: 26px;
+  flex-shrink: 0;
+  border-radius: var(--qf-radius-sm);
+  background: var(--qf-surface-sunken);
+}
+
+#rx-view .rx-search-produces {
+  display: block;
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--qf-text-faint);
+}
+
+/* ------------------------------------------------------------------- cards */
+
+#rx-view .rx-card {
+  position: relative;
+  background: var(--qf-bg-elevated);
+  border: 1px solid var(--qf-border);
+  border-radius: var(--qf-radius-lg);
+  overflow: hidden;
+}
+
+#rx-view .rx-card-accent {
+  height: 2px;
+  background: var(--qf-accent-gradient-h, var(--qf-accent));
+}
+
+#rx-view .rx-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 13px 16px;
+  border-bottom: 1px solid var(--qf-border);
+}
+
+#rx-view .rx-card-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--qf-text-heading);
+}
+
+#rx-view .rx-card-note {
+  font-size: 11px;
+  color: var(--qf-text-faint);
+}
+
+#rx-view .rx-card-count {
+  padding: 1px 8px;
+  border-radius: var(--qf-radius-pill);
+  border: 1px solid var(--qf-border);
+  background-color: var(--qf-surface);
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--qf-text-faint);
+}
+
+/* ------------------------------------------------------------------ inputs */
+
+/* Rule 4: sunken background, or the field reads as "no input" on an
+   elevated card. */
+#rx-view .qf-input,
+#rx-view .qf-select {
+  box-sizing: border-box;
+  padding: 8px 12px;
+  font-size: var(--qf-text-sm);
+  background-color: var(--qf-surface-sunken);
+  border: 1px solid var(--qf-border);
+  border-radius: var(--qf-radius-md);
+  color: var(--qf-text-primary);
+}
+
+#rx-view .qf-select {
+  width: 100%;
+}
+
+#rx-view .mono {
+  font-family: var(--qf-font-mono);
+}
+
+/* --------------------------------------------------------- reaction header */
+
+#rx-view .rx-setup {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+  flex-wrap: wrap;
+  padding: 18px;
+}
+
+#rx-view .rx-setup-identity {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-width: 0;
+}
+
+#rx-view .rx-setup-icon {
+  width: 48px;
+  height: 48px;
+  flex-shrink: 0;
+  border-radius: var(--qf-radius-sm);
+  background: var(--qf-surface-sunken);
+}
+
+#rx-view .rx-setup-text {
+  min-width: 0;
+}
+
+#rx-view .rx-setup-text h2 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--qf-text-heading);
+}
+
+#rx-view .rx-setup-meta {
+  display: flex;
+  gap: 20px;
+  flex-wrap: wrap;
+  margin-top: 6px;
+  font-size: 12.5px;
+  color: var(--qf-text-muted);
+}
+
+#rx-view .rx-meta-strong {
+  color: var(--qf-text-primary);
+  font-weight: 600;
+}
+
+#rx-view .rx-meta-mono {
+  font-family: var(--qf-font-mono);
+  color: var(--qf-text-primary);
+}
+
+#rx-view .rx-setup-controls {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+/* Uppercase micro-labels, as the mockup has them. */
+#rx-view .rx-field-label {
+  display: block;
+  margin-bottom: 5px;
+  font-size: 10.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--qf-text-faint);
+}
+
+/* Numeric field: explicit small width, right-aligned (rule 4). */
+#rx-view .rx-runs-input {
+  width: 90px;
+  text-align: right;
+}
+
+#rx-view .rx-field-facility {
+  width: 250px;
+}
+
+#rx-view .rx-field-action {
+  flex-shrink: 0;
+}
+
+/* --------------------------------------------------------------- bonuses */
+
+/* A single strip rather than a card - it annotates the facility choice
+   above it rather than being a section of its own. */
+#rx-view .rx-bonuses {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 12px 16px;
+  background: var(--qf-bg-elevated);
+  border: 1px solid var(--qf-border);
+  border-radius: var(--qf-radius-md);
+}
+
+#rx-view .rx-bonuses-facility {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--qf-text-muted);
+}
+
+#rx-view .rx-bonuses-divider {
+  width: 1px;
+  height: 16px;
+  background: var(--qf-border);
+}
+
+#rx-view .rx-bonus-list {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+#rx-view .rx-bonus {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11.5px;
+  color: var(--qf-text-muted);
+}
+
+#rx-view .rx-bonus-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--qf-accent);
+}
+
+#rx-view .rx-bonus-value {
+  font-family: var(--qf-font-mono);
+  font-weight: 600;
+  color: var(--qf-success);
+}
+
+/* A zero bonus is stated, not hidden - "no bonus here" is information. */
+#rx-view .rx-bonus.is-zero .rx-bonus-value {
+  color: var(--qf-text-faint);
+}
+
+#rx-view .rx-bonus.is-zero .rx-bonus-dot {
+  background: var(--qf-text-faint);
+}
+
+/* -------------------------------------------------------------- two column */
+
+#rx-view .rx-two-col {
+  display: grid;
+  grid-template-columns: 1.35fr 1fr;
+  gap: 16px;
+  align-items: start;
+}
+
+@media (max-width: 900px) {
+  #rx-view .rx-two-col {
+    grid-template-columns: 1fr;
+  }
+}
+
+#rx-view .rx-two-col > * {
+  min-width: 0;
+}
+
+#rx-view .rx-side-col {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* ------------------------------------------------------------------- tree */
+
+#rx-view .rx-tree {
+  padding: 6px 0;
+}
+
+#rx-view .rx-tree-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 16px;
+  padding-left: calc(16px + var(--rx-depth, 0) * 22px);
+  border-bottom: 1px solid var(--qf-border-subtle);
+}
+
+#rx-view .rx-tree-root {
+  background-color: var(--qf-surface-sunken);
+}
+
+/* Role colours, matching the mockup: the product is the accent, an
+   INTERMEDIATE is green (it is itself produced by a reaction, so the chain
+   continues below it), and a raw material is faint. */
+#rx-view .rx-tree-glyph {
+  flex-shrink: 0;
+  width: 15px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--qf-text-faint);
+}
+
+#rx-view .rx-tree-glyph.is-product {
+  color: var(--qf-accent);
+}
+
+#rx-view .rx-tree-glyph.is-intermediate {
+  color: var(--qf-success);
+}
+
+/* Raw materials get a small filled square rather than an outlined shape. */
+#rx-view .rx-tree-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 2px;
+  background: currentColor;
+}
+
+#rx-view .rx-tree-icon {
+  width: 24px;
+  height: 24px;
+  flex-shrink: 0;
+  border-radius: var(--qf-radius-sm);
+  background: var(--qf-surface-sunken);
+}
+
+#rx-view .rx-tree-text {
+  flex: 1;
+  min-width: 0;
+}
+
+#rx-view .rx-tree-name-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+#rx-view .rx-tree-name {
+  font-size: 12.5px;
+  color: var(--qf-text-heading);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Each variant sets BOTH colour and background, so switching between them
+   cannot leave a stale tint (rule 3). */
+#rx-view .rx-tree-badge {
+  flex-shrink: 0;
+  padding: 1px 7px;
+  border-radius: var(--qf-radius-pill);
+  font-size: 8.5px;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+}
+
+#rx-view .rx-tree-badge.is-product {
+  color: var(--qf-accent);
+  background-color: var(--qf-accent-dim);
+}
+
+#rx-view .rx-tree-badge.is-intermediate {
+  color: var(--qf-success);
+  background-color: var(--qf-success-dim);
+}
+
+#rx-view .rx-tree-badge.is-raw {
+  color: var(--qf-text-faint);
+  background-color: var(--qf-surface);
+}
+
+#rx-view .rx-tree-formula {
+  margin-top: 2px;
+  font-size: 10.5px;
+  color: var(--qf-text-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#rx-view .rx-tree-qty {
+  flex-shrink: 0;
+  font-family: var(--qf-font-mono);
+  font-size: 12.5px;
+  color: var(--qf-text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ------------------------------------------------------------------- time */
+
+#rx-view .rx-time {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 16px;
+}
+
+#rx-view .rx-time-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 12.5px;
+}
+
+#rx-view .rx-time-label {
+  color: var(--qf-text-muted);
+}
+
+#rx-view .rx-time-value {
+  font-family: var(--qf-font-mono);
+  color: var(--qf-text-primary);
+}
+
+#rx-view .rx-time-row.is-total .rx-time-value {
+  color: var(--qf-accent);
+  font-weight: 600;
+}
+
+/* -------------------------------------------------------------- materials */
+
+#rx-view .rx-material-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--qf-border-subtle);
+}
+
+#rx-view .rx-material-icon {
+  width: 24px;
+  height: 24px;
+  flex-shrink: 0;
+  border-radius: var(--qf-radius-sm);
+  background: var(--qf-surface-sunken);
+}
+
+#rx-view .rx-material-text {
+  flex: 1;
+  min-width: 0;
+}
+
+#rx-view .rx-material-name {
+  font-size: 12.5px;
+  color: var(--qf-text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#rx-view .rx-material-detail {
+  font-family: var(--qf-font-mono);
+  font-size: 10.5px;
+  color: var(--qf-text-faint);
+}
+
+#rx-view .rx-material-total {
+  flex-shrink: 0;
+  font-family: var(--qf-font-mono);
+  font-size: 12.5px;
+  color: var(--qf-text-heading);
+  font-variant-numeric: tabular-nums;
+  cursor: help;
+}
+
+#rx-view .rx-materials-total {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 11px 16px;
+  font-size: 13px;
+  border-top: 1px solid var(--qf-border);
+}
+
+#rx-view .rx-materials-total-label {
+  font-weight: 600;
+  color: var(--qf-text-heading);
+}
+
+#rx-view .rx-materials-total-value {
+  font-weight: 700;
+  color: var(--qf-text-heading);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------------------------------------------------------------- pricing */
+
+#rx-view .rx-pricing-cards {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+  padding: 16px;
+}
+
+@media (max-width: 700px) {
+  #rx-view .rx-pricing-cards {
+    grid-template-columns: 1fr;
+  }
+}
+
+#rx-view .rx-price-card {
+  padding: 13px 14px;
+  background-color: var(--qf-surface-sunken);
+  border: 1px solid var(--qf-border-subtle);
+  border-radius: var(--qf-radius-md);
+}
+
+#rx-view .rx-price-label {
+  display: block;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--qf-text-faint);
+}
+
+#rx-view .rx-price-value {
+  display: block;
+  margin-top: 7px;
+  font-family: var(--qf-font-mono);
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--qf-text-heading);
+  font-variant-numeric: tabular-nums;
+}
+
+#rx-view .rx-price-sub {
+  display: block;
+  margin-top: 3px;
+  font-family: var(--qf-font-mono);
+  font-size: 11.5px;
+  color: var(--qf-text-muted);
+}
+
+/* Both tones set colour explicitly, so switching between them cannot leave
+   a stale value (rule 3). */
+#rx-view .rx-price-value.is-positive,
+#rx-view .rx-price-sub.is-positive {
+  color: var(--qf-success);
+}
+
+#rx-view .rx-price-value.is-negative,
+#rx-view .rx-price-sub.is-negative {
+  color: var(--qf-error);
+}
+
+/* --------------------------------------------------------------- job cost */
+
+#rx-view .rx-jobcost {
+  padding: 0 16px 16px;
+}
+
+#rx-view .rx-jobcost-title {
+  padding: 4px 0 8px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--qf-accent);
+}
+
+#rx-view .rx-jobcost-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 0;
+  font-size: 12.5px;
+}
+
+/* A plain row is a component of the line below it, so it is indented. */
+#rx-view .rx-jobcost-row.is-row .rx-jobcost-label {
+  padding-left: 14px;
+  color: var(--qf-text-muted);
+}
+
+#rx-view .rx-jobcost-row.is-row .rx-jobcost-value {
+  color: var(--qf-text-primary);
+}
+
+#rx-view .rx-jobcost-row.is-sub {
+  border-top: 1px solid var(--qf-border-subtle);
+}
+
+#rx-view .rx-jobcost-row.is-sub .rx-jobcost-label,
+#rx-view .rx-jobcost-row.is-sub .rx-jobcost-value {
+  font-weight: 600;
+  color: var(--qf-text-heading);
+}
+
+#rx-view .rx-jobcost-row.is-total {
+  margin-top: 4px;
+  padding-top: 10px;
+  border-top: 1px solid var(--qf-border);
+}
+
+#rx-view .rx-jobcost-row.is-total .rx-jobcost-label {
+  font-weight: 600;
+  color: var(--qf-text-heading);
+}
+
+#rx-view .rx-jobcost-row.is-total .rx-jobcost-value {
+  font-weight: 700;
+  color: var(--qf-accent);
+}
+
+#rx-view .rx-jobcost-value {
+  font-family: var(--qf-font-mono);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* --------------------------------------------------------- empty / loading */
+
+#rx-view .rx-empty {
+  padding: 44px 20px;
+  text-align: center;
+  background-color: var(--qf-surface-sunken);
+  border: 1px dashed var(--qf-border);
+  border-radius: var(--qf-radius-lg);
+}
+
+#rx-view .rx-empty-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--qf-text-heading);
+}
+
+#rx-view .rx-empty-text {
+  margin-top: 6px;
+  font-size: 12.5px;
+  color: var(--qf-text-muted);
+}
+
+#rx-view .rx-pending {
+  padding: 28px 16px;
+  text-align: center;
+  font-size: 12.5px;
+  color: var(--qf-text-faint);
+}
+
+#rx-view .rx-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 32px;
+  font-size: 12.5px;
+  color: var(--qf-text-muted);
+}
+
+#rx-view .rx-spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--qf-border);
+  border-top-color: var(--qf-accent);
+  border-radius: 50%;
+  animation: rx-spin 0.7s linear infinite;
+}
+
+@keyframes rx-spin {
+  to { transform: rotate(360deg); }
+}

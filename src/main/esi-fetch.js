@@ -26,7 +26,10 @@ const {
   recordESICallError,
   recordRateLimit,
   canFetchEndpoint,
+  getETag,
+  recordETag,
 } = require('./esi-status-tracker');
+const errorBudget = require('./esi-error-budget');
 
 const MINUTE = 60 * 1000;
 
@@ -63,6 +66,10 @@ const ENDPOINT_POLICY = {
   // Result is cached persistently by the caller, so this rarely fires.
   structure:                  { group: 'universe', minIntervalMs: 1 * MINUTE,  paginated: false },
 
+  // Corporation name/ticker. PUBLIC - no token or scope. Cached in memory by
+  // the caller for the session, so this fires at most once per corporation.
+  corporation_info:           { group: 'universe', minIntervalMs: 1 * MINUTE,  paginated: false },
+
   // Universe / market (no per-character token)
   market_orders:              { group: 'market',   minIntervalMs: 5 * MINUTE,  paginated: true  },
   market_history:             { group: 'market',   minIntervalMs: 5 * MINUTE,  paginated: false },
@@ -92,9 +99,35 @@ function parseExpires(headers) {
 }
 
 /**
- * Parse the X-Ratelimit-* headers and any Retry-After deadline.
+ * Token cost of a response under ESI's bucket rate limiter, per
+ * https://developers.eveonline.com/docs/services/esi/rate-limiting/
+ *
+ * Worth modelling explicitly because the costs are NOT uniform: a 4xx costs
+ * 2.5x a success. A burst of 403s (e.g. structures the character cannot dock
+ * at) therefore drains the rate bucket far faster than the raw call count
+ * suggests - independently of the separate error budget those same 403s spend.
+ *
+ * @param {number} status
+ * @returns {number} tokens consumed
  */
-function parseRateLimit(headers, now) {
+function rateLimitTokenCost(status) {
+  if (status >= 200 && status < 300) return 2;
+  if (status >= 300 && status < 400) return 1;
+  if (status >= 400 && status < 500) return 5;
+  return 0; // 5xx are free
+}
+
+/**
+ * Parse the X-Ratelimit-* headers and any Retry-After deadline.
+ *
+ * NOTE: ESI is mid-transition between two limiters, and per the best-practices
+ * doc the bucket headers and the legacy X-ESI-Error-Limit-* headers are
+ * "mutually exclusive" - a given response carries one set or the other,
+ * depending on whether that route has been moved to the new system. So every
+ * field here can legitimately be null on a perfectly healthy response; absence
+ * means "this route is on the other limiter", not "something went wrong".
+ */
+function parseRateLimit(headers, now, status = null) {
   const get = (h) => (headers && headers.get ? headers.get(h) : null);
 
   const remainingRaw = get('X-Ratelimit-Remaining');
@@ -118,10 +151,18 @@ function parseRateLimit(headers, now) {
     }
   }
 
+  const usedRaw = get('X-Ratelimit-Used');
+  const used = usedRaw != null ? parseInt(usedRaw, 10) : null;
+
   return {
     remaining: Number.isNaN(remaining) ? null : remaining,
     limit: get('X-Ratelimit-Limit'),
     group: get('X-Ratelimit-Group'),
+    // Tokens this request consumed. Prefer what the server reports; fall back
+    // to the documented cost table when the header is absent.
+    used: used != null && !Number.isNaN(used)
+      ? used
+      : (status != null ? rateLimitTokenCost(status) : null),
     resetAt,
     retryAfterAt,
   };
@@ -221,7 +262,31 @@ async function esiFetch(endpointType, callKey, url, opts = {}) {
     parallelPages = false,
     onProgress = null,
     emptyStatuses = [],
+    // Send If-None-Match when we have a stored ETag. Opt-in: a 304 returns no
+    // body, so only callers that persist their previous result and honour
+    // `notModified` may enable it.
+    useETag = false,
+    // True when the user explicitly asked for this. Those keep going deeper
+    // into the error budget than background work does.
+    userInitiated = false,
   } = opts;
+
+  // Error-budget gate. ESI's error limit is application-wide, so one screen
+  // burning it on 403s takes every other caller down with it. This refuses
+  // non-essential calls while there is still headroom left, rather than
+  // discovering the ceiling by hitting a 420.
+  //
+  // Deliberately BEFORE the per-endpoint gate and before recording a start:
+  // a call that never goes out is not a call.
+  const budget = errorBudget.canSpend({ userInitiated });
+  if (!budget.allowed) {
+    return {
+      skipped: true,
+      reason: `error-budget-${budget.reason}`,
+      nextAllowedAt: null,
+      errorBudgetRemaining: budget.remaining,
+    };
+  }
 
   // Pre-flight gate — do not even record a start if we're not eligible.
   if (!skipGate && !canFetchEndpoint(callKey)) {
@@ -250,6 +315,17 @@ async function esiFetch(endpointType, callKey, url, opts = {}) {
     const baseHeaders = { 'User-Agent': getUserAgent() };
     if (authHeader) baseHeaders['Authorization'] = authHeader;
 
+    // Conditional request. Opt-in per call because a 304 returns NO BODY: it is
+    // only safe where the caller has the previous result persisted and treats
+    // notModified as "keep what you have". Never send If-None-Match on a
+    // paginated fetch - the ETag identifies one page, and mixing a 304 page
+    // with fetched pages would silently drop data.
+    let sentETag = null;
+    if (useETag && !policy.paginated) {
+      sentETag = getETag(callKey);
+      if (sentETag) baseHeaders['If-None-Match'] = sentETag;
+    }
+
     let cacheExpiresAt = null;
     let rateLimit = null;
 
@@ -259,12 +335,33 @@ async function esiFetch(endpointType, callKey, url, opts = {}) {
     const fetchOne = async (pageUrl) => {
       const response = await fetchWithRetry(pageUrl, { headers: baseHeaders });
       const now = Date.now();
-      rateLimit = parseRateLimit(response.headers, now);
+      rateLimit = parseRateLimit(response.headers, now, response.status);
+
+      // Where the governor learns the budget state. NOTE: per ESI's
+      // best-practices doc the legacy error-limit headers and the newer bucket
+      // headers are mutually exclusive - a route on the new limiter sends no
+      // error-limit headers at all. recordHeaders treats absence as "no news",
+      // so a mixed-limiter world degrades to the bucket data alone.
+      errorBudget.recordHeaders(response.headers, now);
+
+      // 304: the resource is unchanged. Costs 1 token, no body, and spends no
+      // error budget. The caller keeps its cached data.
+      if (response.status === 304) {
+        return { response, body: null, notModified: true };
+      }
 
       if (response.status === 429 || response.status === 420) {
         const retryAfterAt = rateLimit.retryAfterAt || (now + policy.minIntervalMs);
         recordRateLimit(callKey, { ...rateLimit, retryAfterAt });
         recordESICallSuccess(callKey, cacheExpiresAt, retryAfterAt, 0, startTime);
+
+        // A 420 means the budget is already spent. Stop everything until the
+        // window resets: each further call is itself another error.
+        if (response.status === 420) {
+          errorBudget.recordBlocked(retryAfterAt, now);
+        }
+        errorBudget.recordError(endpointType, callKey, `HTTP ${response.status}`);
+
         throw taggedError(
           `ESI rate limited (${response.status}) on ${endpointType}`,
           'ESI_RATE_LIMITED',
@@ -278,6 +375,11 @@ async function esiFetch(endpointType, callKey, url, opts = {}) {
       }
 
       if (!response.ok) {
+        // Every non-2xx spends error budget, including the 403s a structure
+        // lookup gets for a station it cannot dock at. Those look harmless
+        // per call and are exactly what exhausted the window.
+        errorBudget.recordError(endpointType, callKey, `HTTP ${response.status}`);
+
         if (response.status === 403) {
           const errorText = await response.text();
           const lower = errorText.toLowerCase();
@@ -308,6 +410,40 @@ async function esiFetch(endpointType, callKey, url, opts = {}) {
       // Role-based 403 — expected; return empty silently.
       recordESICallSuccess(callKey, null, null, 0, startTime);
       return { data: [], roleForbidden: true, status: 403 };
+    }
+    if (first.notModified) {
+      // Unchanged since our stored ETag. No body was sent, so there is nothing
+      // to hand back - the caller keeps what it already has. Still a successful
+      // call, so refresh the cache/next-allowed deadlines from this response.
+      //
+      // Deliberately NO emitDataChanged: nothing changed. Emitting here would
+      // make every 304 look like fresh data to listeners.
+      cacheExpiresAt = parseExpires(first.response.headers);
+      const nowNotModified = Date.now();
+      const nextAllowedAt = Math.max(
+        cacheExpiresAt || 0,
+        nowNotModified + policy.minIntervalMs,
+        rateLimit && rateLimit.retryAfterAt ? rateLimit.retryAfterAt : 0
+      );
+
+      if (rateLimit) recordRateLimit(callKey, rateLimit);
+      recordESICallSuccess(callKey, cacheExpiresAt, nextAllowedAt, 0, startTime);
+
+      return {
+        data: null,
+        notModified: true,
+        status: 304,
+        cacheExpiresAt,
+        nextAllowedAt,
+        rateLimit,
+      };
+    }
+
+    // Store the ETag for next time (only meaningful on non-paginated calls,
+    // which is the only place we send If-None-Match).
+    if (useETag && !policy.paginated) {
+      const etag = first.response.headers.get ? first.response.headers.get('ETag') : null;
+      if (etag) recordETag(callKey, etag);
     }
 
     cacheExpiresAt = parseExpires(first.response.headers);
@@ -365,6 +501,17 @@ async function esiFetch(endpointType, callKey, url, opts = {}) {
 
     const responseSize = JSON.stringify(allData).length;
     recordESICallSuccess(callKey, cacheExpiresAt, nextAllowedAt, responseSize, startTime);
+
+    // Every successful ESI fetch in the app flows through here, so this one
+    // emit gives renderers a reliable "data changed" signal without any
+    // per-caller plumbing. Deliberately after the status record, so a listener
+    // that re-reads freshness sees the new timestamp.
+    try {
+      const { emitDataChanged } = require('./data-events');
+      emitDataChanged({ endpointType, callKey, characterId, corporationId, category });
+    } catch (_) {
+      // Never let an event listener break a fetch.
+    }
 
     return {
       data: allData,

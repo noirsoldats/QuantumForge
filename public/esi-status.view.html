@@ -1,0 +1,49 @@
+<!--
+  ESI Status - native shell view.
+
+  Three panes: character/universe navigation, the call list for the selected
+  nav item, and the detail pane for the selected call. Every pane scrolls
+  independently; the view itself never scrolls.
+-->
+<div id="esi-status-view" class="esi-view">
+
+  <!-- LEFT: navigation -->
+  <aside class="esi-nav qf-scroll" aria-label="ESI Status navigation">
+    <div class="esi-nav-heading">Characters</div>
+    <div id="esi-char-nav" class="esi-nav-group"></div>
+
+    <div class="esi-nav-heading">General</div>
+    <div class="esi-nav-group">
+      <div id="esi-nav-universe" class="esi-nav-item" data-view="universe" role="button" tabindex="0">
+        <span class="esi-dot is-gray" aria-hidden="true"></span>
+        <svg class="esi-nav-icon" width="18" height="18" viewBox="0 0 24 24" fill="none"
+             stroke="currentColor" stroke-width="1.7" stroke-linecap="round"
+             stroke-linejoin="round" aria-hidden="true">
+          <circle cx="12" cy="12" r="10"></circle>
+          <ellipse cx="12" cy="12" rx="4" ry="10"></ellipse>
+          <line x1="2" y1="12" x2="22" y2="12"></line>
+        </svg>
+        <span class="esi-nav-name">Eve Universe</span>
+      </div>
+    </div>
+  </aside>
+
+  <!-- CENTER: call list -->
+  <section class="esi-calls qf-scroll" aria-label="ESI calls">
+    <!--
+      Deliberately a <div>, not a <header>. styles.css styles the bare `header`
+      tag as a full-bleed page header (dark wash, 2px border, large padding)
+      and `header h1` with a gradient text fill - both would land here purely
+      by tag name and repaint this block.
+    -->
+    <div class="esi-calls-head">
+      <h1 id="esi-calls-title" class="esi-calls-title">ESI Status</h1>
+      <p id="esi-calls-subtitle" class="esi-calls-subtitle">Select a character or Eve Universe</p>
+    </div>
+    <div id="esi-calls-list" class="esi-calls-list"></div>
+  </section>
+
+  <!-- RIGHT: call detail -->
+  <section id="esi-detail" class="esi-detail qf-scroll" aria-label="Call details"></section>
+
+</div>

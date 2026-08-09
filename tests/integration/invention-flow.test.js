@@ -172,14 +172,13 @@ describe('Invention Flow - Integration Tests', () => {
         productPrice,
         skills,
         facilitiesFixtures.raitaruNoRigs,
-        'profit-per-run',
-        1,
+        'total-per-item',
         mockMarketSet
       );
 
       expect(bestDecryptor).toBeDefined();
       expect(bestDecryptor.best).toBeDefined();
-      expect(bestDecryptor.optimizationStrategy).toBeDefined();
+      expect(bestDecryptor.optimizationStrategy).toBe('total-per-item');
     });
 
     test('invention + manufacturing workflow: full T2 production cycle', async () => {
@@ -423,7 +422,6 @@ describe('Invention Flow - Integration Tests', () => {
         skillsFixtures.advancedSkills,
         facilitiesFixtures.raitaruNoRigs,
         'invention-only',
-        1,
         mockMarketSet
       );
 
@@ -432,112 +430,106 @@ describe('Invention Flow - Integration Tests', () => {
       expect(result.optimizationStrategy).toBe('invention-only');
     });
 
-    test('profit-per-run strategy considers manufacturing', async () => {
-      const inventionData = getInventionData(blueprintFixtures.TYPE_IDS.SCOURGE_BLUEPRINT, db);
+    // The four tests that used to sit here named strategies that DO NOT EXIST
+    // ('profit-per-run', 'profit-per-attempt', 'time-efficiency', 'max-runs').
+    // Every one fell through the switch's default branch to 'total-per-item',
+    // and every assertion was a toBeDefined() on a field the result carries
+    // regardless of strategy - so they passed while exercising nothing. The
+    // replacements below assert the metric each strategy actually optimises.
 
-      const result = await findBestDecryptor(
-        inventionData,
-        mockPrices,
-        150000,
-        skillsFixtures.advancedSkills,
-        facilitiesFixtures.raitaruNoRigs,
-        'profit-per-run',
-        1,
-        mockMarketSet
+    const run = (strategy) => findBestDecryptor(
+      getInventionData(blueprintFixtures.TYPE_IDS.SCOURGE_BLUEPRINT, db),
+      mockPrices,
+      150000,
+      skillsFixtures.advancedSkills,
+      facilitiesFixtures.raitaruNoRigs,
+      strategy,
+      mockMarketSet
+    );
+
+    /** The winner must genuinely be the minimum of the reported metric. */
+    const expectsMinimumMetric = (result) => {
+      const metrics = result.allOptions.map((o) => o.optimizationMetric);
+      expect(result.best.optimizationMetric).toBe(Math.min(...metrics));
+    };
+
+    test('invention-only picks the lowest invention cost per run', async () => {
+      const result = await run('invention-only');
+      expectsMinimumMetric(result);
+      // The metric IS the invention cost - manufacturing must not enter it.
+      expect(result.best.optimizationMetric).toBeCloseTo(result.best.costPerRun, 6);
+    });
+
+    test('total-per-item adds manufacturing to the invention cost', async () => {
+      const result = await run('total-per-item');
+      expectsMinimumMetric(result);
+      expect(result.best.optimizationMetric).toBeCloseTo(
+        result.best.costPerRun + result.best.manufacturingCostPerItem, 6
       );
+    });
 
-      expect(result.best).toBeDefined();
-      expect(result.best.totalCostPerItem).toBeDefined();
+    test('time-optimized ranks on manufacturing time, not cost', async () => {
+      const result = await run('time-optimized');
+      expectsMinimumMetric(result);
+      expect(result.best.optimizationMetric).toBeCloseTo(
+        result.best.manufacturingTimePerItem, 6
+      );
+    });
+
+    test('an unknown strategy falls back to total-per-item', async () => {
+      // Documents the default branch deliberately, so a future typo in the
+      // dropdown is a caught behaviour rather than a silent wrong answer.
+      const bogus = await run('not-a-real-strategy');
+      const fallback = await run('total-per-item');
+      expect(bogus.best.name).toBe(fallback.best.name);
+    });
+
+    test('a stale custom-volume strategy degrades to total-per-item', async () => {
+      // 'custom-volume' was removed - its metric was total-per-item scaled by
+      // a positive constant, a monotonic transform that cannot reorder the
+      // candidates, so it could never pick a different decryptor. Users may
+      // still have it saved in their config, so it must land on the default
+      // branch rather than producing something arbitrary.
+      const stale = await run('custom-volume');
+      const baseline = await run('total-per-item');
+
+      expect(stale.best.name).toBe(baseline.best.name);
+      expect(stale.best.optimizationMetric)
+        .toBeCloseTo(baseline.best.optimizationMetric, 6);
+    });
+
+    test('total-full-bpc costs the whole BPC, not one item', async () => {
+      const result = await run('total-full-bpc');
+      expectsMinimumMetric(result);
+      // Scales the invention cost across the BPC's runs, so for any decryptor
+      // granting more than one run it must exceed the per-item metric.
+      const perItem = await run('total-per-item');
       expect(result.best.runsPerBPC).toBeGreaterThan(0);
-    });
-
-    test('profit-per-attempt strategy factors in probability', async () => {
-      const inventionData = getInventionData(blueprintFixtures.TYPE_IDS.SCOURGE_BLUEPRINT, db);
-
-      const result = await findBestDecryptor(
-        inventionData,
-        mockPrices,
-        150000,
-        skillsFixtures.advancedSkills,
-        facilitiesFixtures.raitaruNoRigs,
-        'profit-per-attempt',
-        1,
-        mockMarketSet
-      );
-
-      expect(result.best).toBeDefined();
-      expect(result.best.totalCostPerAttempt).toBeDefined();
-    });
-
-    test('time-efficiency strategy balances time and profit', async () => {
-      const inventionData = getInventionData(blueprintFixtures.TYPE_IDS.SCOURGE_BLUEPRINT, db);
-
-      const result = await findBestDecryptor(
-        inventionData,
-        mockPrices,
-        150000,
-        skillsFixtures.advancedSkills,
-        facilitiesFixtures.raitaruNoRigs,
-        'time-efficiency',
-        1,
-        mockMarketSet
-      );
-
-      expect(result.best).toBeDefined();
-      expect(result.best.manufacturingTimePerItem).toBeDefined();
-    });
-
-    test('max-runs strategy maximizes total output', async () => {
-      const inventionData = getInventionData(blueprintFixtures.TYPE_IDS.SCOURGE_BLUEPRINT, db);
-
-      const result = await findBestDecryptor(
-        inventionData,
-        mockPrices,
-        150000,
-        skillsFixtures.advancedSkills,
-        facilitiesFixtures.raitaruNoRigs,
-        'max-runs',
-        1,
-        mockMarketSet
-      );
-
-      expect(result.best).toBeDefined();
-
-      // Max runs strategy should select decryptor with highest runs bonus
-      const decryptors = getAllDecryptors(db);
-      const maxRunsDecryptor = decryptors.reduce((max, d) =>
-        d.runsModifier > (max.runsModifier || 0) ? d : max
-      , {});
-
-      if (maxRunsDecryptor.typeID) {
-        expect(result.best.runsPerBPC).toBeGreaterThan(10); // Base is 10
+      if (result.best.runsPerBPC > 1) {
+        expect(result.best.optimizationMetric)
+          .toBeGreaterThan(perItem.best.optimizationMetric);
       }
     });
 
-    test('different strategies produce different optimal choices', async () => {
-      const inventionData = getInventionData(blueprintFixtures.TYPE_IDS.SCOURGE_BLUEPRINT, db);
+    test('the strategy list the UI offers is exactly what is implemented', async () => {
+      // Guards the bug this file previously hid: a dropdown value with no
+      // matching case silently optimises for something else entirely.
+      const IMPLEMENTED = [
+        'invention-only', 'total-per-item', 'total-full-bpc', 'time-optimized',
+      ];
 
-      const strategies = ['invention-only', 'profit-per-run', 'profit-per-attempt', 'time-efficiency', 'max-runs'];
-      const results = await Promise.all(
-        strategies.map(strategy =>
-          findBestDecryptor(
-            inventionData,
-            mockPrices,
-            150000,
-            skillsFixtures.advancedSkills,
-            facilitiesFixtures.raitaruNoRigs,
-            strategy,
-            1,
-            mockMarketSet
-          )
-        )
-      );
-
-      expect(results.length).toBe(5);
+      const results = await Promise.all(IMPLEMENTED.map((s) => run(s)));
       results.forEach((result, idx) => {
-        expect(result.best).toBeDefined();
-        expect(result.optimizationStrategy).toBe(strategies[idx]);
+        expect(result.optimizationStrategy).toBe(IMPLEMENTED[idx]);
+        expectsMinimumMetric(result);
       });
+
+      // And they are not all the same computation: ranking on TIME must give
+      // a different metric from ranking on COST.
+      const byCost = results[IMPLEMENTED.indexOf('total-per-item')];
+      const byTime = results[IMPLEMENTED.indexOf('time-optimized')];
+      expect(byTime.best.optimizationMetric)
+        .not.toBeCloseTo(byCost.best.optimizationMetric, 6);
     });
   });
 
@@ -558,7 +550,6 @@ describe('Invention Flow - Integration Tests', () => {
           skillsFixtures.advancedSkills,
           facilitiesFixtures.raitaruNoRigs,
           'invention-only',
-          1,
           mockMarketSet
         );
 
@@ -569,7 +560,6 @@ describe('Invention Flow - Integration Tests', () => {
           skillsFixtures.advancedSkills,
           facilitiesFixtures.raitaruNoRigs,
           'invention-only',
-          1,
           mockMarketSet
         );
 
@@ -592,7 +582,6 @@ describe('Invention Flow - Integration Tests', () => {
           skillsFixtures.advancedSkills,
           facilitiesFixtures.raitaruNoRigs,
           'invention-only',
-          1,
           mockMarketSet
         );
 
@@ -619,7 +608,6 @@ describe('Invention Flow - Integration Tests', () => {
         skillsFixtures.advancedSkills,
         facilitiesFixtures.raitaruNoRigs,
         'invention-only',
-        1,
         mockMarketSet
       );
 
@@ -636,8 +624,7 @@ describe('Invention Flow - Integration Tests', () => {
         0,  // Zero product price
         skillsFixtures.advancedSkills,
         facilitiesFixtures.raitaruNoRigs,
-        'profit-per-run',
-        1,
+        'total-per-item',
         mockMarketSet
       );
 
@@ -663,13 +650,12 @@ describe('Invention Flow - Integration Tests', () => {
         200000,  // High product price
         { ...skillsFixtures.advancedSkills, encryption: 5, datacore1: 5, datacore2: 5 },
         facilitiesFixtures.sotiyo,
-        'profit-per-attempt',
-        1,
+        'total-per-item',
         mockMarketSet
       );
 
       expect(result.best).toBeDefined();
-      expect(result.best.totalCostPerAttempt).toBeDefined();
+      expect(result.best.totalCostPerAttempt).toBeGreaterThan(0);
     });
 
     test('new inventor with no skills and no decryptors', async () => {
@@ -692,7 +678,6 @@ describe('Invention Flow - Integration Tests', () => {
         newSkills,
         facilitiesFixtures.npcStation,
         'invention-only',
-        1,
         mockMarketSet
       );
 

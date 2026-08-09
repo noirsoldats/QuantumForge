@@ -1,0 +1,397 @@
+<!--
+  Blueprint Calculator view markup.
+
+  NOT a standalone page - fetched and cloned by
+  blueprint-calculator-view-renderer.js and mounted into the application shell's
+  #view-host. Styling comes from blueprint-calculator-view.css.
+
+  Ported from "Blueprint Calculator (1a).dc.html". Layout:
+
+    header      title + per-tool Market Set picker (QFSearchSelect)
+    search      blueprint search (QFSearchSelect, inline mode)
+    bp card     name / product / ME / Runs / Facility / Add to Plan
+    tabs        Results | Invention
+    results     facility bonuses, materials, costs, fee breakdown, breakdown
+    invention   target, skills, datacores, strategy, decryptor comparison
+
+  The two dropdowns that are SEARCHABLE (Market Set, Facility) are mounted as
+  QFSearchSelect by the renderer - their hosts are the empty divs below. The two
+  with a handful of fixed options (Optimize For, Analyze Decryptor) stay plain
+  <select class="qf-select">, per binding rule 5.
+-->
+<template id="blueprint-calculator-view-template">
+  <div id="bpc-view" class="bpc-root">
+
+    <!-- ============================ header ============================ -->
+    <div class="bpc-header">
+      <div class="bpc-header-titles">
+        <h1 class="bpc-title">Blueprint Calculator</h1>
+        <p class="bpc-subtitle">Resolve material requirements, manufacturing cost and profit for any blueprint.</p>
+      </div>
+      <div class="bpc-header-market">
+        <span class="bpc-market-label">Market Set</span>
+        <div class="bpc-market-host" id="bpc-market-host"></div>
+      </div>
+    </div>
+
+    <div class="bpc-body qf-scroll">
+      <div class="bpc-inner">
+
+        <!-- ============================ search ============================ -->
+        <!-- Host for the inline QFSearchSelect. Rows are decorated with icon,
+             category and tech badge via renderRow. -->
+        <div class="bpc-search-host" id="bpc-search-host"></div>
+
+        <!-- ========================= empty state ========================= -->
+        <div class="bpc-empty" id="bpc-empty">
+          <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+               stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+            <polyline points="14 2 14 8 20 8"></polyline>
+            <line x1="16" y1="13" x2="8" y2="13"></line>
+            <line x1="16" y1="17" x2="8" y2="17"></line>
+          </svg>
+          <p>Search for a blueprint to get started</p>
+        </div>
+
+        <!-- ======================= blueprint card ======================= -->
+        <div class="bpc-card bpc-bp-card" id="bpc-bp-card" hidden>
+          <div class="bpc-card-accent"></div>
+          <div class="bpc-bp-card-inner">
+            <div class="bpc-bp-identity">
+              <div class="bpc-bp-icon" id="bpc-bp-icon"></div>
+              <div class="bpc-bp-names">
+                <div class="bpc-bp-name-row">
+                  <h2 class="bpc-bp-name" id="bpc-bp-name">Blueprint</h2>
+                  <span class="bpc-tech" id="bpc-bp-tech" hidden></span>
+                </div>
+                <div class="bpc-bp-produces">
+                  Produces
+                  <span class="bpc-strong" id="bpc-bp-product">-</span> &times;
+                  <span class="bpc-mono" id="bpc-bp-per-run">1</span> / run &middot;
+                  <span class="bpc-mono" id="bpc-bp-total">1</span> total
+                </div>
+              </div>
+            </div>
+
+            <div class="bpc-bp-controls">
+              <div class="bpc-field">
+                <label class="bpc-field-label" for="bpc-me">ME</label>
+                <input type="number" id="bpc-me" class="bpc-num" value="0" min="0" max="10" step="1">
+              </div>
+              <div class="bpc-field">
+                <label class="bpc-field-label" for="bpc-runs">Runs</label>
+                <input type="number" id="bpc-runs" class="bpc-num bpc-num-wide" value="1" min="1" step="1">
+              </div>
+              <div class="bpc-field">
+                <label class="bpc-field-label" for="bpc-facility-host">Facility</label>
+                <div class="bpc-facility-host" id="bpc-facility-host"></div>
+              </div>
+              <button type="button" class="btn btn-secondary" id="bpc-add-to-plan">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                     stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <line x1="12" y1="5" x2="12" y2="19"></line>
+                  <line x1="5" y1="12" x2="19" y2="12"></line>
+                </svg>
+                Add to Plan
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- ============================= tabs ============================= -->
+        <div class="bpc-tabs" id="bpc-tabs" role="tablist" hidden>
+          <button type="button" class="bpc-tab is-active" role="tab" data-bpc-tab="results"
+                  id="bpc-tab-results" aria-selected="true">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                 stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+              <line x1="9" y1="9" x2="15" y2="9"></line>
+              <line x1="9" y1="15" x2="15" y2="15"></line>
+            </svg>
+            Results
+          </button>
+          <button type="button" class="bpc-tab" role="tab" data-bpc-tab="invention"
+                  id="bpc-tab-invention" aria-selected="false" hidden>
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                 stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <circle cx="12" cy="12" r="10"></circle>
+              <line x1="12" y1="8" x2="12" y2="16"></line>
+              <line x1="8" y1="12" x2="16" y2="12"></line>
+            </svg>
+            Invention
+          </button>
+        </div>
+
+        <!-- ========================== loading ========================== -->
+        <div class="bpc-loading" id="bpc-loading" hidden>
+          <div class="bpc-spinner" aria-hidden="true"></div>
+          <p>Calculating materials…</p>
+        </div>
+
+        <!-- ========================= RESULTS TAB ========================= -->
+        <div class="bpc-panel" id="bpc-panel-results" role="tabpanel" hidden>
+
+          <!-- facility bonuses strip -->
+          <div class="bpc-bonuses" id="bpc-bonuses" hidden>
+            <span class="bpc-bonuses-name">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--qf-accent)"
+                   stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M3 21V9l7-4v4l7-4v16z"></path>
+              </svg>
+              <span id="bpc-bonuses-facility">-</span>
+            </span>
+            <span class="bpc-bonuses-sep"></span>
+            <span class="bpc-bonuses-list" id="bpc-bonuses-list"></span>
+          </div>
+
+          <div class="bpc-grid-2">
+            <!-- total materials -->
+            <div class="bpc-card">
+              <div class="bpc-card-accent"></div>
+              <div class="bpc-card-head">
+                <span class="bpc-card-title">Total Materials Needed</span>
+                <span class="bpc-pill" id="bpc-total-mat-count">0</span>
+              </div>
+              <div id="bpc-total-materials"></div>
+            </div>
+
+            <!-- costs & profit -->
+            <div class="bpc-card">
+              <div class="bpc-card-accent"></div>
+              <div class="bpc-card-head">
+                <span class="bpc-card-title">Manufacturing Costs &amp; Profit</span>
+              </div>
+              <div class="bpc-cost-body">
+                <div class="bpc-section-label">Cost Breakdown</div>
+                <div id="bpc-cost-rows"></div>
+                <div class="bpc-kv bpc-kv-total">
+                  <span class="bpc-kv-label">Total Cost</span>
+                  <span class="bpc-mono bpc-kv-strong" id="bpc-total-cost">-</span>
+                </div>
+                <div class="bpc-kv">
+                  <span class="bpc-kv-label" id="bpc-sell-label">Sell Value</span>
+                  <span class="bpc-mono bpc-accent" id="bpc-sell-value">-</span>
+                </div>
+                <div class="bpc-profit" id="bpc-profit">
+                  <div class="bpc-profit-row">
+                    <span class="bpc-profit-label" id="bpc-profit-label">Profit</span>
+                    <span class="bpc-mono bpc-profit-value" id="bpc-profit-value">-</span>
+                  </div>
+                  <div class="bpc-profit-row bpc-profit-sub">
+                    <span>Profit Margin</span>
+                    <span class="bpc-mono" id="bpc-profit-margin">-</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- cost & fee breakdown -->
+          <div class="bpc-card">
+            <div class="bpc-card-accent"></div>
+            <div class="bpc-card-head">
+              <span class="bpc-card-title">Cost &amp; Fee Breakdown</span>
+            </div>
+            <div class="bpc-fee-grid">
+              <div class="bpc-fee-col bpc-fee-col-left">
+                <div class="bpc-section-label bpc-section-label-accent bpc-section-split">
+                  <span>Input Costs</span>
+                  <span class="bpc-faint" id="bpc-matprice-count">0 items</span>
+                </div>
+                <div id="bpc-material-prices"></div>
+                <div class="bpc-kv bpc-kv-topline">
+                  <span class="bpc-kv-strong">Total Materials Cost</span>
+                  <span class="bpc-mono bpc-kv-strong" id="bpc-materials-cost-total">-</span>
+                </div>
+              </div>
+              <div class="bpc-fee-col">
+                <div id="bpc-fee-rows"></div>
+                <div class="bpc-output-value">
+                  <span class="bpc-kv-label" id="bpc-output-label">Output Value</span>
+                  <span class="bpc-mono bpc-accent bpc-kv-strong" id="bpc-output-value">-</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- material breakdown -->
+          <div class="bpc-card">
+            <div class="bpc-card-accent"></div>
+            <div class="bpc-card-head">
+              <span class="bpc-card-title">Material Breakdown</span>
+            </div>
+            <div class="bpc-breakdown-body">
+              <div class="bpc-breakdown-head">
+                <span class="bpc-breakdown-name" id="bpc-breakdown-name">-</span>
+                <div class="bpc-breakdown-badges">
+                  <span class="bpc-badge bpc-badge-accent" id="bpc-breakdown-me">ME 0</span>
+                  <span class="bpc-badge" id="bpc-breakdown-runs">1 run</span>
+                </div>
+              </div>
+              <div class="bpc-section-label bpc-section-label-accent">Raw Materials</div>
+              <div class="bpc-mat-grid" id="bpc-raw-materials"></div>
+              <div id="bpc-intermediates-wrap" hidden>
+                <div class="bpc-section-label bpc-section-label-warning">
+                  Intermediate Components (Manufactured)
+                </div>
+                <div class="bpc-mat-grid" id="bpc-intermediates"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ======================== INVENTION TAB ======================== -->
+        <div class="bpc-panel" id="bpc-panel-invention" role="tabpanel" hidden>
+
+          <!-- target banner -->
+          <div class="bpc-inv-banner">
+            <span class="bpc-inv-from">
+              <span id="bpc-inv-from-name">-</span>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--qf-accent)"
+                   stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <line x1="5" y1="12" x2="19" y2="12"></line>
+                <polyline points="12 5 19 12 12 19"></polyline>
+              </svg>
+            </span>
+            <div class="bpc-inv-icon" id="bpc-inv-icon"></div>
+            <div class="bpc-inv-target">
+              <div class="bpc-inv-target-name" id="bpc-inv-target-name">-</div>
+              <div class="bpc-inv-target-sub">
+                Invented via <span class="bpc-strong" id="bpc-inv-bp-name">-</span> &mdash; T2 blueprint copy
+              </div>
+            </div>
+          </div>
+
+          <div class="bpc-grid-2">
+            <!-- target + skills + datacores -->
+            <div class="bpc-card">
+              <div class="bpc-card-accent"></div>
+              <div class="bpc-card-head">
+                <span class="bpc-card-title">Invention Target</span>
+              </div>
+              <div class="bpc-inv-body">
+                <div id="bpc-inv-target-rows"></div>
+                <div class="bpc-section-label">Character Skills</div>
+                <div id="bpc-inv-skill-rows"></div>
+                <div class="bpc-section-label">Datacores (per attempt)</div>
+                <div id="bpc-inv-datacores"></div>
+                <div class="bpc-kv">
+                  <span class="bpc-kv-strong">Datacore Cost / Attempt</span>
+                  <span class="bpc-mono bpc-accent bpc-kv-strong" id="bpc-inv-datacore-total">-</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- strategy + optimal decryptor -->
+            <div class="bpc-card">
+              <div class="bpc-card-accent"></div>
+              <div class="bpc-card-head">
+                <span class="bpc-card-title">Optimization &amp; Decryptor</span>
+              </div>
+              <div class="bpc-inv-body">
+                <label class="bpc-inline-label" for="bpc-inv-strategy">Optimize For</label>
+                <select id="bpc-inv-strategy" class="qf-select"></select>
+                <label class="bpc-inline-label bpc-inline-label-spaced" for="bpc-inv-decryptor">
+                  Analyze Decryptor
+                </label>
+                <select id="bpc-inv-decryptor" class="qf-select"></select>
+                <div class="bpc-section-label">Optimal Decryptor</div>
+                <div id="bpc-inv-optimal-rows"></div>
+              </div>
+            </div>
+          </div>
+
+          <div class="bpc-grid-2">
+            <!-- output blueprint + invention costs -->
+            <div class="bpc-card">
+              <div class="bpc-card-accent"></div>
+              <div class="bpc-card-head">
+                <span class="bpc-card-title">Output Blueprint &amp; Invention Costs</span>
+              </div>
+              <div class="bpc-inv-body">
+                <div class="bpc-section-label">Output Blueprint Stats</div>
+                <div id="bpc-inv-output-rows"></div>
+                <div class="bpc-section-label">Invention Costs</div>
+                <div id="bpc-inv-cost-rows"></div>
+              </div>
+            </div>
+
+            <!-- economic analysis + savings -->
+            <div class="bpc-inv-econ-col">
+              <div class="bpc-card">
+                <div class="bpc-card-accent"></div>
+                <div class="bpc-card-head">
+                  <span class="bpc-card-title">Economic Analysis</span>
+                </div>
+                <div class="bpc-inv-body">
+                  <div id="bpc-inv-econ-rows"></div>
+                </div>
+              </div>
+              <div class="bpc-inv-savings" id="bpc-inv-savings" hidden>
+                <div class="bpc-inv-savings-title">Decryptor Benefit</div>
+                <div id="bpc-inv-savings-rows"></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- decryptor comparison -->
+          <div class="bpc-card">
+            <div class="bpc-card-accent"></div>
+            <div class="bpc-card-head bpc-card-head-split">
+              <span class="bpc-card-title">Decryptor Comparison</span>
+              <span class="bpc-faint">optimal highlighted &middot; selected row shaded</span>
+            </div>
+            <div class="bpc-dec-scroll">
+              <div class="bpc-dec-table">
+                <div class="bpc-dec-head">
+                  <span>Decryptor</span>
+                  <span class="bpc-right">Success</span>
+                  <span class="bpc-right">Runs</span>
+                  <span class="bpc-right">ME</span>
+                  <span class="bpc-right">TE</span>
+                  <span class="bpc-right">Cost / Run</span>
+                </div>
+                <div id="bpc-decryptor-rows"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- ====================== ADD TO PLAN MODAL ====================== -->
+    <div class="modal" id="bpc-plan-modal" role="dialog" aria-modal="true"
+         aria-labelledby="bpc-plan-modal-title" hidden>
+      <div class="modal-content bpc-modal-content">
+        <div class="modal-header">
+          <h2 id="bpc-plan-modal-title">Add to Manufacturing Plan</h2>
+          <button type="button" class="modal-close" id="bpc-plan-modal-close"
+                  aria-label="Close dialog">&times;</button>
+        </div>
+        <div class="modal-body qf-scroll">
+          <div class="bpc-modal-bp">
+            <div class="bpc-modal-bp-icon" id="bpc-modal-bp-icon"></div>
+            <div>
+              <div class="bpc-modal-bp-name" id="bpc-modal-bp-name">-</div>
+              <div class="bpc-modal-bp-sub" id="bpc-modal-bp-sub">-</div>
+            </div>
+          </div>
+          <p class="bpc-modal-hint">Select an existing plan or create a new one:</p>
+          <div class="bpc-plan-options" id="bpc-plan-options"></div>
+          <div id="bpc-new-plan-section" hidden>
+            <label class="bpc-inline-label" for="bpc-new-plan-name">New Plan Name (optional)</label>
+            <input type="text" id="bpc-new-plan-name" class="qf-input"
+                   placeholder="Leave empty for auto-generated name">
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" id="bpc-plan-cancel">Cancel</button>
+          <button type="button" class="btn btn-primary" id="bpc-plan-confirm">Add to Plan</button>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</template>

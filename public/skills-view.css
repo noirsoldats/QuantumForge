@@ -1,0 +1,443 @@
+/* Skills Manager — ported from "Character Skills (1a).dc.html" */
+
+/* Binding rule 6a: `hidden` is only display:none at browser-default level, so
+   any explicit display (flex/grid) beats it. This view toggles the group list,
+   empty state, loading state, Clear Overrides button and modal via `hidden`.
+   jsdom applies no stylesheets, so a renderer test CANNOT catch a regression
+   here - assert on stylesheet text instead. */
+#skills-view [hidden] { display: none !important; }
+
+.sk-view {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--qf-bg-app-gradient, var(--qf-bg-base));
+  color: var(--qf-text-primary);
+}
+
+/* ---------------------------------------------------------------- header */
+
+.sk-header {
+  flex-shrink: 0;
+  padding: 14px 22px;
+  border-bottom: 1px solid var(--qf-border-subtle);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.sk-identity { display: flex; align-items: center; gap: 14px; }
+
+.sk-portrait {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  border: 2px solid var(--qf-gold);
+  background: var(--qf-surface);
+  flex-shrink: 0;
+}
+
+.sk-name {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--qf-text-heading);
+}
+
+.sk-subtitle {
+  margin: 3px 0 0;
+  font-size: 12px;
+  color: var(--qf-text-muted);
+}
+
+.sk-mono { font-family: var(--qf-font-mono); color: var(--qf-text-primary); }
+
+.sk-header-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+
+/* Refresh while the ESI cache is still valid.
+   Looks unavailable but stays CLICKABLE: a disabled <button> swallows the
+   click, so the user got no toast, no tooltip and no cursor change - it read
+   as a dead button. Clicking now explains why nothing was fetched. */
+.btn.is-gated {
+  opacity: 0.55;
+  cursor: help;
+}
+.btn.is-gated:hover { opacity: 0.75; }
+
+/* --------------------------------------------------------- summary strip */
+
+.sk-summary {
+  flex-shrink: 0;
+  display: flex;
+  padding: 0 22px;
+  border-bottom: 1px solid var(--qf-border);
+  overflow-x: auto;
+}
+
+.sk-stat {
+  padding: 11px 22px 11px 0;
+  margin-right: 22px;
+  border-right: 1px solid var(--qf-border-subtle);
+  white-space: nowrap;
+}
+.sk-stat:last-child { border-right: none; margin-right: 0; }
+
+.sk-stat-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--qf-text-faint);
+  font-weight: 700;
+}
+
+.sk-stat-value {
+  font-size: 15px;
+  font-weight: 700;
+  margin-top: 4px;
+  font-family: var(--qf-font-mono);
+  color: var(--qf-text-heading);
+}
+.sk-stat-value.is-accent { color: var(--qf-accent); }
+
+/* ------------------------------------------------------------------ body */
+
+.sk-body { flex: 1; min-height: 0; display: flex; }
+
+.sk-sidebar {
+  width: 240px;
+  flex-shrink: 0;
+  border-right: 1px solid var(--qf-border);
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  overflow-y: auto;
+}
+
+/* Binding rule 4: inputs use --qf-surface-sunken so they match the dropdowns
+   sitting beside them; --qf-surface reads as "no background" on a card. */
+.sk-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 12px;
+  font-size: var(--qf-text-sm);
+  background: var(--qf-surface-sunken);
+  border: 1px solid var(--qf-border);
+  border-radius: var(--qf-radius-md);
+  color: var(--qf-text-primary);
+  font-family: inherit;
+}
+.sk-input:focus { outline: none; border-color: var(--qf-border-active); }
+
+.sk-search-wrap { position: relative; display: flex; align-items: center; }
+
+/* Room for the clear button so long queries do not run underneath it. */
+.sk-search-input { padding-right: 30px; }
+
+.sk-search-clear {
+  position: absolute;
+  right: 6px;
+  width: 20px;
+  height: 20px;
+  display: grid;
+  place-items: center;
+  border: none;
+  background: none;
+  color: var(--qf-text-faint);
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+  padding: 0;
+  border-radius: var(--qf-radius-sm);
+}
+.sk-search-clear:hover { color: var(--qf-text-primary); background: var(--qf-surface); }
+.sk-search-clear:focus-visible { outline: 1px solid var(--qf-border-active); outline-offset: 1px; }
+
+
+.sk-facet-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+.sk-facet-head h4 {
+  margin: 0;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--qf-text-faint);
+  font-weight: 700;
+}
+
+.sk-clear {
+  font-size: 11px;
+  color: var(--qf-accent);
+  cursor: pointer;
+  background: none;
+  border: none;
+  padding: 0;
+  font-family: inherit;
+}
+
+.sk-facet-list { display: flex; flex-direction: column; gap: 2px; }
+
+/* Binding rule 1: row highlights are box-shadow only. A toggled
+   background-color does not clear reliably on a row highlighted on first
+   paint; background-color stays constant in the base. */
+.sk-facet {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 6px;
+  cursor: pointer;
+  border-radius: var(--qf-radius-sm);
+  background-color: transparent;
+  box-shadow: none;
+}
+.sk-facet.is-on { box-shadow: inset 0 0 0 200px var(--qf-accent-dim); }
+
+.sk-facet-label {
+  flex: 1;
+  min-width: 0;
+  font-size: 12.5px;
+  color: var(--qf-text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sk-facet-count {
+  font-size: 10.5px;
+  font-family: var(--qf-font-mono);
+  color: var(--qf-text-faint);
+}
+
+.sk-hint {
+  padding: 10px 12px;
+  background: var(--qf-surface-sunken);
+  border: 1px solid var(--qf-border);
+  border-radius: var(--qf-radius-md);
+  font-size: 11px;
+  color: var(--qf-text-muted);
+  line-height: 1.5;
+}
+.sk-hint-accent { color: var(--qf-accent); font-weight: 600; }
+
+/* --------------------------------------------------------------- content */
+
+.sk-content {
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+  padding: 14px 22px 26px;
+}
+
+.sk-loading {
+  padding: 60px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  color: var(--qf-text-muted);
+  font-size: 13px;
+}
+
+.sk-spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--qf-border);
+  border-top-color: var(--qf-accent);
+  border-radius: 50%;
+  animation: sk-spin 0.7s linear infinite;
+}
+
+@keyframes sk-spin {
+  to { transform: rotate(360deg); }
+}
+
+.sk-groups { display: flex; flex-direction: column; gap: 14px; }
+
+.sk-group {
+  background: var(--qf-bg-elevated);
+  border: 1px solid var(--qf-border);
+  border-radius: var(--qf-radius-lg);
+  overflow: hidden;
+}
+
+.sk-group-accent { height: 2px; background: var(--qf-accent-gradient-h); }
+
+.sk-group-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 11px 16px;
+  cursor: pointer;
+  border-bottom: 1px solid transparent;
+}
+.sk-group.is-open .sk-group-head { border-bottom-color: var(--qf-border); }
+
+.sk-group-chevron { flex-shrink: 0; transition: transform 0.12s ease; transform: rotate(0deg); }
+.sk-group.is-open .sk-group-chevron { transform: rotate(90deg); }
+
+.sk-group-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--qf-text-heading);
+}
+
+.sk-group-trained { font-size: 11px; color: var(--qf-text-muted); }
+
+.sk-group-count {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--qf-text-faint);
+  background: var(--qf-surface);
+  border: 1px solid var(--qf-border);
+  border-radius: var(--qf-radius-pill);
+  padding: 1px 8px;
+}
+
+/* ------------------------------------------------------------ skill rows */
+
+.sk-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--qf-border-subtle);
+  background-color: transparent;
+  box-shadow: none;
+}
+.sk-row.is-overridden { box-shadow: inset 0 0 0 200px var(--qf-accent-dim); }
+.sk-row:last-child { border-bottom: none; }
+
+.sk-row-info { flex: 1; min-width: 0; }
+
+.sk-row-title { display: flex; align-items: center; gap: 8px; }
+
+.sk-row-name {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--qf-text-heading);
+}
+
+.sk-override-badge {
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  color: var(--qf-accent);
+  background: var(--qf-accent-dim);
+  border: 1px solid var(--qf-border-active);
+  border-radius: var(--qf-radius-pill);
+  padding: 1px 7px;
+  white-space: nowrap;
+}
+
+.sk-row-meta {
+  font-size: 11px;
+  color: var(--qf-text-faint);
+  margin-top: 3px;
+}
+.sk-row-meta .sk-mono-faint { font-family: var(--qf-font-mono); }
+
+.sk-levels { display: flex; align-items: center; gap: 3px; flex-shrink: 0; }
+
+/* Level pips. Every state sets the same three properties (binding rule 3) so
+   switching between them always resets cleanly. */
+.sk-level {
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  font-size: 12px;
+  font-weight: 700;
+  font-family: var(--qf-font-mono);
+  border-radius: var(--qf-radius-sm);
+  cursor: pointer;
+  border: 1px solid var(--qf-border);
+  padding: 0;
+  color: var(--qf-text-faint);
+  background-color: transparent;
+}
+/* At or below the effective level. */
+.sk-level.is-filled {
+  color: var(--qf-text-primary);
+  background-color: var(--qf-surface);
+  border-color: var(--qf-border);
+}
+/* The effective level itself. */
+.sk-level.is-current {
+  color: #0d0d14;
+  background-color: var(--qf-accent);
+  border-color: var(--qf-accent);
+}
+/* The effective level when it comes from an override. */
+.sk-level.is-current.is-override {
+  color: var(--qf-accent);
+  background-color: var(--qf-accent-dim);
+  border-color: var(--qf-border-active);
+}
+/* The real trained level, marked while an override is in effect. */
+.sk-level.is-trained-marker {
+  color: var(--qf-success);
+  background-color: transparent;
+  border-color: rgba(52, 211, 153, 0.5);
+}
+.sk-level:focus-visible { outline: 1px solid var(--qf-border-active); outline-offset: 2px; }
+
+/* ----------------------------------------------------------- empty state */
+
+.sk-empty {
+  padding: 60px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  text-align: center;
+}
+.sk-empty-icon {
+  width: 56px;
+  height: 56px;
+  border-radius: var(--qf-radius-lg);
+  background: var(--qf-surface);
+  border: 1px solid var(--qf-border);
+  display: grid;
+  place-items: center;
+  color: var(--qf-text-faint);
+}
+.sk-empty-title { font-size: 16px; font-weight: 600; color: var(--qf-text-heading); }
+.sk-empty-text { font-size: 13px; color: var(--qf-text-muted); line-height: 1.55; max-width: 420px; }
+
+/* ------------------------------------------------------------ status line */
+
+.sk-statusline {
+  height: 26px;
+  flex-shrink: 0;
+  border-top: 1px solid var(--qf-border);
+  display: flex;
+  align-items: center;
+  padding: 0 12px;
+  gap: 18px;
+  font-size: 11.5px;
+  color: var(--qf-text-muted);
+}
+.sk-spacer { flex: 1; }
+.sk-cache-status { color: var(--qf-text-faint); }
+
+/* ----------------------------------------------------------------- modal */
+
+.sk-confirm-modal { width: 420px; max-width: 100%; }
+.sk-confirm-text { margin: 0; font-size: 13px; color: var(--qf-text-primary); line-height: 1.6; }
+.sk-confirm-note {
+  margin: 10px 0 0;
+  font-size: 11.5px;
+  color: var(--qf-text-faint);
+  line-height: 1.5;
+}

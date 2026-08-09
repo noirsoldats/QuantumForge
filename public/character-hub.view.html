@@ -1,0 +1,48 @@
+<!--
+  Character Hub view markup.
+
+  NOT a standalone page - fetched and cloned by character-hub-renderer.js and
+  mounted into the application shell's #view-host. Styling comes from
+  character-hub.css, which index.html loads.
+
+  The roster and aggregate strip are rendered from live data, so only the shell
+  of the screen lives here.
+-->
+<template id="character-hub-view-template">
+  <div id="character-hub" class="ch-root">
+    <div class="ch-inner">
+
+      <div class="ch-header">
+        <div>
+          <h1>Characters</h1>
+          <p>Your connected Eve Online characters. Open a character's assets, skills, or blueprints.</p>
+        </div>
+        <button class="primary-button" id="ch-connect-btn">
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <line x1="12" y1="5" x2="12" y2="19"></line>
+            <line x1="5" y1="12" x2="19" y2="12"></line>
+          </svg>
+          <span class="btn-label">Connect Character</span>
+        </button>
+      </div>
+
+      <!-- Aggregate totals across every connected character -->
+      <div class="ch-totals" id="ch-totals"></div>
+
+      <!-- One card per character -->
+      <div class="ch-cards" id="ch-cards"></div>
+
+      <div class="ch-empty" id="ch-empty" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"></path>
+          <circle cx="9" cy="7" r="4"></circle>
+          <path d="M22 21v-2a4 4 0 0 0-3-3.87"></path>
+          <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
+        </svg>
+        <p>No characters connected yet</p>
+        <small>Click "Connect Character" to add your Eve Online characters</small>
+      </div>
+
+    </div>
+  </div>
+</template>

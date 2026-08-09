@@ -1,0 +1,468 @@
+/* Manufacturing Summary — ported from "Manufacturing Summary (1a).dc.html" */
+
+/* Binding rule 6a: `hidden` is only display:none at browser-default level, so
+   any explicit display (flex/grid/table) beats it. This view toggles the
+   results table, empty state, progress bar, staleness banner, both modals and
+   several conditional fields via `hidden`. jsdom applies no stylesheets, so a
+   renderer test CANNOT catch a regression here - assert on stylesheet text. */
+#summary-view [hidden] { display: none !important; }
+
+.ms-view {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--qf-bg-app-gradient, var(--qf-bg-base));
+  color: var(--qf-text-primary);
+}
+
+/* ------------------------------------------------------------ page header */
+
+.ms-page-head {
+  flex-shrink: 0;
+  padding: 15px 22px 14px;
+  border-bottom: 1px solid var(--qf-border-subtle);
+}
+
+.ms-title {
+  margin: 0;
+  font-size: 21px;
+  font-weight: 700;
+  color: var(--qf-text-heading);
+  letter-spacing: -0.3px;
+}
+
+.ms-subtitle {
+  margin: 6px 0 0;
+  font-size: 12.5px;
+  color: var(--qf-text-muted);
+}
+
+.ms-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 16px 22px 26px;
+}
+
+.ms-stack { display: flex; flex-direction: column; gap: 16px; }
+
+.ms-spacer { flex: 1; }
+.ms-mono { font-family: var(--qf-font-mono); }
+
+/* ------------------------------------------------------------------ cards */
+
+.ms-card {
+  background: var(--qf-bg-elevated);
+  border: 1px solid var(--qf-border);
+  border-radius: var(--qf-radius-lg);
+  overflow: hidden;
+}
+
+.ms-card-accent { height: 2px; background: var(--qf-accent-gradient-h); }
+
+/* ---------------------------------------------------------------- filters */
+
+.ms-filter-grid {
+  padding: 16px 18px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: 16px 20px;
+}
+
+.ms-field-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--qf-text-faint);
+  font-weight: 700;
+  margin-bottom: 8px;
+}
+.ms-field-label-spaced { margin-top: 14px; }
+
+.ms-input-label {
+  display: block;
+  font-size: 11px;
+  color: var(--qf-text-muted);
+  margin-bottom: 5px;
+}
+
+.ms-check-label {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 11px;
+  color: var(--qf-text-muted);
+  margin-bottom: 5px;
+  cursor: pointer;
+}
+
+.ms-chip-row { display: flex; gap: 6px; flex-wrap: wrap; }
+.ms-chip-wrap { flex-wrap: wrap; }
+
+/* Binding rule 1: the selected state is box-shadow only, and background-color
+   stays constant - a toggled background does not clear reliably on a chip
+   highlighted on its first paint. */
+.ms-chip {
+  padding: 4px 11px;
+  border-radius: var(--qf-radius-pill);
+  border: 1px solid var(--qf-border);
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  font-family: inherit;
+  background-color: transparent;
+  color: var(--qf-text-muted);
+  box-shadow: none;
+}
+.ms-chip.is-on {
+  border-color: var(--qf-border-active);
+  color: var(--qf-accent);
+  box-shadow: inset 0 0 0 200px var(--qf-accent-dim);
+}
+
+/* Blueprint and character filters are SEGMENTS, not pills: square corners and
+   more padding. The mockup uses two distinct shapes to separate "pick one
+   scope" from "toggle many tags". */
+.ms-chip-seg {
+  padding: 6px 12px;
+  border-radius: var(--qf-radius-sm);
+}
+
+.ms-char-select { margin-top: 8px; }
+
+.ms-market-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+/* Binding rule 4: inputs use --qf-surface-sunken so they match the selects
+   sitting beside them; --qf-surface reads as "no background" on a card. */
+.ms-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 6px 10px;
+  font-size: 12.5px;
+  background: var(--qf-surface-sunken);
+  border: 1px solid var(--qf-border);
+  border-radius: var(--qf-radius-md);
+  color: var(--qf-text-primary);
+  font-family: inherit;
+}
+.ms-input-mono { font-family: var(--qf-font-mono); }
+.ms-input:focus { outline: none; border-color: var(--qf-border-active); }
+.ms-input:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.ms-filter-foot {
+  padding: 15px 18px 16px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 14px;
+  border-top: 1px solid var(--qf-border-subtle);
+}
+
+.ms-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+  color: var(--qf-text-primary);
+  cursor: pointer;
+}
+
+/* Speculative invention and its strategy stack together on the LEFT. */
+.ms-spec-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  align-items: flex-start;
+}
+
+.ms-dec-strategy { min-width: 260px; }
+.ms-dec-strategy.is-disabled { opacity: 0.5; }
+
+/* Market set / facilities / Calculate sit on the RIGHT, with the staleness
+   warning stacked above them and aligned to the same edge. */
+.ms-run-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex-shrink: 0;
+  align-items: flex-end;
+  margin-left: auto;
+}
+/* The Calculate button becomes Cancel mid-run. It stays ENABLED - a disabled
+   button swallows clicks, so a "cancel" the user cannot press is worse than
+   no cancel at all. Both properties are set in each state so neither sticks. */
+#ms-calculate {
+  background-color: var(--qf-accent);
+  border-color: var(--qf-accent);
+}
+#ms-calculate.is-cancel {
+  background-color: var(--qf-error);
+  border-color: var(--qf-error);
+}
+
+.ms-run-row { display: flex; align-items: flex-end; gap: 14px; flex-wrap: wrap; }
+.ms-run-field { min-width: 180px; }
+
+.ms-staleness {
+  display: inline-flex;
+  align-self: flex-end;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 12px;
+  background: var(--qf-warning-dim);
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  border-radius: var(--qf-radius-md);
+  font-size: 12px;
+  color: var(--qf-warning);
+}
+.ms-staleness svg { flex-shrink: 0; }
+
+/* --------------------------------------------------------------- progress */
+
+.ms-progress { padding: 14px 18px; }
+
+.ms-progress-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 12.5px;
+  color: var(--qf-text-muted);
+  margin-bottom: 8px;
+}
+
+.ms-progress-track {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--qf-surface-sunken);
+  overflow: hidden;
+}
+
+.ms-progress-fill {
+  height: 100%;
+  width: 0;
+  border-radius: 3px;
+  background: var(--qf-accent-gradient-h);
+  transition: width 0.2s ease;
+}
+
+/* ---------------------------------------------------------------- results */
+
+.ms-results-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.ms-results-title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--qf-text-heading);
+}
+
+.ms-pill {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--qf-text-faint);
+  background: var(--qf-surface);
+  border: 1px solid var(--qf-border);
+  border-radius: var(--qf-radius-pill);
+  padding: 2px 9px;
+}
+
+/* Amber, matching the speculative row tint so the two read as one signal. */
+.ms-pill.is-speculative {
+  color: #ffa500;
+  background: rgba(255, 165, 0, 0.2);
+  border-color: rgba(255, 165, 0, 0.4);
+}
+
+.ms-muted { color: var(--qf-text-faint); }
+
+/*
+ * Shown when a pre-calculation filter changes while results are on screen.
+ * Deliberately not an error colour - the rows are still valid, just costed
+ * against the previous selection.
+ */
+.ms-stale-notice {
+  margin: 10px 0 0;
+  padding: 7px 11px;
+  font-size: var(--qf-text-sm);
+  color: var(--qf-warning);
+  background: var(--qf-warning-dim);
+  border: 1px solid var(--qf-warning);
+  border-radius: var(--qf-radius-md);
+}
+
+.ms-search-wrap { width: 220px; position: relative; display: flex; align-items: center; }
+.ms-search-icon { position: absolute; left: 10px; pointer-events: none; color: var(--qf-text-faint); }
+.ms-search-input { padding: 7px 28px 7px 31px; }
+
+.ms-search-clear {
+  position: absolute;
+  right: 6px;
+  width: 20px;
+  height: 20px;
+  display: grid;
+  place-items: center;
+  border: none;
+  background: none;
+  color: var(--qf-text-faint);
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+  padding: 0;
+  border-radius: var(--qf-radius-sm);
+}
+.ms-search-clear:hover { color: var(--qf-text-primary); background: var(--qf-surface); }
+
+/* Horizontal scroll ONLY. The table grows to its full height and scrolls with
+   the main view rather than trapping a second scrollbar inside the card. */
+.ms-table-scroll { overflow-x: auto; }
+
+.ms-table { width: 100%; border-collapse: collapse; min-width: max-content; }
+
+/* NOT position:sticky - a sticky header pins to its nearest SCROLLING
+   ancestor, and now that this table has no vertical scrollbar of its own that
+   would be the view host, so the header would float over the filter panel. */
+.ms-th {
+  padding: 9px 11px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--qf-text-faint);
+  font-weight: 700;
+  white-space: nowrap;
+  cursor: pointer;
+  user-select: none;
+  background: var(--qf-bg-elevated);
+  text-align: left;
+}
+.ms-th.is-sorted { color: var(--qf-accent); }
+.ms-th.is-numeric { text-align: right; }
+.ms-th.is-check { text-align: center; width: 34px; cursor: default; }
+
+.ms-td {
+  padding: 9px 11px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  border-bottom: 1px solid var(--qf-border-subtle);
+}
+.ms-td.is-numeric { text-align: right; font-family: var(--qf-font-mono); }
+.ms-td.is-check { text-align: center; }
+
+.ms-row { background-color: transparent; box-shadow: none; }
+
+/* Speculative rows carry an amber tint plus a left bar, matching the mockup
+   and the existing screen. Binding rule 1: this is box-shadow only, never a
+   toggled background - a tint set on a row that is amber on its FIRST paint
+   is exactly the case that fails to clear. The `is-selected` rule follows
+   this one so a ticked speculative row still reads as selected. */
+.ms-row.is-speculative {
+  box-shadow: inset 0 0 0 200px rgba(255, 165, 0, 0.08),
+              inset 3px 0 0 rgba(255, 165, 0, 0.6);
+}
+.ms-row.is-selected {
+  box-shadow: inset 0 0 0 200px var(--qf-accent-dim);
+}
+.ms-row.is-speculative.is-selected {
+  box-shadow: inset 0 0 0 200px var(--qf-accent-dim),
+              inset 3px 0 0 rgba(255, 165, 0, 0.6);
+}
+
+/* Profit sign. Both set colour, so switching between them always resets. */
+.ms-profit { color: var(--qf-success); }
+.ms-profit.is-negative { color: var(--qf-error); }
+
+/* Both truncate with a title tooltip carrying the full text. Without a cap
+   these two text columns sized to their longest value and pushed every
+   numeric column off-screen - Category especially, since it is the widest
+   text for the least information. Item Name gets roughly twice the room. */
+.ms-item-name {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--qf-text-heading);
+  font-weight: 500;
+  max-width: 260px;
+}
+
+.ms-category {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--qf-text-muted);
+  max-width: 120px;
+}
+
+/* ------------------------------------------------------------ empty state */
+
+.ms-empty {
+  padding: 50px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  text-align: center;
+}
+.ms-empty-icon {
+  width: 56px;
+  height: 56px;
+  border-radius: var(--qf-radius-lg);
+  background: var(--qf-surface);
+  border: 1px solid var(--qf-border);
+  display: grid;
+  place-items: center;
+  color: var(--qf-text-faint);
+}
+.ms-empty-title { font-size: 16px; font-weight: 600; color: var(--qf-text-heading); }
+.ms-empty-text { font-size: 13px; color: var(--qf-text-muted); line-height: 1.55; max-width: 420px; }
+
+/* ---------------------------------------------------------------- modals */
+
+.ms-columns-modal { width: 460px; max-width: 100%; }
+.ms-plan-modal { width: 460px; max-width: 100%; }
+
+.ms-columns-hint { margin: 0 0 10px; font-size: 12px; color: var(--qf-text-muted); }
+
+.ms-columns-list {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  max-height: 380px;
+  overflow-y: auto;
+}
+
+.ms-column-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: var(--qf-radius-sm);
+  background: var(--qf-surface);
+  border-top: 2px solid transparent;
+}
+.ms-column-row.is-dragging { opacity: 0.4; }
+.ms-column-row.is-drop-target { border-top-color: var(--qf-accent); }
+
+.ms-column-grip { color: var(--qf-text-faint); cursor: grab; user-select: none; }
+.ms-column-label { flex: 1; font-size: 12.5px; color: var(--qf-text-primary); cursor: pointer; }
+
+.ms-plan-summary {
+  margin: 0 0 14px;
+  font-size: 13px;
+  color: var(--qf-text-primary);
+  line-height: 1.6;
+}
+.ms-plan-new { margin-top: 12px; }

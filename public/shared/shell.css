@@ -1,0 +1,471 @@
+/* ============================================
+   Quantum Forge - Application Shell
+
+   The persistent chrome: frameless title bar, activity rail, view host and
+   status footer. Owned by shared/shell.js.
+
+   The shell is created ONCE per window and never re-rendered, so the rail and
+   footer are guaranteed identical everywhere rather than identical by
+   convention. Views mount into #view-host; the chrome around them never
+   reloads.
+
+   Roles (set as data-role on #app-shell):
+     main       - title bar + rail + footer + (disabled) search
+     popout     - title bar + footer, no rail, no search
+     standalone - same as popout; Settings / Audit Log / ESI Status
+   ============================================ */
+
+/* ---- Root ---- */
+
+.app-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
+  background: var(--qf-bg-app-gradient);
+  color: var(--qf-text-primary);
+  font-family: var(--qf-font-sans);
+}
+
+/* ============================================
+   Title bar
+   ============================================ */
+
+.qf-titlebar {
+  position: relative; /* anchors the absolutely-centred search field */
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-shrink: 0;
+  height: 42px;
+  padding: 0 12px;
+  background: rgba(0, 0, 0, 0.55);
+  border-bottom: 1px solid var(--qf-border);
+  /* The bar itself is the drag handle. Every interactive child MUST set
+     -webkit-app-region: no-drag or it will not receive clicks. */
+  -webkit-app-region: drag;
+  user-select: none;
+}
+
+/* macOS keeps its native traffic lights, so the bar must not start under them.
+   The buttons occupy roughly 12px..66px (3 x 14px + 2 x 6px gaps, offset by
+   trafficLightPosition.x = 12 in window-controls.js), so 76px clears them with
+   a small gap. Every other platform uses the mockup's 12px. */
+.app-shell[data-platform='darwin'] .qf-titlebar {
+  padding-left: 76px;
+}
+
+.qf-titlebar-brand {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  flex-shrink: 0;
+  padding: 0;
+  background: none;
+  border: none;
+  font-family: inherit;
+}
+
+/* In the main window the brand is the route home. */
+.qf-titlebar-brand.is-clickable {
+  padding: 3px 6px;
+  margin-left: -6px;
+  border-radius: var(--qf-radius-sm);
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+  transition: background-color var(--qf-transition-fast);
+}
+
+.qf-titlebar-brand.is-clickable:hover {
+  background-color: var(--qf-surface-hover);
+}
+
+.qf-titlebar-brand.is-clickable:hover .qf-titlebar-name {
+  color: var(--qf-accent);
+}
+
+.qf-titlebar-brand.is-clickable:focus-visible {
+  outline: none;
+  box-shadow: var(--qf-focus-ring);
+}
+
+.qf-titlebar-mark {
+  width: 21px;
+  height: 21px;
+  flex-shrink: 0;
+}
+
+.qf-titlebar-name {
+  font-size: 13px;
+  font-weight: var(--qf-weight-semibold);
+  color: var(--qf-text-heading);
+  white-space: nowrap;
+}
+
+/* ---- Breadcrumb ---- */
+
+.qf-breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  font-size: 12.5px;
+  color: var(--qf-text-muted);
+}
+
+.qf-breadcrumb-sep {
+  display: inline-flex;
+  align-items: center;
+  color: var(--qf-text-faint);
+  flex-shrink: 0;
+}
+
+.qf-breadcrumb-item {
+  padding: 0;
+  background: none;
+  border: none;
+  color: var(--qf-text-muted);
+  font-family: inherit;
+  font-size: inherit;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Ancestor levels are navigable; the current level is not. */
+.qf-breadcrumb-item.is-clickable {
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+  transition: color var(--qf-transition-fast);
+}
+
+.qf-breadcrumb-item.is-clickable:hover {
+  color: var(--qf-accent);
+  text-decoration: underline;
+}
+
+.qf-breadcrumb-item.is-clickable:focus-visible {
+  outline: none;
+  box-shadow: var(--qf-focus-ring);
+  border-radius: var(--qf-radius-sm);
+}
+
+.qf-breadcrumb-current {
+  color: var(--qf-text-primary);
+}
+
+.qf-titlebar-spacer {
+  flex: 1;
+  min-width: 0;
+}
+
+/* ---- Search (rendered disabled; command palette is a later phase) ----
+   The flex:1 wrapper centres the field in the remaining bar space, matching
+   the mockup. Without it the field is pushed hard right. */
+
+/* The brand block and the window controls have different widths, so a plain
+   flex:1 wrapper centres the field in the *remaining* space rather than in the
+   bar. Position it against the bar itself so it is truly centred, and keep a
+   flex:1 spacer in the flow so the trailing items still sit right. */
+.qf-titlebar-search-wrap {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.qf-titlebar-search-wrap > * {
+  pointer-events: auto;
+}
+
+.qf-titlebar-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 420px;
+  max-width: 42vw;
+  padding: 5px 10px;
+  background: var(--qf-surface);
+  border: 1px solid var(--qf-border);
+  border-radius: var(--qf-radius-md);
+  color: var(--qf-text-faint);
+  font-size: 12.5px;
+  cursor: not-allowed;
+  opacity: 0.75;
+  -webkit-app-region: no-drag;
+}
+
+.qf-titlebar-search-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.qf-titlebar-kbd {
+  flex-shrink: 0;
+  padding: 1px 6px;
+  background: var(--qf-surface-sunken);
+  border: 1px solid var(--qf-border);
+  border-radius: var(--qf-radius-sm);
+  color: var(--qf-text-muted);
+  font-family: var(--qf-font-mono);
+  font-size: 11px;
+}
+
+/* ---- Trailing slot (character avatar) ---- */
+
+.qf-titlebar-trailing {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  -webkit-app-region: no-drag;
+}
+
+/* ---- Window controls (Windows / Linux only; macOS uses traffic lights) ---- */
+
+/* Pop the active tool into its own window. Sits just before the window
+   controls; hidden unless a poppable view is showing (the Dashboard is not a
+   tool, and standalone views already own a window). */
+.qf-titlebar-popout {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 26px;
+  padding: 0;
+  flex-shrink: 0;
+  background-color: transparent;
+  border: none;
+  border-radius: var(--qf-radius-sm);
+  color: var(--qf-text-muted);
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+  transition: background-color var(--qf-transition-fast), color var(--qf-transition-fast);
+}
+
+.qf-titlebar-popout:hover {
+  background-color: var(--qf-surface-hover);
+  color: var(--qf-accent);
+}
+
+.qf-titlebar-popout:focus-visible {
+  outline: none;
+  box-shadow: var(--qf-focus-ring);
+}
+
+/* `hidden` is only a browser-default display:none and this element is a grid,
+   so the attribute must be given back its meaning explicitly (rule 6a). */
+.qf-titlebar-popout[hidden] {
+  display: none;
+}
+
+.qf-window-controls {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+  margin-left: 4px;
+  -webkit-app-region: no-drag;
+}
+
+.app-shell[data-platform='darwin'] .qf-window-controls {
+  display: none;
+}
+
+.qf-window-btn {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 26px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: var(--qf-radius-sm);
+  color: var(--qf-text-muted);
+  cursor: pointer;
+  transition: background-color var(--qf-transition-fast), color var(--qf-transition-fast);
+}
+
+.qf-window-btn:hover {
+  background-color: var(--qf-surface-hover);
+  color: var(--qf-text-heading);
+}
+
+.qf-window-btn.qf-window-close:hover {
+  background-color: var(--qf-error);
+  color: #fff;
+}
+
+.qf-window-btn:focus-visible {
+  outline: none;
+  box-shadow: var(--qf-focus-ring);
+}
+
+/* ============================================
+   Body: rail + view host
+   ============================================ */
+
+.qf-shell-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+/* ---- Activity rail (main window only) ---- */
+
+.qf-rail {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  width: 58px;
+  padding: 10px 0;
+  background: rgba(0, 0, 0, 0.4);
+  border-right: 1px solid var(--qf-border);
+}
+
+/* Only the main window has a rail - this is what makes "which window is home"
+   unambiguous no matter how many pop-outs are open. */
+.app-shell[data-role='popout'] .qf-rail,
+.app-shell[data-role='standalone'] .qf-rail {
+  display: none;
+}
+
+.qf-rail-spacer {
+  flex: 1;
+}
+
+.qf-rail-divider {
+  width: 32px;
+  height: 1px;
+  margin: 4px 0;
+  background: var(--qf-border);
+}
+
+.qf-rail-item {
+  position: relative;
+}
+
+.qf-rail-btn {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  padding: 0;
+  background-color: transparent;
+  border: none;
+  border-radius: var(--qf-radius-md);
+  color: var(--qf-text-muted);
+  cursor: pointer;
+  transition: background-color var(--qf-transition-fast), color var(--qf-transition-fast);
+}
+
+.qf-rail-btn:hover {
+  background-color: var(--qf-surface);
+  color: var(--qf-text-primary);
+}
+
+.qf-rail-btn:focus-visible {
+  outline: none;
+  box-shadow: var(--qf-focus-ring);
+}
+
+.qf-rail-item.is-active .qf-rail-btn {
+  background-color: var(--qf-accent-dim);
+  color: var(--qf-accent);
+}
+
+/* Marker shown when a tool also has its own window open. Informational: the
+   rail item still mounts the tool here, so a popped copy and a local copy can
+   sit side by side. */
+.qf-rail-item.is-popped .qf-rail-btn::after {
+  content: '';
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 6px;
+  height: 6px;
+  border-radius: var(--qf-radius-pill);
+  background: var(--qf-accent-bright);
+}
+
+/* ---- Rail hover flyout ---- */
+
+.qf-rail-flyout {
+  position: absolute;
+  left: 50px;
+  top: 0;
+  z-index: var(--qf-z-overlay);
+  opacity: 0;
+  pointer-events: none;
+  white-space: nowrap;
+  transform: translateX(-6px);
+  transition: opacity 0.12s ease, transform 0.12s ease;
+}
+
+.qf-rail-item:hover .qf-rail-flyout,
+.qf-rail-btn:focus-visible + .qf-rail-flyout {
+  opacity: 1;
+  transform: translateX(0);
+}
+
+.qf-rail-flyout-inner {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 9px 13px;
+  background: rgba(30, 30, 46, 0.97);
+  border: 1px solid var(--qf-border-active);
+  border-radius: var(--qf-radius-md);
+  box-shadow: var(--qf-shadow-lg);
+  backdrop-filter: blur(var(--qf-blur));
+}
+
+.qf-rail-flyout-title {
+  font-size: 13px;
+  font-weight: var(--qf-weight-semibold);
+  color: var(--qf-text-heading);
+}
+
+.qf-rail-flyout-sub {
+  font-size: 11.5px;
+  color: var(--qf-text-muted);
+}
+
+/* ============================================
+   View host
+   ============================================ */
+
+.qf-view-host {
+  position: relative;
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Native views scroll internally. */
+.qf-view-native {
+  flex: 1 1 0;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+/* ============================================
+   Footer
+
+   Reuses the existing .status-footer markup from shared/footer.js so the
+   footer's live data wiring (footer-utils.js) is unchanged.
+   ============================================ */
+
+.app-shell #status-footer {
+  flex-shrink: 0;
+}

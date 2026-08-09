@@ -1,0 +1,734 @@
+<!--
+  Manufacturing Plans view markup.
+
+  NOT a standalone page - fetched and cloned by
+  manufacturing-plans-view-renderer.js and mounted into the application shell's
+  #view-host. Styling comes from manufacturing-plans-view.css.
+
+  Ported from "Manufacturing Plans (1a).dc.html". Layout:
+
+    [ plans sidebar 288px | plan header + tab strip + tab panels ]
+
+  SLICE 1 of the §3.6 port: sidebar, header, tab strip, Overview, Materials.
+  The other eleven panels are declared here so the tab strip is complete and
+  switching works, but their bodies are filled in later slices - each is marked
+  with a slice number rather than left silently empty.
+
+  Contracts carried over from the legacy page (the renderer depends on them):
+    - tab buttons are `.tab-button[data-tab="x"]`, panels are `.tab-panel#x-tab`
+    - `#plans-list`, `#plan-search`, `#plan-name`, `#plan-status`,
+      `#plan-created`, `#plan-detail`, `#no-plan-selected`
+-->
+<template id="manufacturing-plans-view-template">
+  <div id="mp-view" class="mp-root">
+
+    <!-- ======================= plans sidebar ======================= -->
+    <aside class="mp-sidebar">
+      <div class="mp-sidebar-head">
+        <div class="mp-character-row">
+          <div class="mp-character-portrait" id="mp-character-portrait"></div>
+          <div class="mp-character-host" id="mp-character-host"></div>
+        </div>
+        <button type="button" class="btn btn-primary mp-new-plan" id="mp-new-plan">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+               stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <line x1="12" y1="5" x2="12" y2="19"></line>
+            <line x1="5" y1="12" x2="19" y2="12"></line>
+          </svg>
+          New Plan
+        </button>
+      </div>
+
+      <div class="mp-sidebar-filters">
+        <input type="text" class="qf-input" id="plan-search" placeholder="Search plans…"
+               autocomplete="off">
+        <div class="mp-status-filters" id="mp-status-filters" role="group"
+             aria-label="Filter plans by status">
+          <button type="button" class="mp-status-filter is-active" data-mp-status="all">All</button>
+          <button type="button" class="mp-status-filter" data-mp-status="active">Active</button>
+          <button type="button" class="mp-status-filter" data-mp-status="completed">Completed</button>
+          <button type="button" class="mp-status-filter" data-mp-status="archived">Archived</button>
+        </div>
+      </div>
+
+      <div class="mp-plans-list qf-scroll" id="plans-list"></div>
+    </aside>
+
+    <!-- ========================== main ========================== -->
+    <div class="mp-main">
+
+      <!-- Shown until a plan is chosen; the header and tabs stay hidden. -->
+      <div class="mp-empty" id="no-plan-selected">
+        <svg width="52" height="52" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+             stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <rect x="6" y="4" width="12" height="17" rx="2"></rect>
+          <path d="M9 11l2 2 4-4"></path>
+        </svg>
+        <p>Select a plan, or create one to get started.</p>
+      </div>
+
+      <div class="mp-detail" id="plan-detail" hidden>
+        <!-- ---------------------- plan header ---------------------- -->
+        <div class="mp-plan-header">
+          <div class="mp-plan-identity">
+            <div class="mp-plan-title-row">
+              <h1 class="mp-plan-name" id="plan-name">Plan</h1>
+              <button type="button" class="mp-icon-btn" id="mp-rename-plan" aria-label="Rename plan"
+                      title="Rename plan">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                     stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M12 20h9"></path>
+                  <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"></path>
+                </svg>
+              </button>
+            </div>
+            <div class="mp-plan-meta">
+              <span class="mp-status-badge" id="plan-status">active</span>
+              <span class="mp-meta-text" id="plan-created">Created —</span>
+              <span class="mp-meta-sep">·</span>
+              <span class="mp-meta-text mp-locked-meta" id="mp-locked-meta">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                     stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <rect x="3" y="11" width="18" height="11" rx="2"></rect>
+                  <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+                </svg>
+                <span id="mp-locked-ago">Prices not locked</span>
+              </span>
+            </div>
+          </div>
+          <div class="mp-plan-actions">
+            <button type="button" class="btn btn-secondary" id="mp-refresh-plan" title="Refresh ESI data">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                   stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M21 2v6h-6M3 12a9 9 0 0 1 15-6.7L21 8M3 22v-6h6M21 12a9 9 0 0 1-15 6.7L3 16"></path>
+              </svg>
+              Refresh
+            </button>
+            <button type="button" class="btn btn-secondary" id="mp-complete-plan">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                   stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <polyline points="20 6 9 17 4 12"></polyline>
+              </svg>
+              Mark Complete
+            </button>
+            <button type="button" class="mp-icon-btn mp-icon-btn-danger" id="delete-plan-btn"
+                    aria-label="Delete plan" title="Delete plan">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                   stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <polyline points="3 6 5 6 21 6"></polyline>
+                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+              </svg>
+            </button>
+          </div>
+        </div>
+
+        <!-- ----------------------- tab strip ----------------------- -->
+        <div class="mp-tabstrip qf-scroll" role="tablist">
+          <button type="button" class="tab-button active" role="tab" data-tab="overview">Overview</button>
+          <button type="button" class="tab-button" role="tab" data-tab="blueprints">Blueprints</button>
+          <button type="button" class="tab-button" role="tab" data-tab="build-list">Build List</button>
+          <!-- Hidden unless the plan actually contains reactions. -->
+          <button type="button" class="tab-button" role="tab" data-tab="reactions"
+                  id="reactions-tab-button" hidden>Reactions</button>
+          <button type="button" class="tab-button" role="tab" data-tab="blueprint-tree">Blueprint Tree</button>
+          <button type="button" class="tab-button" role="tab" data-tab="materials">Materials</button>
+          <button type="button" class="tab-button" role="tab" data-tab="products">Products</button>
+          <button type="button" class="tab-button" role="tab" data-tab="jobs">
+            Jobs<span class="mp-tab-badge" id="mp-jobs-badge" hidden></span>
+          </button>
+          <button type="button" class="tab-button" role="tab" data-tab="transactions">
+            Transactions<span class="mp-tab-badge" id="mp-transactions-badge" hidden></span>
+          </button>
+          <button type="button" class="tab-button" role="tab" data-tab="ledger">Ledger</button>
+          <button type="button" class="tab-button" role="tab" data-tab="analytics">Analytics</button>
+          <button type="button" class="tab-button" role="tab" data-tab="settings">Settings</button>
+        </div>
+
+        <!-- ====================== OVERVIEW ====================== -->
+        <div class="tab-panel active mp-panel qf-scroll" id="overview-tab" role="tabpanel">
+          <!-- Drift banner: shown only when materials have moved past the
+               threshold. The plan's cost basis is NOT affected - this is a
+               prompt to re-lock, never an automatic change (binding rule 7). -->
+          <div class="mp-drift-banner" id="mp-drift-banner" hidden>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--qf-warning)"
+                 stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
+              <line x1="12" y1="9" x2="12" y2="13"></line>
+              <line x1="12" y1="17" x2="12.01" y2="17"></line>
+            </svg>
+            <div class="mp-drift-banner-text">
+              <div class="mp-drift-banner-head" id="mp-drift-banner-head"></div>
+              <div class="mp-drift-banner-sub">
+                Your plan’s cost basis is frozen — live market moves don’t change it.
+                Re-lock to adopt current prices, or keep your locked costs.
+              </div>
+            </div>
+            <button type="button" class="btn btn-secondary" id="mp-drift-review">Review Materials</button>
+          </div>
+
+          <div class="mp-stat-grid">
+            <div class="mp-card">
+              <div class="mp-card-accent"></div>
+              <div class="mp-card-body">
+                <div class="mp-stat-label">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                       stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <rect x="3" y="11" width="18" height="11" rx="2"></rect>
+                    <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+                  </svg>
+                  Material Cost <span class="mp-stat-locked">· locked</span>
+                </div>
+                <div class="mp-stat-value" id="mp-stat-material-cost">—</div>
+                <div class="mp-stat-meta" id="mp-stat-material-meta"></div>
+                <div class="mp-stat-drift" id="mp-stat-cost-drift" hidden></div>
+              </div>
+            </div>
+            <div class="mp-card">
+              <div class="mp-card-accent"></div>
+              <div class="mp-card-body">
+                <div class="mp-stat-label">Product Value</div>
+                <div class="mp-stat-value mp-accent" id="mp-stat-product-value">—</div>
+                <div class="mp-stat-meta" id="mp-stat-product-meta"></div>
+              </div>
+            </div>
+            <div class="mp-card">
+              <div class="mp-card-accent"></div>
+              <div class="mp-card-body">
+                <div class="mp-stat-label">Estimated Profit</div>
+                <div class="mp-stat-value" id="mp-stat-profit">—</div>
+                <div class="mp-stat-meta" id="mp-stat-profit-meta"></div>
+                <div class="mp-stat-drift" id="mp-stat-profit-live" hidden></div>
+              </div>
+            </div>
+          </div>
+
+          <div class="mp-card mp-description-card">
+            <div class="mp-card-body">
+              <div class="mp-section-label">Description</div>
+              <p class="mp-description" id="mp-description">No description.</p>
+            </div>
+          </div>
+        </div>
+
+        <!-- ====================== MATERIALS ====================== -->
+        <div class="tab-panel mp-panel mp-panel-flush" id="materials-tab" role="tabpanel">
+          <div class="mp-materials-head">
+            <div class="mp-materials-title">
+              <h3>Shopping List</h3>
+              <span class="mp-locked-pill" id="mp-materials-locked">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                     stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <rect x="3" y="11" width="18" height="11" rx="2"></rect>
+                  <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+                </svg>
+                <span id="mp-materials-locked-ago">Not locked</span>
+              </span>
+            </div>
+            <div class="mp-materials-actions">
+              <div class="mp-live-vs">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--qf-accent)"
+                     stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"></path>
+                  <circle cx="12" cy="10" r="3"></circle>
+                </svg>
+                <span class="mp-live-vs-label">Live vs</span>
+                <div class="mp-market-host" id="mp-market-host"></div>
+              </div>
+              <label class="mp-checkbox-label">
+                <input type="checkbox" id="mp-show-owned">
+                Show Owned
+              </label>
+              <button type="button" class="btn btn-primary" id="mp-relock">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                     stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <rect x="3" y="11" width="18" height="11" rx="2"></rect>
+                  <path d="M7 11V7a5 5 0 0 1 9.9-1"></path>
+                </svg>
+                Re-lock Prices
+              </button>
+            </div>
+          </div>
+
+          <p class="mp-materials-note">
+            Prices are <strong>frozen at lock time</strong> and drive this plan’s cost. The
+            <span class="mp-accent">Live</span> column shows the current market for comparison
+            only — it never changes your plan until you re-lock.
+          </p>
+
+          <!-- A real <table>: this IS tabular data, and the browser's table
+               layout sizes every column across all rows at once - the exact
+               thing per-row grids cannot do. -->
+          <div class="mp-materials-scroll qf-scroll">
+            <div class="mp-materials-frame">
+              <div class="mp-card-accent"></div>
+              <table class="mp-materials-table" id="mp-materials-table">
+                <!-- Header, body and totals are built in JS: the two Owned
+                     columns appear only with Show Owned. -->
+                <thead id="mp-materials-header"></thead>
+                <tbody id="mp-materials-body"></tbody>
+                <tfoot id="mp-materials-total"></tfoot>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- ============ PANELS FILLED IN LATER SLICES ============ -->
+        <!-- Declared now so the tab strip is complete and switching works.
+             Each is filled in by the slice named below. -->
+        <!-- ====================== BLUEPRINTS ======================
+             INFORMATIONAL. Per-type editing lives on Build List; this lists
+             what the plan contains and offers add/remove. -->
+        <div class="tab-panel mp-panel mp-panel-flush" id="blueprints-tab" role="tabpanel">
+          <div class="mp-buildlist-head">
+            <h3>Blueprints in Plan</h3>
+            <span class="mp-buildlist-hint">
+              Edit ME/TE, facility and build plan on the Build List tab.
+            </span>
+            <span class="mp-spacer"></span>
+            <button type="button" class="btn btn-primary" id="add-blueprint-btn">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                   stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <line x1="12" y1="5" x2="12" y2="19"></line>
+                <line x1="5" y1="12" x2="19" y2="12"></line>
+              </svg>
+              Add Blueprint
+            </button>
+          </div>
+          <div class="mp-buildlist-scroll qf-scroll" id="blueprints-container"></div>
+        </div>
+        <!-- ===================== BUILD LIST =====================
+             The EDITING HOME for per-type ME/TE, runs, lines, facility and
+             build plan. Blueprints/Reactions tabs are informational; changes
+             made here apply to every use of that type in the plan. -->
+        <div class="tab-panel mp-panel mp-panel-flush" id="build-list-tab" role="tabpanel">
+          <div class="mp-buildlist-head">
+            <h3>Build List</h3>
+            <span class="mp-buildlist-hint">
+              Every blueprint and reaction this plan uses. Edit ME/TE, facility &amp; build plan
+              once here to apply to all uses.
+            </span>
+            <span class="mp-spacer"></span>
+            <button type="button" class="btn btn-secondary" id="mp-bulk-edit">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                   stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+                <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+              </svg>
+              Bulk Edit
+            </button>
+            <button type="button" class="btn btn-secondary" id="mp-bulk-cancel" hidden>Cancel</button>
+            <button type="button" class="btn btn-primary" id="mp-bulk-save" hidden>Save Changes</button>
+          </div>
+
+          <div class="mp-bulk-banner" id="mp-bulk-banner" hidden>
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--qf-accent)"
+                 stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+              <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+            </svg>
+            <span class="mp-bulk-banner-text">
+              Bulk edit mode — every row is editable. Adjust Runs, Lines, ME, TE, Facility &amp;
+              Build Plan, then Save Changes.
+            </span>
+            <span class="mp-spacer"></span>
+            <span class="mp-bulk-count" id="mp-bulk-count"></span>
+          </div>
+
+          <div class="mp-buildlist-scroll qf-scroll" id="build-list-container"></div>
+        </div>
+        <!-- ======================= REACTIONS =======================
+             INFORMATIONAL, same as Blueprints. The tab itself is hidden
+             unless the plan actually contains reactions. -->
+        <div class="tab-panel mp-panel mp-panel-flush" id="reactions-tab" role="tabpanel">
+          <div class="mp-buildlist-head">
+            <h3>Reactions in Plan</h3>
+            <span class="mp-buildlist-hint">
+              Edit reaction settings on the Build List tab.
+            </span>
+          </div>
+          <div class="mp-buildlist-scroll qf-scroll" id="reactions-container"></div>
+        </div>
+
+        <!-- ===================== BLUEPRINT TREE ===================== -->
+        <div class="tab-panel mp-panel mp-panel-flush" id="blueprint-tree-tab" role="tabpanel">
+          <div class="mp-buildlist-head">
+            <h3>Blueprint Tree</h3>
+            <span class="mp-buildlist-hint">
+              How each product breaks down into intermediates and raw materials.
+            </span>
+          </div>
+          <div class="mp-buildlist-scroll qf-scroll" id="blueprint-tree-container"></div>
+        </div>
+        <!-- ======================= PRODUCTS =======================
+             Final products and intermediates are listed SEPARATELY: an
+             intermediate is a cascading input the plan consumes, not something
+             it sells, and only final products count toward revenue. -->
+        <div class="tab-panel mp-panel mp-panel-flush" id="products-tab" role="tabpanel">
+          <div class="mp-buildlist-head">
+            <h3>Products</h3>
+            <span class="mp-buildlist-hint">What this plan produces, at locked prices.</span>
+          </div>
+          <div class="mp-buildlist-scroll qf-scroll" id="products-container"></div>
+        </div>
+
+        <!-- ========================= JOBS ========================= -->
+        <div class="tab-panel mp-panel mp-panel-flush" id="jobs-tab" role="tabpanel">
+          <div class="mp-buildlist-head">
+            <h3>Industry Jobs</h3>
+            <span class="mp-buildlist-hint">
+              ESI industry jobs matched to this plan’s blueprints.
+            </span>
+            <span class="mp-spacer"></span>
+            <button type="button" class="btn btn-primary" id="mp-match-jobs">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                   stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M21 2v6h-6M3 12a9 9 0 0 1 15-6.7L21 8M3 22v-6h6M21 12a9 9 0 0 1-15 6.7L3 16"></path>
+              </svg>
+              Match Jobs
+            </button>
+          </div>
+          <div class="mp-buildlist-scroll qf-scroll" id="jobs-container"></div>
+        </div>
+
+        <!-- ===================== TRANSACTIONS ===================== -->
+        <div class="tab-panel mp-panel mp-panel-flush" id="transactions-tab" role="tabpanel">
+          <div class="mp-buildlist-head">
+            <h3>Wallet Transactions</h3>
+            <span class="mp-buildlist-hint">
+              ESI wallet transactions matched to this plan’s materials and products.
+            </span>
+            <span class="mp-spacer"></span>
+            <button type="button" class="btn btn-primary" id="mp-match-transactions">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                   stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M21 2v6h-6M3 12a9 9 0 0 1 15-6.7L21 8M3 22v-6h6M21 12a9 9 0 0 1-15 6.7L3 16"></path>
+              </svg>
+              Match Transactions
+            </button>
+          </div>
+          <div class="mp-buildlist-scroll qf-scroll" id="transactions-container"></div>
+        </div>
+
+        <!-- ======================= ANALYTICS =======================
+             Planned figures come from the LOCKED cost basis; actuals come from
+             the ledger. The delta between them is the point of this tab. -->
+        <div class="tab-panel mp-panel qf-scroll" id="analytics-tab" role="tabpanel">
+          <div class="mp-analytics" id="mp-analytics"></div>
+        </div>
+        <!-- ======================== LEDGER ========================
+             The consolidated record of what this plan has ACTUALLY spent and
+             earned - the source of truth behind Analytics' actuals. -->
+        <div class="tab-panel mp-panel mp-panel-flush" id="ledger-tab" role="tabpanel">
+          <div class="mp-buildlist-head">
+            <h3>Spend Ledger</h3>
+            <span class="mp-buildlist-hint">
+              Recorded acquisitions, jobs &amp; fees for this plan.
+            </span>
+            <span class="mp-spacer"></span>
+            <button type="button" class="btn btn-secondary" id="mp-acquire-item">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                   stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M20 7h-9"></path><path d="M14 17H5"></path>
+                <circle cx="17" cy="17" r="3"></circle><circle cx="7" cy="7" r="3"></circle>
+              </svg>
+              Acquire Item
+            </button>
+            <button type="button" class="btn btn-secondary" id="mp-add-cost">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                   stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <line x1="12" y1="5" x2="12" y2="19"></line>
+                <line x1="5" y1="12" x2="19" y2="12"></line>
+              </svg>
+              Add Cost
+            </button>
+          </div>
+          <div class="mp-buildlist-scroll qf-scroll" id="ledger-container"></div>
+        </div>
+
+        <!-- ======================= SETTINGS =======================
+             Plan-scoped industry settings. The two-axis grids below are
+             PLAN-SCOPED copies of Settings > Industry: which characters and
+             corp divisions supply ASSETS, and which supply BLUEPRINTS. The two
+             are independent - a corp may keep BPOs in a library division while
+             materials live in a production division. -->
+        <div class="tab-panel mp-panel qf-scroll" id="settings-tab" role="tabpanel">
+          <div class="mp-settings">
+            <div class="mp-settings-intro">
+              <h3>Plan Settings</h3>
+              <p>
+                Plan-level overrides for industry calculations. These apply only to
+                <strong id="mp-settings-plan-name">this plan</strong> and never change your
+                global defaults.
+              </p>
+            </div>
+
+            <!-- Manufacturing Characters -->
+            <div class="mp-card">
+              <div class="mp-card-accent"></div>
+              <div class="mp-settings-head">
+                <div class="mp-settings-title">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--qf-accent)"
+                       stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+                    <circle cx="9" cy="7" r="4"></circle>
+                    <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
+                    <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
+                  </svg>
+                  <span>Manufacturing Characters</span>
+                </div>
+                <p>
+                  Whose assets and whose blueprints this plan may draw on. The two are
+                  independent — a character can supply one without the other.
+                </p>
+              </div>
+              <div class="mp-settings-body" id="plan-default-characters-container"></div>
+            </div>
+
+            <!-- Corporation Divisions -->
+            <div class="mp-card">
+              <div class="mp-card-accent"></div>
+              <div class="mp-settings-head">
+                <div class="mp-settings-title">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--qf-accent)"
+                       stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <rect x="3" y="3" width="7" height="7" rx="1"></rect>
+                    <rect x="14" y="3" width="7" height="7" rx="1"></rect>
+                    <rect x="14" y="14" width="7" height="7" rx="1"></rect>
+                    <rect x="3" y="14" width="7" height="7" rx="1"></rect>
+                  </svg>
+                  <span>Corporation Divisions</span>
+                </div>
+                <p>
+                  Which corp hangar divisions supply this plan, per character. Anything that
+                  cannot be attributed to an enabled division is excluded.
+                </p>
+              </div>
+              <div class="mp-settings-body" id="plan-character-divisions-container"></div>
+            </div>
+
+            <!-- Reactions -->
+            <div class="mp-card">
+              <div class="mp-card-accent"></div>
+              <div class="mp-settings-head">
+                <div class="mp-settings-title">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--qf-accent)"
+                       stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <circle cx="12" cy="12" r="2"></circle>
+                    <ellipse cx="12" cy="12" rx="10" ry="4.5"></ellipse>
+                    <ellipse cx="12" cy="12" rx="10" ry="4.5" transform="rotate(60 12 12)"></ellipse>
+                    <ellipse cx="12" cy="12" rx="10" ry="4.5" transform="rotate(120 12 12)"></ellipse>
+                  </svg>
+                  <span>Reactions</span>
+                </div>
+                <p>
+                  When enabled, reaction products are built as intermediates rather than
+                  bought from the market.
+                </p>
+              </div>
+              <div class="mp-settings-body">
+                <label class="mp-toggle-row">
+                  <span>Calculate reactions as intermediates</span>
+                  <span class="mp-spacer"></span>
+                  <!-- Switch, not a checkbox: this is an on/off mode, and the
+                       redesign uses the shared .toggle treatment for those. -->
+                  <span class="toggle">
+                    <input type="checkbox" id="mp-reactions-as-intermediates">
+                    <span class="toggle-slider"></span>
+                  </span>
+                </label>
+              </div>
+            </div>
+
+            <!-- Price Overrides -->
+            <div class="mp-card">
+              <div class="mp-card-accent"></div>
+              <div class="mp-settings-head">
+                <div class="mp-settings-title">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--qf-accent)"
+                       stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <rect x="3" y="11" width="18" height="11" rx="2"></rect>
+                    <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+                  </svg>
+                  <span>Price Overrides</span>
+                </div>
+                <p>
+                  Manually pinned prices for this plan. An override replaces the locked price
+                  for that item and survives re-locking.
+                </p>
+              </div>
+              <div class="mp-settings-body" id="mp-price-overrides"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ==================== CREATE PLAN MODAL ==================== -->
+    <div class="modal" id="mp-create-modal" role="dialog" aria-modal="true"
+         aria-labelledby="mp-create-title" hidden>
+      <div class="modal-content mp-modal">
+        <div class="mp-card-accent"></div>
+        <div class="modal-header">
+          <h2 id="mp-create-title">Create Manufacturing Plan</h2>
+          <button type="button" class="modal-close" data-mp-close="mp-create-modal"
+                  aria-label="Close dialog">&times;</button>
+        </div>
+        <div class="modal-body">
+          <label class="mp-field-label" for="mp-create-name">Plan Name</label>
+          <input type="text" class="qf-input" id="mp-create-name"
+                 placeholder="Leave empty for auto-generated name">
+          <label class="mp-field-label mp-field-spaced" for="mp-create-description">
+            Description (optional)
+          </label>
+          <textarea class="qf-input mp-textarea" id="mp-create-description" rows="3"
+                    placeholder="Describe this manufacturing plan…"></textarea>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-mp-close="mp-create-modal">Cancel</button>
+          <button type="button" class="btn btn-primary" id="mp-create-confirm">Create Plan</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===================== ADD COST MODAL ===================== -->
+    <div class="modal" id="mp-cost-modal" role="dialog" aria-modal="true"
+         aria-labelledby="mp-cost-title" hidden>
+      <div class="modal-content mp-modal">
+        <div class="mp-card-accent"></div>
+        <div class="modal-header">
+          <h2 id="mp-cost-title">Add Cost</h2>
+          <button type="button" class="modal-close" data-mp-close="mp-cost-modal"
+                  aria-label="Close dialog">&times;</button>
+        </div>
+        <div class="modal-body">
+          <label class="mp-field-label" for="mp-cost-category">Category</label>
+          <select class="qf-select" id="mp-cost-category">
+            <option value="other">Other</option>
+            <option value="shipping">Shipping</option>
+            <option value="broker_fee">Broker Fee</option>
+            <option value="sales_tax">Sales Tax</option>
+          </select>
+          <label class="mp-field-label mp-field-spaced" for="mp-cost-amount">Amount (ISK)</label>
+          <input type="number" class="qf-input mp-mono" id="mp-cost-amount" placeholder="0.00"
+                 min="0" step="0.01">
+          <label class="mp-field-label mp-field-spaced" for="mp-cost-note">Note (optional)</label>
+          <input type="text" class="qf-input" id="mp-cost-note"
+                 placeholder="e.g. courier contract">
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-mp-close="mp-cost-modal">Cancel</button>
+          <button type="button" class="btn btn-primary" id="mp-cost-confirm">Add Cost</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- =================== ACQUIRE ITEM MODAL ===================
+         Records that a material was obtained. The backend caps quantity at
+         what is still needed, so over-acquiring is rejected there. -->
+    <div class="modal" id="mp-acquire-modal" role="dialog" aria-modal="true"
+         aria-labelledby="mp-acquire-title" hidden>
+      <div class="modal-content mp-modal">
+        <div class="mp-card-accent"></div>
+        <div class="modal-header">
+          <h2 id="mp-acquire-title">Acquire Item</h2>
+          <button type="button" class="modal-close" data-mp-close="mp-acquire-modal"
+                  aria-label="Close dialog">&times;</button>
+        </div>
+        <div class="modal-body">
+          <label class="mp-field-label" for="mp-acquire-host">Material</label>
+          <div class="mp-acquire-host" id="mp-acquire-host"></div>
+          <label class="mp-field-label mp-field-spaced" for="mp-acquire-quantity">Quantity</label>
+          <input type="number" class="qf-input mp-mono" id="mp-acquire-quantity" min="1" step="1">
+          <label class="mp-field-label mp-field-spaced" for="mp-acquire-price">
+            Unit price (optional)
+          </label>
+          <input type="number" class="qf-input mp-mono" id="mp-acquire-price" min="0" step="0.01"
+                 placeholder="Leave empty to use the locked price">
+          <label class="mp-field-label mp-field-spaced" for="mp-acquire-note">Note (optional)</label>
+          <input type="text" class="qf-input" id="mp-acquire-note" placeholder="e.g. from corp hangar">
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-mp-close="mp-acquire-modal">Cancel</button>
+          <button type="button" class="btn btn-primary" id="mp-acquire-confirm">Record</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- =================== MARK BUILT MODAL =================== -->
+    <div class="modal" id="mp-built-modal" role="dialog" aria-modal="true"
+         aria-labelledby="mp-built-title" hidden>
+      <div class="modal-content mp-modal">
+        <div class="mp-card-accent"></div>
+        <div class="modal-header">
+          <h2 id="mp-built-title">Mark Built</h2>
+          <button type="button" class="modal-close" data-mp-close="mp-built-modal"
+                  aria-label="Close dialog">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div class="mp-built-item" id="mp-built-item"></div>
+          <label class="mp-field-label mp-field-spaced" for="mp-built-runs">Runs already built</label>
+          <input type="number" class="qf-input mp-mono" id="mp-built-runs" min="0" step="1">
+          <div class="mp-built-quick" id="mp-built-quick"></div>
+          <div class="mp-built-progress-row">
+            <span class="mp-field-label">Progress</span>
+            <span class="mp-mono mp-built-pct" id="mp-built-pct">0%</span>
+          </div>
+          <div class="mp-built-bar"><div class="mp-built-bar-fill" id="mp-built-bar-fill"></div></div>
+          <div class="mp-built-assets" id="mp-built-assets"></div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-mp-close="mp-built-modal">Cancel</button>
+          <button type="button" class="btn btn-primary" id="mp-built-confirm">Save</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- =================== ADD BLUEPRINT MODAL =================== -->
+    <div class="modal" id="mp-blueprint-modal" role="dialog" aria-modal="true"
+         aria-labelledby="mp-blueprint-title" hidden>
+      <div class="modal-content mp-modal">
+        <div class="mp-card-accent"></div>
+        <div class="modal-header">
+          <h2 id="mp-blueprint-title">Add Blueprint</h2>
+          <button type="button" class="modal-close" data-mp-close="mp-blueprint-modal"
+                  aria-label="Close dialog">&times;</button>
+        </div>
+        <div class="modal-body">
+          <label class="mp-field-label" for="mp-blueprint-host">Blueprint</label>
+          <div class="mp-blueprint-host" id="mp-blueprint-host"></div>
+          <div class="mp-blueprint-config">
+            <div>
+              <label class="mp-field-label" for="mp-blueprint-runs">Runs</label>
+              <input type="number" class="qf-input mp-mono" id="mp-blueprint-runs" value="1" min="1">
+            </div>
+            <div>
+              <label class="mp-field-label" for="mp-blueprint-lines">Lines</label>
+              <input type="number" class="qf-input mp-mono" id="mp-blueprint-lines" value="1" min="1">
+            </div>
+            <div>
+              <label class="mp-field-label" for="mp-blueprint-me">ME</label>
+              <input type="number" class="qf-input mp-mono" id="mp-blueprint-me" value="0"
+                     min="0" max="10">
+            </div>
+            <div>
+              <label class="mp-field-label" for="mp-blueprint-te">TE</label>
+              <input type="number" class="qf-input mp-mono" id="mp-blueprint-te" value="0"
+                     min="0" max="20">
+            </div>
+          </div>
+          <!-- Runs are split across lines; runs-per-line is what governs how
+               long the job actually takes. -->
+          <div class="mp-modal-note" id="mp-blueprint-runs-note" hidden></div>
+          <!-- Where the seeded ME/TE came from, so the numbers are not
+               unexplained. -->
+          <div class="mp-modal-note" id="mp-blueprint-owned-note" hidden></div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-mp-close="mp-blueprint-modal">Cancel</button>
+          <button type="button" class="btn btn-primary" id="mp-blueprint-confirm">Add to Plan</button>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</template>

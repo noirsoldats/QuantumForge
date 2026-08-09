@@ -1,0 +1,2354 @@
+/* ============================================
+   Quantum Forge - Market Manager (native shell view)
+
+   Ported from `Market Manager (1a).dc.html`. Mounted into #view-host.
+
+   Layout:  [ context pane 250px | tab strip + panels | inspector 300px ]
+
+   NOTE: this is deliberately a NEW file rather than an edit of the legacy
+   `market.css`. That file redefines `.modal-content`, `.modal-header` and
+   `.modal-close` globally; loading it into the main window would reintroduce
+   exactly the cross-file collision the CSS audit removed. The legacy page keeps
+   its own stylesheet until it is retired.
+
+   Every rule here is scoped to #market-view - see tests/unit/css-scoping.test.js.
+   ============================================ */
+
+#market-view {
+  display: flex;
+  height: 100%;
+  min-height: 0;
+  box-sizing: border-box;
+}
+
+/* ---- Context pane ---- */
+
+#market-view .mk-context {
+  width: 250px;
+  flex-shrink: 0;
+  overflow-y: auto;
+  padding-bottom: 16px;
+  background: rgba(0, 0, 0, 0.22);
+  border-right: 1px solid var(--qf-border);
+}
+
+#market-view .mk-context-title {
+  padding: 12px 14px 8px;
+  font-size: 11px;
+  font-weight: var(--qf-weight-bold);
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  color: var(--qf-text-faint);
+}
+
+#market-view .mk-context-title-action {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+#market-view .mk-icon-btn {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: var(--qf-radius-sm);
+  color: var(--qf-text-faint);
+  cursor: pointer;
+  transition: background-color var(--qf-transition-fast), color var(--qf-transition-fast);
+}
+
+#market-view .mk-icon-btn:hover {
+  background-color: var(--qf-surface);
+  color: var(--qf-accent);
+}
+
+#market-view .mk-icon-btn:focus-visible {
+  outline: none;
+  box-shadow: var(--qf-focus-ring);
+}
+
+#market-view .mk-context-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 0 8px;
+}
+
+#market-view .mk-context-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 7px 8px;
+  background-color: transparent;
+  border: none;
+  border-radius: var(--qf-radius-sm);
+  color: var(--qf-text-primary);
+  font-family: var(--qf-font-sans);
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color var(--qf-transition-fast);
+}
+
+#market-view .mk-context-row:hover {
+  background-color: var(--qf-surface);
+}
+
+#market-view .mk-context-row.is-active {
+  background-color: var(--qf-accent-dim);
+  color: var(--qf-accent);
+}
+
+#market-view .mk-context-row:focus-visible {
+  outline: none;
+  box-shadow: var(--qf-focus-ring);
+}
+
+#market-view .mk-ctx-portrait {
+  width: 26px;
+  height: 26px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  border: 1.5px solid var(--qf-border);
+  object-fit: cover;
+}
+
+#market-view .mk-ctx-portrait.is-default {
+  border-color: var(--qf-gold);
+}
+
+#market-view .mk-ctx-text {
+  flex: 1;
+  min-width: 0;
+}
+
+#market-view .mk-ctx-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#market-view .mk-ctx-sub {
+  margin-top: 1px;
+  font-size: 11px;
+  color: var(--qf-text-faint);
+}
+
+#market-view .mk-count {
+  flex-shrink: 0;
+  padding: 1px 7px;
+  background: var(--qf-accent-dim);
+  border-radius: var(--qf-radius-pill);
+  color: var(--qf-accent);
+  font-size: 10px;
+  font-weight: var(--qf-weight-bold);
+}
+
+/* Freshness dot on a market set row. */
+#market-view .mk-ctx-dot {
+  width: 6px;
+  height: 6px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--qf-text-faint);
+}
+
+#market-view .mk-ctx-dot.is-fresh { background: var(--qf-success); }
+#market-view .mk-ctx-dot.is-warn  { background: var(--qf-warning); }
+#market-view .mk-ctx-dot.is-stale { background: var(--qf-error); }
+
+/* ---- Main column ---- */
+
+#market-view .mk-main {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+
+#market-view .mk-tabs {
+  display: flex;
+  align-items: stretch;
+  height: 40px;
+  flex-shrink: 0;
+  background: rgba(0, 0, 0, 0.25);
+  border-bottom: 1px solid var(--qf-border);
+}
+
+#market-view .mk-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 16px;
+  background-color: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--qf-text-muted);
+  font-family: var(--qf-font-sans);
+  font-size: 12.5px;
+  cursor: pointer;
+  transition: color var(--qf-transition-fast), background-color var(--qf-transition-fast);
+}
+
+#market-view .mk-tab:hover {
+  background-color: var(--qf-surface);
+  color: var(--qf-text-primary);
+}
+
+/* Both states set the same properties, so nothing sticks when deselected. */
+#market-view .mk-tab.is-active {
+  background-color: transparent;
+  border-bottom-color: var(--qf-accent);
+  color: var(--qf-accent);
+  font-weight: var(--qf-weight-semibold);
+}
+
+#market-view .mk-tab:focus-visible {
+  outline: none;
+  box-shadow: var(--qf-focus-ring);
+}
+
+#market-view .mk-tab-badge {
+  padding: 1px 6px;
+  background: var(--qf-accent-dim);
+  border-radius: var(--qf-radius-pill);
+  color: var(--qf-accent);
+  font-size: 10px;
+  font-weight: var(--qf-weight-bold);
+}
+
+#market-view .mk-panels {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 18px 20px 24px;
+}
+
+#market-view .mk-panel {
+  display: none;
+}
+
+#market-view .mk-panel.is-active {
+  display: block;
+}
+
+#market-view .mk-panel-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+
+#market-view .mk-panel-head h2 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: var(--qf-weight-semibold);
+  color: var(--qf-text-heading);
+}
+
+#market-view .mk-panel-head p {
+  margin: 5px 0 0;
+  font-size: 12px;
+  color: var(--qf-text-muted);
+}
+
+/* ---- Summary strip ---- */
+
+#market-view .mk-summary {
+  display: flex;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+  padding: 12px 16px;
+  background: var(--qf-bg-elevated);
+  border: 1px solid var(--qf-border);
+  border-radius: var(--qf-radius-lg);
+}
+
+#market-view .mk-summary:empty {
+  display: none;
+}
+
+#market-view .mk-summary-cell {
+  padding-right: 26px;
+  margin-right: 26px;
+  border-right: 1px solid var(--qf-border-subtle);
+}
+
+#market-view .mk-summary-cell:last-child {
+  padding-right: 0;
+  margin-right: 0;
+  border-right: none;
+}
+
+#market-view .mk-summary-label {
+  font-size: 10px;
+  font-weight: var(--qf-weight-bold);
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  color: var(--qf-text-faint);
+}
+
+#market-view .mk-summary-value {
+  margin-top: 4px;
+  font-family: var(--qf-font-mono);
+  font-size: 15px;
+  font-weight: var(--qf-weight-bold);
+  color: var(--qf-text-heading);
+}
+
+#market-view .mk-summary-value.is-warning { color: var(--qf-warning); }
+#market-view .mk-summary-value.is-error   { color: var(--qf-error); }
+#market-view .mk-summary-value.is-fresh   { color: var(--qf-accent); }
+
+/* ---- Toolbar ---- */
+
+#market-view .mk-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+#market-view .mk-search {
+  position: relative;
+  flex: 1;
+  max-width: 320px;
+}
+
+/* The magnifier only - NOT the clear button's icon, which is a direct child of
+   .mk-search-clear and must stay clickable. */
+#market-view .mk-search > svg {
+  position: absolute;
+  left: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--qf-text-faint);
+  pointer-events: none;
+}
+
+#market-view .mk-search .qf-input {
+  padding-left: 32px;
+  padding-right: 30px;
+}
+
+#market-view .mk-search-clear {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: var(--qf-radius-sm);
+  color: var(--qf-text-faint);
+  cursor: pointer;
+}
+
+#market-view .mk-search-clear:hover {
+  background-color: var(--qf-surface);
+  color: var(--qf-text-primary);
+}
+
+#market-view .mk-search-clear:focus-visible {
+  outline: none;
+  box-shadow: var(--qf-focus-ring);
+}
+
+#market-view .mk-search-clear[hidden] {
+  display: none;
+}
+
+/* ---- Tables ---- */
+
+#market-view .mk-table-wrap {
+  background: var(--qf-bg-elevated);
+  border: 1px solid var(--qf-border);
+  border-radius: var(--qf-radius-lg);
+  overflow: hidden;
+}
+
+#market-view .mk-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12.5px;
+}
+
+#market-view .mk-table thead th {
+  padding: 10px 14px;
+  background: var(--qf-surface-sunken);
+  border-bottom: 1px solid var(--qf-border);
+  color: var(--qf-text-faint);
+  font-size: 10px;
+  font-weight: var(--qf-weight-bold);
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  text-align: left;
+}
+
+#market-view .mk-table th.mk-num,
+#market-view .mk-table td.mk-num {
+  text-align: right;
+  font-family: var(--qf-font-mono);
+}
+
+#market-view .mk-table tbody td {
+  padding: 9px 14px;
+  border-bottom: 1px solid var(--qf-border-subtle);
+  color: var(--qf-text-primary);
+}
+
+#market-view .mk-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+/* Row highlight is box-shadow ONLY - a toggled background does not clear
+   reliably on a row highlighted on its first paint. See CLAUDE.md rule 1. */
+#market-view .mk-table tbody tr {
+  background-color: transparent;
+  box-shadow: none;
+  cursor: pointer;
+}
+
+#market-view .mk-table tbody tr:hover,
+#market-view .mk-table tbody tr.is-selected {
+  box-shadow: inset 0 0 0 200px var(--qf-accent-dim), inset 3px 0 0 var(--qf-accent);
+}
+
+#market-view .mk-col-fav,
+#market-view .mk-col-actions {
+  width: 40px;
+}
+
+#market-view .mk-fav {
+  padding: 0;
+  background: none;
+  border: none;
+  color: var(--qf-text-faint);
+  cursor: pointer;
+  line-height: 0;
+}
+
+#market-view .mk-fav.is-on {
+  color: var(--qf-gold);
+}
+
+#market-view .mk-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+#market-view .mk-delta.is-up   { color: var(--qf-error); }
+#market-view .mk-delta.is-down { color: var(--qf-success); }
+
+/* ---- Confidence badges ---- */
+
+#market-view .mk-conf {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+}
+
+#market-view .mk-conf::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+#market-view .mk-conf.is-high   { color: var(--qf-success); }
+#market-view .mk-conf.is-medium { color: var(--qf-warning); }
+#market-view .mk-conf.is-low    { color: var(--qf-error); }
+
+/* ---- Market set cards (Overview) ---- */
+
+/* Full-width stacked rows, not a tile grid — each set is one wide card with a
+   4-column body (identity / items / status / actions), per the mockup. */
+#market-view .mk-set-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+#market-view .mk-set-card {
+  position: relative;
+  background: var(--qf-bg-elevated);
+  border: 1px solid var(--qf-border);
+  border-radius: var(--qf-radius-lg);
+  overflow: hidden;
+}
+
+#market-view .mk-set-card.is-warn  { border-color: rgba(255, 152, 0, 0.4); }
+#market-view .mk-set-card.is-stale { border-color: rgba(239, 68, 68, 0.4); }
+
+#market-view .mk-set-bar {
+  height: 2px;
+  background-image: var(--qf-accent-gradient-h);
+  background-color: transparent;
+}
+
+#market-view .mk-set-card.is-warn .mk-set-bar {
+  background-image: none;
+  background-color: var(--qf-warning);
+}
+
+#market-view .mk-set-card.is-stale .mk-set-bar {
+  background-image: none;
+  background-color: var(--qf-error);
+}
+
+#market-view .mk-set-body {
+  padding: 16px 18px;
+  display: grid;
+  grid-template-columns: 1.6fr 1fr 1.4fr auto;
+  gap: 20px;
+  align-items: center;
+}
+
+#market-view .mk-set-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 15px;
+  font-weight: var(--qf-weight-semibold);
+  color: var(--qf-text-heading);
+}
+
+/* The star both marks and toggles the default set. Both states set the same
+   properties so neither sticks (binding rule 3). */
+#market-view .mk-set-star {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 7px;
+  border-radius: var(--qf-radius-pill);
+  font-size: 9px;
+  font-weight: var(--qf-weight-bold);
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  font-family: inherit;
+  cursor: pointer;
+  background-color: transparent;
+  border: 1px solid var(--qf-border);
+  color: var(--qf-text-faint);
+}
+
+#market-view .mk-set-star.is-on {
+  background-color: rgba(255, 215, 0, 0.12);
+  border: 1px solid rgba(255, 215, 0, 0.35);
+  color: var(--qf-gold);
+  cursor: default;
+}
+
+#market-view .mk-set-star:not(.is-on):hover {
+  border-color: var(--qf-border-active);
+  color: var(--qf-text-muted);
+}
+
+#market-view .mk-set-region {
+  font-size: 12px;
+  color: var(--qf-text-faint);
+  margin-top: 2px;
+}
+
+#market-view .mk-set-col-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--qf-text-faint);
+  font-weight: var(--qf-weight-bold);
+}
+
+#market-view .mk-set-col-value {
+  font-size: 13px;
+  color: var(--qf-text-primary);
+  margin-top: 3px;
+  font-family: var(--qf-font-mono);
+}
+
+/* Freshness pill. Every level sets the same properties. */
+#market-view .mk-set-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+  font-size: 12px;
+  font-weight: var(--qf-weight-semibold);
+  border-radius: var(--qf-radius-pill);
+  padding: 4px 11px;
+  border: 1px solid var(--qf-border);
+  background-color: var(--qf-surface);
+  color: var(--qf-text-muted);
+}
+
+#market-view .mk-set-status.is-fresh {
+  border-color: rgba(74, 222, 128, 0.35);
+  background-color: rgba(74, 222, 128, 0.10);
+  color: var(--qf-success);
+}
+
+#market-view .mk-set-status.is-warn {
+  border-color: rgba(255, 152, 0, 0.35);
+  background-color: var(--qf-warning-dim);
+  color: var(--qf-warning);
+}
+
+#market-view .mk-set-status.is-stale {
+  border-color: rgba(239, 68, 68, 0.35);
+  background-color: rgba(239, 68, 68, 0.10);
+  color: var(--qf-error);
+}
+
+/* ---- refreshing state ---- */
+
+#market-view .mk-set-updating {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 6px;
+  margin-bottom: 6px;
+  font-size: 12px;
+  color: var(--qf-accent);
+  font-weight: var(--qf-weight-semibold);
+}
+
+#market-view .mk-set-pulse {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--qf-accent);
+  animation: mk-set-pulse 1.2s ease-in-out infinite;
+}
+
+#market-view .mk-set-progress {
+  position: relative;
+  height: 6px;
+  border-radius: var(--qf-radius-pill);
+  background: var(--qf-surface-sunken);
+  overflow: hidden;
+}
+
+#market-view .mk-set-progress span {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 40%;
+  border-radius: var(--qf-radius-pill);
+  background-image: var(--qf-accent-gradient-h);
+  animation: mk-set-indeterminate 1.1s ease-in-out infinite;
+}
+
+/*
+ * Once ESI reports a page count the bar becomes a real measure: the sliding
+ * animation is switched off and the width is driven from the renderer.
+ *
+ * `left` is pinned because the indeterminate keyframes animate it - without
+ * this the fill would sit at whatever offset the animation last left it, and
+ * a 30%-wide bar would start a third of the way along the track.
+ */
+#market-view .mk-set-progress.is-determinate span {
+  left: 0;
+  width: 0;
+  animation: none;
+  transition: width 0.25s ease;
+}
+
+@keyframes mk-set-pulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.3; }
+}
+
+@keyframes mk-set-indeterminate {
+  0%   { left: -40%; }
+  100% { left: 100%; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #market-view .mk-set-pulse,
+  #market-view .mk-set-progress span {
+    animation: none;
+  }
+}
+
+#market-view .mk-set-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-self: end;
+}
+
+#market-view .mk-set-edit {
+  padding: 5px 11px;
+  font-size: 12px;
+}
+
+#market-view .mk-set-refresh:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* ---- Overview panel header ---- */
+
+#market-view .mk-panel-head-baseline {
+  align-items: baseline;
+  margin-bottom: 6px;
+}
+
+#market-view .mk-panel-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+#market-view .mk-panel-intro {
+  margin: 0 0 16px;
+  font-size: 13px;
+  color: var(--qf-text-muted);
+}
+
+#market-view .mk-link {
+  padding: 0;
+  background: none;
+  border: none;
+  color: var(--qf-accent);
+  font-family: var(--qf-font-sans);
+  font-size: 11.5px;
+  font-weight: var(--qf-weight-semibold);
+  cursor: pointer;
+}
+
+#market-view .mk-link:hover { color: var(--qf-accent-bright); }
+
+#market-view .mk-link.is-danger { color: var(--qf-error); }
+
+#market-view .mk-link:focus-visible {
+  outline: none;
+  box-shadow: var(--qf-focus-ring);
+  border-radius: var(--qf-radius-sm);
+}
+
+/* ---- Inspector ---- */
+
+#market-view .mk-inspector {
+  width: 300px;
+  flex-shrink: 0;
+  overflow-y: auto;
+  padding: 18px 16px;
+  background: rgba(0, 0, 0, 0.18);
+  border-left: 1px solid var(--qf-border);
+}
+
+#market-view .mk-inspector-empty {
+  padding: 30px 4px;
+  color: var(--qf-text-faint);
+  text-align: center;
+}
+
+#market-view .mk-inspector-empty[hidden] {
+  display: none;
+}
+
+#market-view .mk-inspector-empty p {
+  margin: 0;
+  font-size: 13px;
+  color: var(--qf-text-muted);
+}
+
+#market-view .mk-inspector-empty small {
+  font-size: 11.5px;
+}
+
+#market-view .mk-inspector-body[hidden] {
+  display: none;
+}
+
+#market-view .mk-insp-title {
+  font-size: 15px;
+  font-weight: var(--qf-weight-semibold);
+  color: var(--qf-text-heading);
+}
+
+#market-view .mk-insp-sub {
+  margin-top: 3px;
+  font-size: 11.5px;
+  color: var(--qf-text-muted);
+}
+
+#market-view .mk-insp-rows {
+  display: flex;
+  flex-direction: column;
+  margin-top: 14px;
+}
+
+#market-view .mk-insp-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 7px 0;
+  border-bottom: 1px solid var(--qf-border-subtle);
+  font-size: 12px;
+}
+
+#market-view .mk-insp-row:last-child {
+  border-bottom: none;
+}
+
+#market-view .mk-insp-label { color: var(--qf-text-muted); }
+
+#market-view .mk-insp-value {
+  font-family: var(--qf-font-mono);
+  color: var(--qf-text-heading);
+}
+
+/* ---- Empty states ---- */
+
+#market-view .mk-empty {
+  padding: 34px 20px;
+  color: var(--qf-text-faint);
+  text-align: center;
+}
+
+#market-view .mk-empty[hidden] {
+  display: none;
+}
+
+#market-view .mk-empty p {
+  margin: 0;
+  font-size: 13.5px;
+  color: var(--qf-text-muted);
+}
+
+#market-view .mk-empty small {
+  font-size: 11.5px;
+}
+
+#market-view .mk-empty-lg {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 60px 20px;
+}
+
+#market-view .mk-empty-lg svg {
+  opacity: 0.4;
+}
+
+/* =========================================================================
+   Watchlists
+   ========================================================================= */
+
+/* ---- context pane nav rows ---- */
+
+/* Highlight is box-shadow only (binding rule 1): a background-color set on a
+   row highlighted on its first paint does not clear reliably. */
+#market-view .mk-wl-nav-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 8px;
+  border: none;
+  border-radius: var(--qf-radius-sm);
+  background-color: transparent;
+  color: var(--qf-text-primary);
+  box-shadow: none;
+  cursor: pointer;
+  text-align: left;
+  font-family: inherit;
+}
+
+#market-view .mk-wl-nav-row:hover {
+  box-shadow: inset 0 0 0 200px var(--qf-surface);
+}
+
+#market-view .mk-wl-nav-row.is-active {
+  color: var(--qf-accent);
+  box-shadow: inset 0 0 0 200px var(--qf-accent-dim), inset 3px 0 0 var(--qf-accent);
+}
+
+#market-view .mk-wl-nav-row:focus-visible {
+  outline: 2px solid var(--qf-accent);
+  outline-offset: -2px;
+}
+
+#market-view .mk-wl-nav-main {
+  min-width: 0;
+  flex: 1;
+}
+
+#market-view .mk-wl-nav-top {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+#market-view .mk-wl-nav-name {
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+#market-view .mk-wl-nav-alerts {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 9.5px;
+  font-weight: 700;
+  color: var(--qf-warning);
+}
+
+#market-view .mk-wl-nav-sub {
+  font-size: 10.5px;
+  color: var(--qf-text-faint);
+  margin-top: 1px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ---- tab alert badge ---- */
+
+#market-view .mk-tab-badge-alert {
+  background: var(--qf-warning-dim);
+  color: var(--qf-warning);
+}
+
+#market-view .mk-tab-badge-alert[hidden] {
+  display: none;
+}
+
+/* ---- panel header ---- */
+
+#market-view .mk-wl-body[hidden] {
+  display: none;
+}
+
+#market-view .mk-wl-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 18px 20px 12px;
+  flex-shrink: 0;
+}
+
+#market-view .mk-wl-head-main {
+  min-width: 0;
+}
+
+#market-view .mk-wl-eyebrow {
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--qf-text-faint);
+  font-weight: 700;
+}
+
+#market-view .mk-wl-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+#market-view .mk-wl-title-row h2 {
+  margin: 2px 0 0;
+  font-size: 18px;
+  color: var(--qf-text-heading);
+  font-weight: 600;
+}
+
+#market-view .mk-icon-btn-danger:hover {
+  color: var(--qf-error);
+}
+
+#market-view .mk-wl-desc {
+  margin: 4px 0 0;
+  font-size: 12.5px;
+  color: var(--qf-text-muted);
+  max-width: 520px;
+}
+
+#market-view .mk-wl-desc[hidden] {
+  display: none;
+}
+
+#market-view .mk-wl-basis {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  font-size: 13px;
+  color: var(--qf-text-muted);
+}
+
+#market-view .mk-wl-market-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--qf-surface);
+  border: 1px solid var(--qf-border);
+  border-radius: var(--qf-radius-pill);
+  padding: 3px 11px;
+  color: var(--qf-text-primary);
+  font-weight: 600;
+}
+
+#market-view .mk-wl-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+/* ---- summary strip ---- */
+
+#market-view .mk-wl-stats {
+  display: flex;
+  gap: 12px;
+  padding: 0 20px 12px;
+  flex-shrink: 0;
+}
+
+#market-view .mk-wl-stat {
+  flex: 1;
+  background: var(--qf-bg-elevated);
+  border: 1px solid var(--qf-border);
+  border-radius: var(--qf-radius-md);
+  padding: 11px 15px;
+}
+
+#market-view .mk-wl-stat.has-alerts {
+  border-color: rgba(255, 152, 0, 0.35);
+}
+
+#market-view .mk-wl-stat-label {
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--qf-text-faint);
+  font-weight: 700;
+}
+
+#market-view .mk-wl-stat-value {
+  font-size: 19px;
+  font-weight: 700;
+  color: var(--qf-text-heading);
+  font-family: var(--qf-font-mono);
+  margin-top: 2px;
+}
+
+#market-view .mk-wl-stat-value.is-accent {
+  color: var(--qf-accent);
+}
+
+#market-view .mk-wl-stat-value.is-warning {
+  color: var(--qf-warning);
+}
+
+/* ---- item rows ---- */
+
+/* Row tint is box-shadow only, for the same reason as the nav rows. */
+#market-view .mk-wl-table tbody tr {
+  background-color: transparent;
+  box-shadow: none;
+}
+
+#market-view .mk-wl-table tbody tr.is-hit {
+  box-shadow: inset 0 0 0 200px rgba(255, 152, 0, 0.05);
+}
+
+#market-view .mk-wl-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  color: var(--qf-text-primary);
+}
+
+#market-view .mk-wl-item img {
+  width: 24px;
+  height: 24px;
+  border-radius: 4px;
+  border: 1px solid var(--qf-border);
+}
+
+/* Alert pill. Every state sets the same properties (binding rule 3) so a
+   state change fully resets the previous one. */
+#market-view .mk-alert-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  font-weight: 600;
+  border-radius: var(--qf-radius-pill);
+  padding: 2px 9px;
+  border: 1px solid var(--qf-border);
+  background-color: transparent;
+  color: var(--qf-text-faint);
+  cursor: pointer;
+  font-family: inherit;
+}
+
+#market-view .mk-alert-pill.is-armed {
+  border-color: var(--qf-border);
+  background-color: var(--qf-surface);
+  color: var(--qf-text-muted);
+}
+
+#market-view .mk-alert-pill.is-hit {
+  border-color: rgba(255, 152, 0, 0.4);
+  background-color: var(--qf-warning-dim);
+  color: var(--qf-warning);
+}
+
+#market-view .mk-alert-pill:hover {
+  border-color: var(--qf-border-active);
+}
+
+/* =========================================================================
+   Watchlist modals
+   ========================================================================= */
+
+/* Redundant since `.modal[hidden]` moved into components.css, but kept because
+   it is scoped tighter than the shared rule and costs nothing. The shared rule
+   is the one to rely on for new screens. */
+#market-view .modal[hidden] {
+  display: none;
+}
+
+#market-view .mk-modal {
+  width: 560px;
+  max-width: 100%;
+  overflow: visible;
+}
+
+/* ---- Refresh progress dialog ---- */
+
+#market-view .mk-refresh-modal {
+  width: 440px;
+}
+
+#market-view .mk-refresh-phase {
+  font-size: var(--qf-text-sm);
+  font-weight: 600;
+  color: var(--qf-text-heading);
+  margin-bottom: 12px;
+}
+
+#market-view .mk-refresh-bar {
+  position: relative;
+  height: 6px;
+  border-radius: var(--qf-radius-pill);
+  background: var(--qf-surface-sunken);
+  overflow: hidden;
+  margin-bottom: 10px;
+}
+
+#market-view .mk-refresh-bar span {
+  display: block;
+  height: 100%;
+  width: 0;
+  border-radius: var(--qf-radius-pill);
+  background-image: var(--qf-accent-gradient-h);
+  transition: width 0.25s ease;
+}
+
+#market-view .mk-refresh-detail {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 12px;
+  color: var(--qf-text-muted);
+  min-height: 16px;
+  margin-bottom: 16px;
+}
+
+#market-view .mk-refresh-pages {
+  font-family: var(--qf-font-mono);
+  color: var(--qf-text-faint);
+  flex-shrink: 0;
+}
+
+#market-view .mk-refresh-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+#market-view .mk-refresh-step {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+  color: var(--qf-text-faint);
+}
+
+/* Marker is a ::before dot so the three states differ only by colour and
+   fill - no layout shift as a step advances. */
+#market-view .mk-refresh-step::before {
+  content: '';
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: var(--qf-border-active);
+}
+
+#market-view .mk-refresh-step.is-active {
+  color: var(--qf-accent);
+  font-weight: 600;
+}
+
+#market-view .mk-refresh-step.is-active::before {
+  background: var(--qf-accent);
+  animation: mk-set-pulse 1.4s ease-in-out infinite;
+}
+
+#market-view .mk-refresh-step.is-done {
+  color: var(--qf-text-muted);
+}
+
+#market-view .mk-refresh-step.is-done::before {
+  background: var(--qf-success);
+}
+
+#market-view .mk-field {
+  margin-bottom: 18px;
+}
+
+#market-view .mk-field:last-child {
+  margin-bottom: 0;
+}
+
+#market-view .mk-field-divided {
+  border-top: 1px solid var(--qf-border-subtle);
+  padding-top: 16px;
+}
+
+#market-view .mk-label {
+  display: block;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--qf-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  margin-bottom: 6px;
+}
+
+#market-view .mk-label-sm {
+  font-size: 11px;
+}
+
+#market-view .mk-label-optional {
+  text-transform: none;
+  color: var(--qf-text-faint);
+  font-weight: 400;
+}
+
+#market-view .mk-field-hint {
+  font-size: 11.5px;
+  color: var(--qf-text-faint);
+  margin-top: 5px;
+}
+
+/* Numeric fields get an explicit small width (binding rule 4). */
+#market-view .mk-input-num {
+  width: 100%;
+  font-family: var(--qf-font-mono);
+}
+
+#market-view .mk-modal .qf-input,
+#market-view .mk-modal .qf-select {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+/* ---- chosen item ---- */
+
+#market-view .mk-pick {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--qf-accent-dim);
+  border: 1px solid var(--qf-border-active);
+  border-radius: var(--qf-radius-md);
+  padding: 9px 12px;
+}
+
+#market-view .mk-pick[hidden] {
+  display: none;
+}
+
+#market-view .mk-pick-name {
+  display: block;
+  font-size: 13.5px;
+  color: var(--qf-text-heading);
+  font-weight: 600;
+}
+
+#market-view .mk-pick-sub {
+  display: block;
+  font-size: 11px;
+  color: var(--qf-text-faint);
+}
+
+#market-view .mk-pick-clear {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--qf-text-muted);
+  font-size: 18px;
+  line-height: 1;
+  padding: 2px 6px;
+}
+
+#market-view .mk-pick-clear:hover {
+  color: var(--qf-text-primary);
+}
+
+/* Highlight is box-shadow only; hiIndex starts at -1 so nothing is hot on
+   first paint (binding rules 1 and 2). */
+/* ---- alert rule ---- */
+
+#market-view .mk-alert-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  align-items: end;
+}
+
+#market-view .mk-alert-none {
+  align-self: end;
+  font-size: 12px;
+  color: var(--qf-text-faint);
+  padding: 9px 0;
+}
+
+#market-view .mk-alert-none[hidden],
+#market-view #mk-additem-value-wrap[hidden] {
+  display: none;
+}
+
+#market-view .mk-dir-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+#market-view .mk-dir-row[hidden] {
+  display: none;
+}
+
+/* Both states set the same properties so neither sticks. */
+#market-view .mk-dir {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  border-radius: var(--qf-radius-pill);
+  padding: 5px 12px;
+  cursor: pointer;
+  font-family: inherit;
+  border: 1px solid var(--qf-border);
+  background-color: var(--qf-surface);
+  color: var(--qf-text-muted);
+}
+
+#market-view .mk-dir.is-on {
+  border: 1px solid var(--qf-border-active);
+  background-color: var(--qf-accent-dim);
+  color: var(--qf-accent);
+}
+
+/* ---- footer ---- */
+
+#market-view .mk-modal-footer-split {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+#market-view .mk-modal-summary {
+  font-size: 12px;
+  color: var(--qf-text-faint);
+}
+
+#market-view .mk-modal-actions {
+  display: inline-flex;
+  gap: 10px;
+}
+
+/* Buy/sell price columns, matching the mockup's colour coding. */
+#market-view .mk-table td.mk-buy {
+  color: var(--qf-success);
+}
+
+#market-view .mk-table td.mk-sell {
+  color: var(--qf-accent);
+}
+
+/* Text wrapper inside a chosen-item pill; no layout of its own. */
+#market-view .mk-pick-text {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+/* =========================================================================
+   Market set editor + override modal
+   ========================================================================= */
+
+#market-view .mk-modal-wide {
+  width: 720px;
+}
+
+#market-view .mk-modal-wide .modal-body {
+  max-height: 60vh;
+  overflow-y: auto;
+}
+
+#market-view .mk-scope {
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid var(--qf-border-subtle);
+}
+
+#market-view .mk-scope-title {
+  margin: 0 0 3px;
+  font-size: 14px;
+  font-weight: var(--qf-weight-semibold);
+  color: var(--qf-text-heading);
+}
+
+#market-view .mk-scope-desc {
+  margin: 0 0 14px;
+  font-size: 12.5px;
+  color: var(--qf-text-muted);
+}
+
+#market-view .mk-scope-mirror {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 14px;
+  font-size: 13.5px;
+  color: var(--qf-text-primary);
+  cursor: pointer;
+}
+
+/* ---- location type radio cards ---- */
+
+#market-view .mk-scope-body {
+  min-width: 0;
+}
+
+/* NOTE: a mirrored output scope has its location block REMOVED, not dimmed
+   (see buildScopeFields), so there is deliberately no .is-mirrored rule. */
+
+/* Two-column field rows, as the mockup lays them out. */
+#market-view .mk-scope-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+  margin-top: 14px;
+}
+
+#market-view .mk-scope-grid .mk-field {
+  margin-bottom: 0;
+  min-width: 0;
+}
+
+#market-view .mk-loc-label {
+  margin-bottom: 8px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--qf-text-faint);
+  font-weight: var(--qf-weight-bold);
+}
+
+#market-view .mk-loc-cards {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+/* Both states set the same properties so neither sticks (binding rule 3). */
+#market-view .mk-loc-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: var(--qf-radius-md);
+  cursor: pointer;
+  text-align: left;
+  font-family: inherit;
+  border: 1px solid var(--qf-border);
+  background-color: var(--qf-surface-sunken);
+}
+
+#market-view .mk-loc-card.is-on {
+  border: 1px solid var(--qf-border-active);
+  background-color: var(--qf-accent-dim);
+}
+
+#market-view .mk-loc-card:focus-visible {
+  outline: none;
+  box-shadow: var(--qf-focus-ring);
+}
+
+#market-view .mk-loc-dot {
+  flex-shrink: 0;
+  margin-top: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--qf-border-active);
+}
+
+#market-view .mk-loc-card.is-on .mk-loc-dot {
+  border-color: var(--qf-accent);
+}
+
+#market-view .mk-loc-dot span {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--qf-accent);
+}
+
+#market-view .mk-loc-text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+#market-view .mk-loc-name {
+  font-size: 13px;
+  font-weight: var(--qf-weight-semibold);
+  color: var(--qf-text-primary);
+}
+
+#market-view .mk-loc-desc {
+  font-size: 11px;
+  color: var(--qf-text-faint);
+}
+
+#market-view .mk-loc-picker {
+  margin-top: 14px;
+}
+
+#market-view .mk-scope-divider {
+  height: 1px;
+  background: var(--qf-border-subtle);
+  margin: 18px 0;
+}
+
+/* ---- native multi-row list boxes ---- */
+
+/* Multi-row list box (size="N"). Same surface as .qf-select but with no
+   dropdown arrow and no appearance reset - a sized select must keep its
+   native list rendering to scroll correctly. */
+#market-view .mk-listbox {
+  width: 100%;
+  box-sizing: border-box;
+  margin-top: 6px;
+  padding: 4px;
+  background-color: var(--qf-surface-sunken);
+  border: 1px solid var(--qf-border);
+  border-radius: var(--qf-radius-md);
+  color: var(--qf-text-primary);
+  font-family: var(--qf-font-sans);
+  font-size: 12.5px;
+  outline: none;
+  transition: border-color var(--qf-transition-fast), box-shadow var(--qf-transition-fast);
+}
+
+#market-view .mk-listbox:focus {
+  border-color: var(--qf-border-active);
+  box-shadow: var(--qf-focus-ring);
+}
+
+#market-view .mk-listbox option {
+  padding: 4px 6px;
+  border-radius: var(--qf-radius-sm);
+  background-color: transparent;
+  color: var(--qf-text-primary);
+}
+
+#market-view .mk-listbox option:checked {
+  background-color: var(--qf-accent-dim);
+  color: var(--qf-accent);
+}
+
+/* ---- private structure block ---- */
+
+#market-view .mk-struct {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+#market-view .mk-struct-search {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 10px;
+  align-items: end;
+}
+
+#market-view .mk-struct-note {
+  font-size: 11.5px;
+  color: var(--qf-text-faint);
+  line-height: 1.5;
+}
+
+#market-view .mk-struct-note em {
+  color: var(--qf-text-muted);
+  font-style: italic;
+}
+
+/* ---- editor footer ---- */
+
+#market-view .mk-set-footer {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+#market-view .mk-set-footer-spacer {
+  flex: 1;
+}
+
+#market-view .mk-set-footer .danger-button[hidden] {
+  display: none;
+}
+
+/* Inline result lists (structure and system search inside the editor). */
+#market-view .mk-inline-results {
+  margin-top: 6px;
+  max-height: 160px;
+  overflow-y: auto;
+  border: 1px solid var(--qf-border);
+  border-radius: var(--qf-radius-md);
+  background: var(--qf-bg-elevated);
+}
+
+#market-view .mk-inline-results[hidden] {
+  display: none;
+}
+
+#market-view .mk-inline-result {
+  display: block;
+  width: 100%;
+  padding: 7px 10px;
+  border: none;
+  border-bottom: 1px solid var(--qf-border-subtle);
+  background-color: transparent;
+  box-shadow: none;
+  color: var(--qf-text-primary);
+  font-family: inherit;
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+}
+
+#market-view .mk-inline-result:last-child {
+  border-bottom: none;
+}
+
+#market-view .mk-inline-result:hover {
+  box-shadow: inset 0 0 0 200px var(--qf-accent-dim);
+  color: var(--qf-accent);
+}
+
+/* Override table: rows open the editor. */
+#market-view .mk-row-clickable {
+  cursor: pointer;
+}
+
+#market-view .mk-delta.is-up {
+  color: var(--qf-warning);
+}
+
+#market-view .mk-delta.is-down {
+  color: var(--qf-success);
+}
+
+/* =========================================================================
+   Inspector (Pricing Details)
+   ========================================================================= */
+
+#market-view .mk-inspector-head {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--qf-border);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--qf-text-primary);
+  font-weight: var(--qf-weight-bold);
+}
+
+#market-view .mk-inspector-body {
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+#market-view .mk-inspector-body[hidden] {
+  display: none;
+}
+
+/* ---- shared card shell (inspector + drawer) ---- */
+
+#market-view .mk-card {
+  background: var(--qf-bg-elevated);
+  border: 1px solid var(--qf-border);
+  border-radius: var(--qf-radius-md);
+  overflow: hidden;
+}
+
+#market-view .mk-card-bar {
+  height: 2px;
+  background-image: var(--qf-accent-gradient-h);
+}
+
+#market-view .mk-card-body {
+  padding: 14px 16px;
+}
+
+#market-view .mk-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+#market-view .mk-card-head h4 {
+  margin: 0;
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--qf-text-primary);
+  font-weight: var(--qf-weight-bold);
+}
+
+#market-view .mk-card-head-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+#market-view .mk-card-note {
+  font-size: 11px;
+  color: var(--qf-text-faint);
+}
+
+#market-view .mk-card-desc {
+  margin: 0 0 14px;
+  font-size: 12px;
+  color: var(--qf-text-muted);
+}
+
+/* ---- price card ---- */
+
+#market-view .mk-insp-price {
+  padding: 14px 16px;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+#market-view .mk-insp-price-label {
+  font-size: 11px;
+  color: var(--qf-text-faint);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+
+#market-view .mk-insp-price-value {
+  margin-top: 2px;
+  font-size: 22px;
+  font-weight: var(--qf-weight-bold);
+  color: var(--qf-accent);
+  font-family: var(--qf-font-mono);
+}
+
+#market-view .mk-insp-buy {
+  text-align: right;
+}
+
+#market-view .mk-insp-buy-value {
+  font-size: 15px;
+  color: var(--qf-success);
+  font-family: var(--qf-font-mono);
+}
+
+#market-view .mk-insp-override-note {
+  font-size: 11.5px;
+  color: var(--qf-warning);
+}
+
+/* ---- View Full Market Data ---- */
+
+#market-view .mk-insp-action {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  padding: 11px 14px;
+  border-radius: var(--qf-radius-md);
+  border: 1px solid var(--qf-border-active);
+  background-color: var(--qf-accent-dim);
+  color: var(--qf-accent);
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: var(--qf-weight-semibold);
+  cursor: pointer;
+}
+
+#market-view .mk-insp-action:hover {
+  border-color: var(--qf-accent);
+}
+
+#market-view .mk-insp-action-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+}
+
+/* ---- plans section ---- */
+
+#market-view .mk-insp-section {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+#market-view .mk-insp-section-title {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--qf-text-muted);
+  font-weight: var(--qf-weight-bold);
+}
+
+#market-view .mk-insp-section-count {
+  font-size: 11px;
+  color: var(--qf-text-faint);
+}
+
+#market-view .mk-insp-lock-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 9px 11px;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--qf-text-faint);
+  background: var(--qf-surface-sunken);
+  border: 1px solid var(--qf-border-subtle);
+  border-radius: var(--qf-radius-sm);
+}
+
+#market-view .mk-insp-lock-note svg {
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+#market-view .mk-insp-plans {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+#market-view .mk-insp-noplans {
+  border: 1px dashed var(--qf-border);
+  border-radius: var(--qf-radius-md);
+  padding: 22px 16px;
+  text-align: center;
+  color: var(--qf-text-faint);
+  font-size: 12.5px;
+}
+
+#market-view .mk-plan-card {
+  background: var(--qf-bg-elevated);
+  border: 1px solid var(--qf-border);
+  border-radius: var(--qf-radius-md);
+  padding: 13px 15px;
+}
+
+#market-view .mk-plan-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+#market-view .mk-plan-name {
+  font-size: 14px;
+  font-weight: var(--qf-weight-semibold);
+  color: var(--qf-text-heading);
+}
+
+/* Every drift state sets the same properties (binding rule 3). */
+#market-view .mk-plan-drift {
+  font-size: 11px;
+  font-weight: var(--qf-weight-semibold);
+  font-family: var(--qf-font-mono);
+  border-radius: var(--qf-radius-pill);
+  padding: 1px 8px;
+  border: 1px solid var(--qf-border);
+  background-color: var(--qf-surface);
+  color: var(--qf-text-muted);
+}
+
+#market-view .mk-plan-drift.is-up {
+  border-color: rgba(255, 152, 0, 0.35);
+  background-color: var(--qf-warning-dim);
+  color: var(--qf-warning);
+}
+
+#market-view .mk-plan-drift.is-down {
+  border-color: rgba(74, 222, 128, 0.35);
+  background-color: rgba(74, 222, 128, 0.10);
+  color: var(--qf-success);
+}
+
+#market-view .mk-plan-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 6px;
+  font-size: 12.5px;
+  color: var(--qf-text-muted);
+}
+
+#market-view .mk-plan-value {
+  font-family: var(--qf-font-mono);
+  color: var(--qf-text-primary);
+}
+
+#market-view .mk-plan-value.is-accent {
+  color: var(--qf-accent);
+}
+
+#market-view .mk-plan-when {
+  color: var(--qf-text-faint);
+}
+
+#market-view .mk-plan-relock {
+  width: 100%;
+  margin-top: 12px;
+  justify-content: center;
+}
+
+/* =========================================================================
+   Full market data drawer
+   ========================================================================= */
+
+#market-view .mk-drawer-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 55;
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(3px);
+  display: flex;
+  justify-content: flex-end;
+}
+
+#market-view .mk-drawer-scrim[hidden] {
+  display: none;
+}
+
+#market-view .mk-drawer {
+  width: 760px;
+  max-width: 94vw;
+  height: 100%;
+  background: var(--qf-bg-elevated);
+  border-left: 1px solid var(--qf-border-active);
+  box-shadow: -12px 0 40px rgba(0, 0, 0, 0.5);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+#market-view .mk-drawer-head {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px 22px;
+  background: rgba(20, 20, 31, 0.96);
+  backdrop-filter: blur(10px);
+  border-bottom: 1px solid var(--qf-border);
+}
+
+#market-view .mk-drawer-ident {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  min-width: 0;
+}
+
+#market-view .mk-drawer-icon {
+  width: 44px;
+  height: 44px;
+  border-radius: var(--qf-radius-sm);
+  border: 1px solid var(--qf-border);
+}
+
+#market-view .mk-drawer-title-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+#market-view .mk-drawer-title-row h2 {
+  margin: 0;
+  font-size: 19px;
+  font-weight: var(--qf-weight-bold);
+  color: var(--qf-text-heading);
+}
+
+#market-view .mk-drawer-typeid {
+  font-size: 10px;
+  font-family: var(--qf-font-mono);
+  color: var(--qf-text-faint);
+  background: var(--qf-surface);
+  border: 1px solid var(--qf-border);
+  border-radius: var(--qf-radius-pill);
+  padding: 1px 8px;
+}
+
+#market-view .mk-drawer-sub {
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--qf-text-muted);
+}
+
+#market-view .mk-drawer-head-right {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-shrink: 0;
+}
+
+#market-view .mk-drawer-sync {
+  text-align: right;
+}
+
+#market-view .mk-drawer-sync-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--qf-text-faint);
+  font-weight: var(--qf-weight-bold);
+}
+
+#market-view .mk-drawer-sync-value {
+  font-size: 12px;
+  color: var(--qf-text-muted);
+}
+
+#market-view .mk-drawer-sync-value.is-fresh { color: var(--qf-success); }
+#market-view .mk-drawer-sync-value.is-warn  { color: var(--qf-warning); }
+#market-view .mk-drawer-sync-value.is-stale { color: var(--qf-error); }
+
+#market-view .mk-drawer-close {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--qf-text-muted);
+  font-size: 24px;
+  line-height: 1;
+  padding: 4px;
+}
+
+#market-view .mk-drawer-close:hover {
+  color: var(--qf-text-primary);
+}
+
+#market-view .mk-drawer-grid {
+  padding: 20px 22px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+#market-view .mk-card-wide {
+  grid-column: span 2;
+}
+
+#market-view .mk-drawer-foot {
+  margin-top: auto;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 16px 22px;
+  border-top: 1px solid var(--qf-border);
+  background: rgba(0, 0, 0, 0.15);
+}
+
+/* ---- chart ---- */
+
+#market-view .mk-chart {
+  width: 100%;
+  height: 180px;
+  display: block;
+}
+
+#market-view .mk-chart-empty {
+  height: 180px;
+  display: grid;
+  place-items: center;
+  font-size: 12.5px;
+  color: var(--qf-text-faint);
+}
+
+#market-view .mk-chart-axis {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 8px;
+  font-size: 11px;
+  color: var(--qf-text-faint);
+  font-family: var(--qf-font-mono);
+}
+
+#market-view .mk-trend {
+  font-size: 12px;
+  font-family: var(--qf-font-mono);
+  color: var(--qf-text-muted);
+}
+
+#market-view .mk-trend.is-up   { color: var(--qf-error); }
+#market-view .mk-trend.is-down { color: var(--qf-success); }
+
+/* ---- order book ---- */
+
+#market-view .mk-orderbook {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+#market-view .mk-order-title {
+  font-size: 11px;
+  font-weight: var(--qf-weight-bold);
+  margin-bottom: 7px;
+}
+
+#market-view .mk-order-title.is-sell { color: var(--qf-accent); }
+#market-view .mk-order-title.is-buy  { color: var(--qf-success); }
+
+#market-view .mk-order-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 3px 0;
+  font-size: 11.5px;
+  font-family: var(--qf-font-mono);
+  border-bottom: 1px solid var(--qf-border-subtle);
+}
+
+#market-view .mk-order-sell { color: var(--qf-accent); }
+#market-view .mk-order-buy  { color: var(--qf-success); }
+#market-view .mk-order-qty  { color: var(--qf-text-muted); }
+
+#market-view .mk-order-empty {
+  font-size: 11.5px;
+  color: var(--qf-text-faint);
+  padding: 3px 0;
+}
+
+/* ---- statistics ---- */
+
+#market-view .mk-stats {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px 16px;
+}
+
+#market-view .mk-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+#market-view .mk-stat-label {
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--qf-text-faint);
+  font-weight: var(--qf-weight-bold);
+}
+
+#market-view .mk-stat-value {
+  font-size: 14px;
+  font-family: var(--qf-font-mono);
+  color: var(--qf-text-primary);
+}
+
+#market-view .mk-stat-value.is-accent  { color: var(--qf-accent); }
+#market-view .mk-stat-value.is-success { color: var(--qf-success); }
+
+/* ---- calculation methods ---- */
+
+#market-view .mk-calcs {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 10px;
+}
+
+/* Both states set the same properties, so neither sticks. */
+#market-view .mk-calc {
+  background: var(--qf-surface-sunken);
+  border: 1px solid var(--qf-border);
+  border-radius: var(--qf-radius-md);
+  padding: 11px 12px;
+}
+
+#market-view .mk-calc.is-active {
+  border: 1px solid var(--qf-border-active);
+}
+
+#market-view .mk-calc-method {
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  font-weight: var(--qf-weight-bold);
+  color: var(--qf-text-muted);
+}
+
+#market-view .mk-calc.is-active .mk-calc-method {
+  color: var(--qf-accent);
+}
+
+#market-view .mk-calc-value {
+  margin-top: 4px;
+  font-size: 15px;
+  font-family: var(--qf-font-mono);
+  color: var(--qf-text-heading);
+}
+
+#market-view .mk-calc-note {
+  margin-top: 2px;
+  font-size: 10.5px;
+  color: var(--qf-text-faint);
+}
+
+/* ---- per-row Data button ---- */
+
+#market-view .mk-data-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 9px;
+  border-radius: var(--qf-radius-pill);
+  border: 1px solid var(--qf-border);
+  background-color: var(--qf-surface);
+  color: var(--qf-text-muted);
+  font-family: inherit;
+  font-size: 10.5px;
+  font-weight: var(--qf-weight-semibold);
+  cursor: pointer;
+}
+
+#market-view .mk-data-btn:hover {
+  border-color: var(--qf-border-active);
+  background-color: var(--qf-accent-dim);
+  color: var(--qf-accent);
+}
+
+/* Toasts are the shared QFToast (public/shared/toast.js) rendering into a
+   .toast-container on <body> - deliberately NOT scoped here, so they are not
+   clipped by the view and can reposition when the drawer is open. */
+
+#market-view .mk-plan-override-gap {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--qf-border-subtle);
+  font-size: 11.5px;
+  font-family: var(--qf-font-mono);
+  color: var(--qf-text-muted);
+}
+
+#market-view .mk-plan-override-gap.is-above { color: var(--qf-warning); }
+#market-view .mk-plan-override-gap.is-below { color: var(--qf-success); }
+
+/* ---- watchlist base / drift columns ---- */
+
+#market-view .mk-wl-base {
+  color: var(--qf-text-faint);
+}
+
+#market-view .mk-wl-drift {
+  font-family: var(--qf-font-mono);
+  white-space: nowrap;
+}
+
+/* Both directions set the same properties so neither sticks. */
+#market-view .mk-drift-part {
+  color: var(--qf-text-muted);
+}
+
+#market-view .mk-drift-part.is-up {
+  color: var(--qf-warning);
+}
+
+#market-view .mk-drift-part.is-down {
+  color: var(--qf-success);
+}
+
+/* Several alert pills can share one cell (buy and sell). */
+#market-view .mk-wl-table .mk-alert-pill + .mk-alert-pill {
+  margin-top: 4px;
+}
+
+#market-view .mk-alert-explain {
+  margin-top: -2px;
+  margin-bottom: 8px;
+}

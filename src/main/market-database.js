@@ -1,6 +1,5 @@
 const Database = require('better-sqlite3');
 const path = require('path');
-const { app } = require('electron');
 const fs = require('fs');
 const { getMarketDbPath, getConfigDir } = require('./config-migration');
 
@@ -334,6 +333,122 @@ function clearPriceCache(regionId = null, typeId = null) {
   }
 }
 
+/**
+ * Seeded trade hubs (Jita, Amarr, Dodixie, Rens, Hek).
+ *
+ * Populated by seedDefaultLocations() at init; favourites sort first so the
+ * major hubs lead the list.
+ *
+ * @returns {Array<{locationId, locationName, locationType, regionId, systemId, isFavorite}>}
+ */
+function getMarketLocations() {
+  if (!db) {
+    console.error('[Market Database] Database not initialized');
+    return [];
+  }
+
+  try {
+    return db.prepare(`
+      SELECT location_id   AS locationId,
+             location_name AS locationName,
+             location_type AS locationType,
+             region_id     AS regionId,
+             system_id     AS systemId,
+             is_favorite   AS isFavorite
+      FROM market_locations
+      ORDER BY is_favorite DESC, location_name
+    `).all();
+  } catch (error) {
+    console.error('[Market Database] Error querying market locations:', error);
+    return [];
+  }
+}
+
+/**
+ * Type ids that have cached orders in a region, with their traded volume.
+ *
+ * Names are NOT joined here - they live in the SDE, a different database. The
+ * caller resolves them (see the market:searchTradedItems handler).
+ *
+ * @param {number} regionId
+ * @param {number[]|null} typeIds - Optional filter, e.g. the ids matching a
+ *   name search. Omit to get every traded type in the region.
+ * @param {number} limit
+ * @returns {Array<{typeId: number, volume: number, orderCount: number}>}
+ */
+function getTradedTypeIds(regionId, typeIds = null, limit = 200) {
+  if (!db) {
+    console.error('[Market Database] Database not initialized');
+    return [];
+  }
+  if (!regionId) return [];
+
+  try {
+    let sql = `
+      SELECT type_id AS typeId,
+             SUM(volume_remain) AS volume,
+             COUNT(*) AS orderCount
+      FROM market_orders
+      WHERE region_id = ?`;
+    const params = [regionId];
+
+    if (Array.isArray(typeIds) && typeIds.length > 0) {
+      sql += ` AND type_id IN (${typeIds.map(() => '?').join(',')})`;
+      params.push(...typeIds);
+    }
+
+    sql += ' GROUP BY type_id ORDER BY volume DESC LIMIT ?';
+    params.push(limit);
+
+    return db.prepare(sql).all(...params);
+  } catch (error) {
+    console.error('[Market Database] Error querying traded types:', error);
+    return [];
+  }
+}
+
+/**
+ * Best buy/sell price and total volume for a type in a region.
+ *
+ * Reads the order book directly rather than the price cache, so it reflects
+ * whatever was last fetched even if no priced calculation has been cached.
+ *
+ * @param {number} regionId
+ * @param {number[]} typeIds
+ * @returns {Map<number, {buy: number|null, sell: number|null, volume: number}>}
+ */
+function getOrderBookSummary(regionId, typeIds) {
+  const summary = new Map();
+  if (!db || !regionId || !Array.isArray(typeIds) || typeIds.length === 0) {
+    return summary;
+  }
+
+  try {
+    const placeholders = typeIds.map(() => '?').join(',');
+    const rows = db.prepare(`
+      SELECT type_id AS typeId,
+             MAX(CASE WHEN is_buy_order = 1 THEN price END) AS buy,
+             MIN(CASE WHEN is_buy_order = 0 THEN price END) AS sell,
+             SUM(volume_remain) AS volume
+      FROM market_orders
+      WHERE region_id = ? AND type_id IN (${placeholders})
+      GROUP BY type_id
+    `).all(regionId, ...typeIds);
+
+    rows.forEach((r) => {
+      summary.set(r.typeId, {
+        buy: r.buy === null ? null : r.buy,
+        sell: r.sell === null ? null : r.sell,
+        volume: r.volume || 0,
+      });
+    });
+  } catch (error) {
+    console.error('[Market Database] Error querying order book summary:', error);
+  }
+
+  return summary;
+}
+
 module.exports = {
   initializeMarketDatabase,
   closeMarketDatabase,
@@ -344,4 +459,7 @@ module.exports = {
   clearAdjustedPrices,
   cleanupOldData,
   clearPriceCache,
+  getMarketLocations,
+  getTradedTypeIds,
+  getOrderBookSummary,
 };

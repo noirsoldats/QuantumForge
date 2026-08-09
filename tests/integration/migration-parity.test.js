@@ -18,8 +18,15 @@
  *     same golden schema AND record every numbered migration id.
  *  3. A data-normalization test for use_intermediates (INTEGER -> TEXT).
  *
- * NOTE: If you intentionally change the schema, delete the golden file and
- * re-run to regenerate it (and review the diff in code review).
+ * NOTE: If you intentionally change the schema, regenerate the golden with the
+ * manager script rather than hand-editing or deleting it:
+ *
+ *   bin/migration-golden.sh regenerate     (defaults to this, the character DB)
+ *   bin/migration-golden.sh promote
+ *
+ * It captures a candidate into a temp file, shows the diff for review, and only
+ * then overwrites the committed golden. The market database has its own golden
+ * and its own numbering — see `bin/migration-golden.sh regenerate market`.
  */
 
 const fs = require('fs');

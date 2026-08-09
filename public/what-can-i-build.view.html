@@ -1,0 +1,239 @@
+<!--
+  What Can I Build? view.
+
+  Ported from public/cleanup-tool.html against `What Can I Build (1a).dc.html`.
+  Presentation follows the mockup; BEHAVIOUR follows the live screen, which
+  wins wherever the two disagree.
+
+  Two things the mockup shows that the real data does not carry, and which are
+  therefore NOT built here: per-source asset counts on the tree rows, and the
+  bottom status bar (the shell footer already provides server/ESI status).
+-->
+<div id="wcib-view" class="wcib-view">
+
+  <!-- --------------------------------------------------------- controls -->
+  <div class="wcib-card">
+    <div class="wcib-card-accent"></div>
+
+    <div class="wcib-controls">
+
+      <!-- asset sources -->
+      <div class="wcib-panel">
+        <div class="wcib-panel-head">
+          <label class="wcib-label">Asset Sources</label>
+          <div class="wcib-panel-actions">
+            <button type="button" id="wcib-assets-all" class="wcib-link">Select All</button>
+            <span class="wcib-dot">·</span>
+            <button type="button" id="wcib-assets-none" class="wcib-link">Deselect All</button>
+            <button type="button" id="wcib-assets-refresh" class="wcib-icon-btn"
+                    title="Refresh assets from ESI" aria-label="Refresh assets from ESI">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 2v6h-6M3 12a9 9 0 0 1 15-6.7L21 8M3 22v-6h6M21 12a9 9 0 0 1-15 6.7L3 16"></path></svg>
+            </button>
+          </div>
+        </div>
+        <div id="wcib-asset-tree" class="wcib-asset-tree qf-scroll"></div>
+      </div>
+
+      <!-- blueprint + character + T2 -->
+      <div class="wcib-panel">
+        <div class="wcib-field">
+          <label class="wcib-label">Blueprint Filter</label>
+          <div id="wcib-bp-filters" class="wcib-chip-row"></div>
+        </div>
+
+        <div class="wcib-field">
+          <label class="wcib-label">Character</label>
+          <div id="wcib-char-filters" class="wcib-chip-row"></div>
+          <div id="wcib-char-select-wrap" class="wcib-char-select" hidden>
+            <select id="wcib-char-select" class="qf-select" aria-label="Character"></select>
+          </div>
+        </div>
+
+        <label class="wcib-check" for="wcib-include-t2">
+          <input type="checkbox" id="wcib-include-t2">
+          <span>
+            <span class="wcib-check-title">Include T2 (via Invention)</span>
+            <span class="wcib-check-hint">
+              When Owned/Corp selected: adds inventable T2 BPs from owned T1s
+            </span>
+          </span>
+        </label>
+      </div>
+
+      <!-- tech levels + threshold -->
+      <div class="wcib-panel">
+        <div class="wcib-field">
+          <label class="wcib-label">Tech Levels</label>
+          <div id="wcib-tech-chips" class="wcib-chip-row wcib-chip-wrap"></div>
+        </div>
+
+        <div class="wcib-field">
+          <label class="wcib-label" for="wcib-threshold">On-Hand Threshold</label>
+          <div class="wcib-threshold-row">
+            <input type="range" id="wcib-threshold-range" class="wcib-range"
+                   min="0" max="100" step="5" value="90" aria-label="On-hand threshold">
+            <div class="wcib-threshold-num">
+              <input type="number" id="wcib-threshold" class="wcib-input wcib-input-mono"
+                     min="0" max="100" step="5" value="90">
+              <span class="wcib-suffix">%</span>
+            </div>
+          </div>
+          <p class="wcib-hint">
+            Only show items where at least this % of materials are on-hand
+          </p>
+        </div>
+      </div>
+    </div>
+
+    <!-- categories + market/facility/calculate -->
+    <div class="wcib-controls-foot">
+      <div class="wcib-field wcib-field-grow">
+        <label class="wcib-label">Categories</label>
+        <div id="wcib-cat-chips" class="wcib-chip-row wcib-chip-wrap"></div>
+      </div>
+
+      <div class="wcib-field wcib-field-set">
+        <label class="wcib-label" for="wcib-market-set">Market Set</label>
+        <select id="wcib-market-set" class="qf-select" aria-label="Market Set"></select>
+      </div>
+
+      <div class="wcib-field wcib-field-set">
+        <label class="wcib-label" for="wcib-facility">Facility</label>
+        <select id="wcib-facility" class="qf-select" aria-label="Facility"></select>
+      </div>
+
+      <button type="button" id="wcib-calculate" class="btn btn-primary">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline></svg>
+        <span id="wcib-calculate-label">Calculate Buildable Items</span>
+      </button>
+    </div>
+  </div>
+
+  <!--
+    Market data freshness. Neither the un-ported screen nor the mockup had
+    this; it is added per plan §2.4 because the profit and ROI columns are
+    only as trustworthy as the prices behind them. Driven by the shared
+    QFFreshness badge, which RE-READS the dashboard on every market event.
+  -->
+  <div id="wcib-market-warning" class="wcib-warning" hidden>
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>
+    <span id="wcib-market-warning-text"></span>
+  </div>
+
+  <!-- ---------------------------------------------------------- progress -->
+  <div id="wcib-progress" class="wcib-progress" hidden>
+    <div class="wcib-progress-head">
+      <span id="wcib-progress-text">Calculating…</span>
+      <span id="wcib-progress-count" class="wcib-progress-count"></span>
+    </div>
+    <div class="wcib-progress-track">
+      <div id="wcib-progress-fill" class="wcib-progress-fill"></div>
+    </div>
+  </div>
+
+  <!-- ------------------------------------------------------- empty state -->
+  <div id="wcib-empty" class="wcib-empty">
+    <div class="wcib-empty-icon" aria-hidden="true">
+      <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><line x1="3" y1="9" x2="21" y2="9"></line><line x1="9" y1="21" x2="9" y2="9"></line></svg>
+    </div>
+    <div id="wcib-empty-title" class="wcib-empty-title">No data yet</div>
+    <div id="wcib-empty-text" class="wcib-empty-text">
+      Select asset sources, configure filters, then click “Calculate Buildable
+      Items” to see what you can manufacture with on-hand materials.
+    </div>
+  </div>
+
+  <!-- ----------------------------------------------------------- results -->
+  <div id="wcib-results" hidden>
+    <div class="wcib-results-head">
+      <h2 class="wcib-results-title">Buildable Items</h2>
+      <span id="wcib-result-count" class="wcib-pill"></span>
+      <span class="wcib-spacer"></span>
+
+      <button type="button" id="wcib-add-to-plan" class="btn btn-primary btn-sm" hidden>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+        <span id="wcib-add-to-plan-label">Add to Plan</span>
+      </button>
+
+      <button type="button" id="wcib-columns-btn" class="btn btn-secondary btn-sm">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="4" y1="21" x2="4" y2="14"></line><line x1="4" y1="10" x2="4" y2="3"></line><line x1="12" y1="21" x2="12" y2="12"></line><line x1="12" y1="8" x2="12" y2="3"></line><line x1="20" y1="21" x2="20" y2="16"></line><line x1="20" y1="12" x2="20" y2="3"></line><line x1="1" y1="14" x2="7" y2="14"></line><line x1="9" y1="8" x2="15" y2="8"></line><line x1="17" y1="16" x2="23" y2="16"></line></svg>
+        Columns
+      </button>
+
+      <div class="wcib-search-wrap">
+        <input type="text" id="wcib-search" class="wcib-input wcib-search"
+               placeholder="Search items…" aria-label="Search items">
+        <button type="button" id="wcib-search-clear" class="wcib-search-clear"
+                aria-label="Clear search" hidden>&times;</button>
+      </div>
+    </div>
+
+    <div class="wcib-card">
+      <div class="wcib-card-accent"></div>
+      <div class="wcib-table-scroll">
+        <table class="wcib-table">
+          <thead>
+            <tr id="wcib-thead-row"></tr>
+          </thead>
+          <tbody id="wcib-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- ---------------------------------------------------- columns modal -->
+  <div id="wcib-columns-modal" class="modal" role="dialog" aria-modal="true"
+       aria-labelledby="wcib-columns-title" hidden>
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2 id="wcib-columns-title">Configure Columns</h2>
+        <button type="button" class="modal-close" id="wcib-columns-close" aria-label="Close dialog">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p class="wcib-columns-hint">Drag to reorder. Check to show/hide.</p>
+        <div id="wcib-columns-list" class="wcib-columns-list qf-scroll"></div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" id="wcib-columns-reset" class="btn btn-secondary btn-sm">Reset to Default</button>
+        <!-- Changes apply live, so this only dismisses the modal. -->
+        <button type="button" id="wcib-columns-apply" class="btn btn-primary btn-sm">Done</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ------------------------------------------------------- plan modal -->
+  <div id="wcib-plan-modal" class="modal" role="dialog" aria-modal="true"
+       aria-labelledby="wcib-plan-title" hidden>
+    <div class="modal-content wcib-plan-modal">
+      <div class="modal-header">
+        <h2 id="wcib-plan-title">Add to Manufacturing Plan</h2>
+        <button type="button" class="modal-close" id="wcib-plan-close" aria-label="Close dialog">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p id="wcib-plan-summary" class="wcib-plan-summary"></p>
+
+        <div class="wcib-field">
+          <label class="wcib-label" for="wcib-plan-select">Plan</label>
+          <select id="wcib-plan-select" class="qf-select" aria-label="Plan"></select>
+        </div>
+
+        <div id="wcib-plan-new-wrap" class="wcib-field" hidden>
+          <label class="wcib-label" for="wcib-plan-name">New Plan Name (optional)</label>
+          <input type="text" id="wcib-plan-name" class="wcib-input"
+                 placeholder="Leave empty for auto-generated name">
+        </div>
+
+        <div class="wcib-field">
+          <label class="wcib-label" for="wcib-plan-runs">Runs per blueprint</label>
+          <input type="number" id="wcib-plan-runs" class="wcib-input wcib-input-mono"
+                 min="1" step="1" value="1">
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" id="wcib-plan-cancel" class="btn btn-secondary btn-sm">Cancel</button>
+        <button type="button" id="wcib-plan-confirm" class="btn btn-primary btn-sm">Add to Plan</button>
+      </div>
+    </div>
+  </div>
+
+</div>

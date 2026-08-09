@@ -1,0 +1,635 @@
+/* ==========================================================================
+   Facilities Manager — native shell view.
+   Scoped to #fac-view so nothing here can leak into another tool.
+   ========================================================================== */
+
+/* Rule 6a: `hidden` is only a browser-default display:none, so any explicit
+   display beats it. This catch-all wins it back for the whole view. */
+#fac-view [hidden] {
+  display: none !important;
+}
+
+#fac-view {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* styles.css styles the BARE `header` element for the legacy pages - a dark
+   fill, generous padding and a 2px bottom border. That is page chrome, and
+   the headers in this view are section labels, so reset it and let each one
+   define its own look below.
+   Kept scoped rather than fixing styles.css: eight un-ported pages still
+   depend on that rule. */
+#fac-view header {
+  background: none;
+  padding: 0;
+  border-bottom: none;
+}
+
+/* ------------------------------------------------------------------ header */
+
+#fac-view .fac-head {
+  flex-shrink: 0;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 18px 22px 14px;
+}
+
+#fac-view .fac-head h1 {
+  margin: 0;
+  font-size: 21px;
+  font-weight: 700;
+  letter-spacing: -0.3px;
+  color: var(--qf-text-heading);
+}
+
+#fac-view .fac-subtitle {
+  margin: 6px 0 0;
+  max-width: 620px;
+  font-size: 12.5px;
+  color: var(--qf-text-muted);
+}
+
+#fac-view .fac-count {
+  flex-shrink: 0;
+  text-align: right;
+}
+
+#fac-view .fac-count-value {
+  display: block;
+  font-family: var(--qf-font-mono);
+  font-size: 19px;
+  font-weight: 700;
+  color: var(--qf-accent);
+}
+
+#fac-view .fac-count-label {
+  display: block;
+  font-size: 10.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--qf-text-faint);
+}
+
+#fac-view .fac-scroll {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  overflow: auto;
+  padding: 0 22px 22px;
+}
+
+/* ------------------------------------------------------------------- cards */
+
+#fac-view .fac-card {
+  position: relative;
+  background: var(--qf-bg-elevated);
+  border: 1px solid var(--qf-border);
+  border-radius: var(--qf-radius-lg);
+  overflow: hidden;
+}
+
+#fac-view .fac-card-accent {
+  height: 2px;
+  background: var(--qf-accent-gradient-h, var(--qf-accent));
+}
+
+/* The form border shifts to warning while editing, so it is obvious you are
+   changing an existing facility rather than adding one. */
+#fac-view .fac-form-card.is-editing {
+  border-color: var(--qf-warning);
+}
+
+#fac-view .fac-card-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 15px 18px 13px;
+  border-bottom: 1px solid var(--qf-border);
+  color: var(--qf-accent);
+}
+
+#fac-view .fac-card-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--qf-text-heading);
+}
+
+#fac-view .fac-editing-badge {
+  padding: 2px 9px;
+  border-radius: var(--qf-radius-pill);
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--qf-warning);
+  background-color: var(--qf-warning-dim);
+}
+
+/* -------------------------------------------------------------------- form */
+
+#fac-view .fac-form {
+  padding: 18px;
+}
+
+#fac-view .fac-grid-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px 20px;
+}
+
+#fac-view .fac-grid-3 {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 16px 20px;
+  margin-top: 16px;
+}
+
+#fac-view .fac-grid-spaced {
+  margin-top: 16px;
+}
+
+#fac-view .fac-field {
+  min-width: 0;
+}
+
+/* Numeric fields get an explicit width rather than filling the row (rule 4). */
+#fac-view .fac-field-narrow {
+  max-width: 200px;
+}
+
+#fac-view .fac-label {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--qf-text-muted);
+}
+
+#fac-view .fac-optional {
+  font-weight: 400;
+  color: var(--qf-text-faint);
+}
+
+/* Rule 4: sunken background, or the field reads as "no input" on an
+   elevated card. */
+#fac-view .qf-input,
+#fac-view .qf-select {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 12px;
+  font-size: var(--qf-text-sm);
+  background-color: var(--qf-surface-sunken);
+  border: 1px solid var(--qf-border);
+  border-radius: var(--qf-radius-md);
+  color: var(--qf-text-primary);
+}
+
+#fac-view .qf-input.mono {
+  font-family: var(--qf-font-mono);
+}
+
+#fac-view .fac-form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid var(--qf-border-subtle);
+}
+
+/* ------------------------------------------------------------- info panels */
+
+#fac-view .fac-info {
+  margin-top: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+#fac-view .fac-panel {
+  padding: 13px 15px;
+  background-color: var(--qf-surface-sunken);
+  border: 1px solid var(--qf-border-subtle);
+  border-radius: var(--qf-radius-md);
+}
+
+#fac-view .fac-panel-title {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 10px;
+  font-size: 9.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--qf-text-faint);
+}
+
+#fac-view .fac-panel-note {
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--qf-accent);
+}
+
+#fac-view .fac-index-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 10px;
+}
+
+#fac-view .fac-index {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+#fac-view .fac-index-label {
+  font-size: 11px;
+  color: var(--qf-text-muted);
+}
+
+#fac-view .fac-index-value {
+  font-family: var(--qf-font-mono);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--qf-text-heading);
+}
+
+#fac-view .fac-index-empty {
+  font-size: 12px;
+  color: var(--qf-text-faint);
+}
+
+#fac-view .fac-bonus-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+}
+
+#fac-view .fac-bonus {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+#fac-view .fac-bonus-label {
+  font-size: 9.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--qf-text-faint);
+}
+
+#fac-view .fac-bonus-value {
+  font-family: var(--qf-font-mono);
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--qf-success);
+}
+
+/* A zero bonus is stated, not hidden - "no bonus here" is information. */
+#fac-view .fac-bonus.is-zero .fac-bonus-value {
+  color: var(--qf-text-faint);
+}
+
+#fac-view .fac-rig-list {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+
+#fac-view .fac-rig-row {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+#fac-view .fac-rig-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--qf-text-heading);
+}
+
+#fac-view .fac-rig-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+#fac-view .fac-rig-chip {
+  padding: 3px 8px;
+  border-radius: var(--qf-radius-sm);
+  background-color: var(--qf-surface);
+  border: 1px solid var(--qf-border);
+  font-size: 11px;
+  color: var(--qf-text-primary);
+}
+
+#fac-view .fac-rig-chip.is-empty {
+  color: var(--qf-text-faint);
+  font-style: italic;
+}
+
+/* ------------------------------------------------------------ facility list */
+
+#fac-view .fac-list-section {
+  margin-top: 22px;
+}
+
+#fac-view .fac-list-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+#fac-view .fac-list-head h2 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--qf-text-heading);
+}
+
+/* Pill, matching the mockup: surface fill, bordered, fully rounded. */
+#fac-view .fac-list-count {
+  padding: 2px 9px;
+  border-radius: var(--qf-radius-pill);
+  border: 1px solid var(--qf-border);
+  background-color: var(--qf-surface);
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--qf-text-faint);
+}
+
+#fac-view .fac-card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+  gap: 14px;
+}
+
+#fac-view .fac-facility-body {
+  padding: 15px 16px;
+}
+
+#fac-view .fac-facility-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+#fac-view .fac-facility-title-wrap {
+  min-width: 0;
+}
+
+/* `display: block` is load-bearing: an inline element does not ellipsis, and
+   this is rendered as a <span> so it can carry a hover title. */
+#fac-view .fac-facility-name {
+  display: block;
+  font-size: 14.5px;
+  font-weight: 700;
+  color: var(--qf-text-heading);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+#fac-view .fac-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 7px;
+}
+
+#fac-view .fac-badge {
+  padding: 3px 9px;
+  border-radius: var(--qf-radius-sm);
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  white-space: nowrap;
+}
+
+#fac-view .fac-badge-type {
+  color: var(--qf-text-muted);
+  background-color: var(--qf-surface);
+}
+
+#fac-view .fac-badge-usage {
+  color: var(--qf-accent);
+  background-color: var(--qf-accent-dim);
+}
+
+/* The single Default facility is the one every calculation falls back to, so
+   it is marked apart from the rest. */
+#fac-view .fac-badge-usage[data-usage="default"] {
+  color: var(--qf-gold, var(--qf-warning));
+  background-color: var(--qf-warning-dim);
+}
+
+#fac-view .fac-facility-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+#fac-view .btn-icon {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border-radius: var(--qf-radius-md);
+  border: 1px solid var(--qf-border);
+  background-color: var(--qf-surface);
+  color: var(--qf-text-muted);
+  cursor: pointer;
+}
+
+#fac-view .btn-icon:hover {
+  border-color: var(--qf-border-active);
+  color: var(--qf-text-primary);
+}
+
+#fac-view .btn-icon-danger:hover {
+  border-color: var(--qf-error);
+  color: var(--qf-error);
+}
+
+/* Armed state of the two-step delete. Both colour AND background are set in
+   each state so switching cannot leave a stale tint (rule 3). */
+#fac-view .btn-icon.is-armed {
+  border-color: var(--qf-error);
+  background-color: var(--qf-error-dim, rgba(255, 90, 90, 0.15));
+  color: var(--qf-error);
+}
+
+#fac-view .fac-facility-location {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 11px;
+  font-size: 12.5px;
+  color: var(--qf-text-muted);
+  min-width: 0;
+}
+
+#fac-view .fac-location-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#fac-view .fac-sec {
+  flex-shrink: 0;
+  padding: 1px 7px;
+  border-radius: var(--qf-radius-pill);
+  font-family: var(--qf-font-mono);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+#fac-view .fac-sec.is-high {
+  color: var(--qf-success);
+  background-color: var(--qf-success-dim);
+}
+
+#fac-view .fac-sec.is-low {
+  color: var(--qf-warning);
+  background-color: var(--qf-warning-dim);
+}
+
+#fac-view .fac-sec.is-null {
+  color: var(--qf-error);
+  background-color: var(--qf-error-dim, rgba(255, 90, 90, 0.15));
+}
+
+#fac-view .fac-facility-detail {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--qf-border-subtle);
+}
+
+#fac-view .fac-detail-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 12.5px;
+}
+
+#fac-view .fac-detail-row + .fac-detail-row,
+#fac-view .fac-detail-tax {
+  margin-top: 7px;
+}
+
+#fac-view .fac-detail-label {
+  color: var(--qf-text-muted);
+}
+
+#fac-view .fac-detail-value {
+  font-weight: 600;
+  color: var(--qf-accent);
+  text-align: right;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The structure's own bonuses. Rig bonuses are deliberately excluded - see
+   the renderer comment - so these read as a property of the building. */
+#fac-view .fac-bonus-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  margin-top: 9px;
+  cursor: help;
+}
+
+#fac-view .fac-bonus-chip {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+#fac-view .fac-bonus-chip-label {
+  font-size: 9.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--qf-text-faint);
+}
+
+#fac-view .fac-bonus-chip-value {
+  font-family: var(--qf-font-mono);
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--qf-success);
+}
+
+#fac-view .fac-bonus-chip.is-zero .fac-bonus-chip-value {
+  color: var(--qf-text-faint);
+}
+
+#fac-view .fac-rig-heading {
+  margin: 11px 0 6px;
+  font-size: 11px;
+  color: var(--qf-text-faint);
+}
+
+/* Installed rigs stack VERTICALLY. Rig names are long ("Standup L-Set
+   Advanced Material Efficiency II"), so side by side they either force the
+   card wide or wrap mid-name into unreadable fragments. */
+#fac-view .fac-rig-chip-row {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 5px;
+}
+
+#fac-view .fac-rig-chip-row .fac-rig-chip {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#fac-view .fac-station-note {
+  font-size: 12px;
+  color: var(--qf-text-faint);
+}
+
+/* ------------------------------------------------------------- empty state */
+
+#fac-view .fac-empty {
+  grid-column: 1 / -1;
+  padding: 44px 20px;
+  text-align: center;
+  background-color: var(--qf-surface-sunken);
+  border: 1px dashed var(--qf-border);
+  border-radius: var(--qf-radius-lg);
+}
+
+#fac-view .fac-empty-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--qf-text-heading);
+}
+
+#fac-view .fac-empty-text {
+  margin-top: 6px;
+  font-size: 12.5px;
+  color: var(--qf-text-muted);
+}

@@ -91,6 +91,13 @@ function createTables() {
   addColumnIfMissing('esi_call_status', 'ratelimit_group', 'TEXT');
   addColumnIfMissing('esi_call_status', 'ratelimit_reset_at', 'INTEGER');
   addColumnIfMissing('esi_call_status', 'retry_after_at', 'INTEGER');
+  // Conditional-request support. call_key is already the stable unique id for
+  // every logical ESI request in the app, so an ETag needs no new keying - just
+  // a column on the row that already exists.
+  addColumnIfMissing('esi_call_status', 'etag', 'TEXT');
+  // Tokens the last call consumed under the bucket limiter (4xx cost 5, vs 2
+  // for a success), so the cost of a failing endpoint is visible.
+  addColumnIfMissing('esi_call_status', 'ratelimit_used', 'INTEGER');
 
   console.log('[ESI Status] Database tables created successfully');
 }
@@ -295,6 +302,80 @@ function recordESICallSuccess(callKey, cacheExpiresAt = null, nextAllowedAt = nu
 }
 
 /**
+ * How long to refuse an endpoint after a failure.
+ *
+ * Without this, `next_allowed_at` was only ever set on SUCCESS, so a failing
+ * endpoint stayed permanently eligible and was re-tried on every background
+ * cycle. That is worst exactly where it hurts most: a 4xx costs 2.5x a success
+ * against ESI's rate bucket (see rateLimitTokenCost in esi-fetch.js) AND spends
+ * the app-wide error budget, so one permanently-broken endpoint - a revoked
+ * scope, a structure the character can no longer dock at - degrades every other
+ * caller indefinitely.
+ *
+ * Backoff is exponential in consecutive failures, and the ceiling depends on
+ * what kind of error it is:
+ *
+ *   4xx  - the request itself is wrong and will keep being wrong. Retrying
+ *          soon cannot help, so these back off hard (up to 6 hours).
+ *   5xx / network - ESI is unwell, not the request. These recover on their
+ *          own, so they back off gently (up to 15 minutes) and free.
+ *
+ * @param {string|number|null} errorCode
+ * @param {number} consecutiveErrors - failures in a row, including this one
+ * @returns {number} milliseconds to wait
+ */
+function errorBackoffMs(errorCode, consecutiveErrors) {
+  const code = parseInt(errorCode, 10);
+  const isClientError = Number.isFinite(code) && code >= 400 && code < 500;
+
+  // 420/429 are rate-limit responses; esi-fetch already honours Retry-After
+  // for those, so they are treated as transient here rather than punished.
+  const isRateLimit = code === 420 || code === 429;
+
+  const base = isClientError && !isRateLimit ? 5 * 60 * 1000 : 30 * 1000;
+  const ceiling = isClientError && !isRateLimit ? 6 * 60 * 60 * 1000 : 15 * 60 * 1000;
+
+  // Exponential, capped. `- 1` so the first failure waits `base`, not double.
+  const grown = base * Math.pow(2, Math.max(0, consecutiveErrors - 1));
+  return Math.min(grown, ceiling);
+}
+
+/**
+ * How many failures in a row this endpoint has had, including the one being
+ * recorded now.
+ *
+ * Derived from the history rather than a counter column: `error_count` is
+ * CUMULATIVE and never reset by a success, so using it would push a
+ * long-running endpoint to the backoff ceiling on the strength of failures it
+ * recovered from months ago. History is capped at 50 rows per endpoint, which
+ * bounds the scan and is far more streak than any sane backoff needs.
+ *
+ * @param {Object} database
+ * @param {string} callKey
+ * @returns {number} at least 1
+ */
+function consecutiveErrorCount(database, callKey) {
+  try {
+    const rows = database.prepare(`
+      SELECT status FROM esi_call_history
+      WHERE call_key = ?
+      ORDER BY timestamp DESC
+      LIMIT 20
+    `).all(callKey);
+
+    let streak = 1; // the failure being recorded now
+    for (const row of rows) {
+      if (row.status !== 'error') break;
+      streak += 1;
+    }
+    return streak;
+  } catch (error) {
+    // A failed count must not stop the failure being recorded.
+    return 1;
+  }
+}
+
+/**
  * Record a failed ESI call
  * @param {string} callKey - Unique identifier for the call
  * @param {string} errorMessage - Error message
@@ -307,16 +388,27 @@ function recordESICallError(callKey, errorMessage, errorCode = null, startTime =
     const now = Date.now();
     const duration = startTime ? now - startTime : null;
 
-    // Update status record
+    // Counted BEFORE this failure is inserted below, so the history scan sees
+    // the previous streak and this one is added explicitly.
+    const streak = consecutiveErrorCount(database, callKey);
+    const nextAllowedAt = now + errorBackoffMs(errorCode, streak);
+
+    // Update status record.
+    //
+    // `next_allowed_at` is the point of this: without it the endpoint stayed
+    // permanently eligible and every background cycle re-tried a call that
+    // could not succeed, spending rate-limit tokens and error budget that are
+    // shared with every other caller in the app.
     database.prepare(`
       UPDATE esi_call_status
       SET status = 'error',
           error_message = ?,
           error_code = ?,
           error_count = error_count + 1,
+          next_allowed_at = ?,
           updated_at = ?
       WHERE call_key = ?
-    `).run(errorMessage, errorCode, now, callKey);
+    `).run(errorMessage, errorCode, nextAllowedAt, now, callKey);
 
     // Add to history
     database.prepare(`
@@ -327,7 +419,11 @@ function recordESICallError(callKey, errorMessage, errorCode = null, startTime =
     // Cleanup old history (keep last 50 per endpoint)
     cleanupCallHistory(callKey);
 
-    console.log(`[ESI Status] Call failed: ${callKey} - ${errorMessage}`);
+    const waitMins = Math.round((nextAllowedAt - now) / 60000);
+    console.log(
+      `[ESI Status] Call failed: ${callKey} - ${errorMessage} ` +
+      `(failure ${streak}; next attempt in ${waitMins >= 1 ? `${waitMins}m` : '<1m'})`
+    );
   } catch (error) {
     console.error(`[ESI Status] Error recording call failure for ${callKey}:`, error);
   }
@@ -354,7 +450,8 @@ function recordRateLimit(callKey, rateLimit = {}) {
           ratelimit_limit = COALESCE(?, ratelimit_limit),
           ratelimit_group = COALESCE(?, ratelimit_group),
           ratelimit_reset_at = COALESCE(?, ratelimit_reset_at),
-          retry_after_at = COALESCE(?, retry_after_at)
+          retry_after_at = COALESCE(?, retry_after_at),
+          ratelimit_used = COALESCE(?, ratelimit_used)
       WHERE call_key = ?
     `).run(
       rateLimit.remaining ?? null,
@@ -362,10 +459,52 @@ function recordRateLimit(callKey, rateLimit = {}) {
       rateLimit.group ?? null,
       rateLimit.resetAt ?? null,
       rateLimit.retryAfterAt ?? null,
+      rateLimit.used ?? null,
       callKey
     );
   } catch (error) {
     console.error(`[ESI Status] Error recording rate limit for ${callKey}:`, error);
+  }
+}
+
+/**
+ * The stored ETag for a call, or null.
+ *
+ * ESI supports conditional requests: send this back as If-None-Match and an
+ * unchanged resource answers 304 with no body. Under the bucket limiter a 304
+ * costs 1 token instead of 2, transfers nothing, and (being 3xx) spends no
+ * error budget at all.
+ *
+ * @param {string} callKey
+ * @returns {string|null}
+ */
+function getETag(callKey) {
+  try {
+    const database = getDatabase();
+    const row = database.prepare(
+      'SELECT etag FROM esi_call_status WHERE call_key = ?'
+    ).get(callKey);
+    return row && row.etag ? row.etag : null;
+  } catch (error) {
+    // An ETag is an optimisation; a read failure must not break the fetch.
+    return null;
+  }
+}
+
+/**
+ * Store the ETag from a response.
+ * @param {string} callKey
+ * @param {string|null} etag
+ */
+function recordETag(callKey, etag) {
+  if (!etag) return;
+  try {
+    const database = getDatabase();
+    database.prepare(
+      'UPDATE esi_call_status SET etag = ? WHERE call_key = ?'
+    ).run(etag, callKey);
+  } catch (error) {
+    console.error(`[ESI Status] Error recording ETag for ${callKey}:`, error);
   }
 }
 
@@ -392,6 +531,65 @@ function canFetchEndpoint(callKey) {
     console.error(`[ESI Status] Error checking fetch eligibility for ${callKey}:`, error);
     // Fail open — don't block fetching because the status DB hiccuped.
     return true;
+  }
+}
+
+/**
+ * When the soonest-eligible endpoint of the given types becomes fetchable.
+ *
+ * Lets the background cycle schedule its next tick for the moment something
+ * is actually due, instead of running on a fixed period. A fixed period both
+ * delays fast endpoints (a 1-minute floor polled every 5) and beats against
+ * slow ones (a 5-minute floor polled every 5 wastes every other tick).
+ *
+ * `endpointTypes` MATTERS: most tracked endpoints are fetched on demand by
+ * their own screens (assets, market orders, skills...), not by the cycle.
+ * Without this filter the cycle would wake for endpoints it never fetches and
+ * immediately go back to sleep.
+ *
+ * Rows with a NULL next_allowed_at are IGNORED: those are placeholders that
+ * have never been fetched, and they carry no deadline to wait for. The cycle
+ * fetches them on its next pass whenever that lands - they do not need to pull
+ * the tick earlier, and treating them as overdue pinned the scheduler at its
+ * floor forever.
+ *
+ * @param {string[]} endpointTypes - endpoint_type values the caller fetches.
+ * @returns {number|null} epoch-ms of the soonest real deadline, or null when
+ *   none of those types has ever been fetched.
+ */
+function getNextEligibleAt(endpointTypes) {
+  if (!Array.isArray(endpointTypes) || endpointTypes.length === 0) return null;
+
+  try {
+    const database = getDatabase();
+    const placeholders = endpointTypes.map(() => '?').join(',');
+
+    // Only rows that have ACTUALLY been fetched carry a meaningful deadline.
+    //
+    // initializeCharacterEndpoints() inserts placeholder rows with status
+    // 'pending' and next_allowed_at NULL. Treating NULL as "due since epoch"
+    // made MIN() return 0 forever, pinning the scheduler at its floor - and
+    // permanently so, because a placeholder for an endpoint this cycle cannot
+    // fetch (no scope, no corp role) is never updated and stays NULL for good.
+    // Also ignore deadlines already in the PAST. Those are endpoints the cycle
+    // wants but cannot complete - a missing scope or corp role fails every
+    // attempt, and recordESICallError does not move next_allowed_at, so the
+    // deadline stays stale forever. Waking "when it is due" is meaningless for
+    // those; they are simply retried on whatever pass comes next.
+    const row = database.prepare(`
+      SELECT MIN(next_allowed_at) AS soonest, COUNT(*) AS tracked
+      FROM esi_call_status
+      WHERE endpoint_type IN (${placeholders})
+        AND next_allowed_at IS NOT NULL
+        AND next_allowed_at > ?
+    `).get(...endpointTypes, Date.now());
+
+    if (!row || !row.tracked || row.soonest == null) return null;
+    return row.soonest;
+  } catch (error) {
+    console.error('[ESI Status] Error finding next eligible endpoint:', error);
+    // Fail open: the caller falls back to its default cadence.
+    return null;
   }
 }
 
@@ -549,8 +747,10 @@ function getAggregatedStatus() {
       if (status.status === 'success') {
         successCount++;
       } else if (status.status === 'in_progress') {
+        // Counted for reporting, but NOT a warning. A call being in flight is
+        // normal operation - treating it as one made the footer flash amber
+        // every refresh cycle, which trains the user to ignore the indicator.
         inProgressCount++;
-        warningCount++;
       } else if (status.status === 'error') {
         errorCount++;
         // Check if error is recent (within last hour)
@@ -562,12 +762,13 @@ function getAggregatedStatus() {
       }
     }
 
-    // Determine overall status based on MOST RECENT calls only
+    // Determine overall status based on MOST RECENT calls only. In-progress
+    // calls deliberately do not colour this - only actual failures do.
     let overall = 'green';
     if (recentErrors > 0) {
       overall = 'red'; // Error: Recent errors (within last hour)
-    } else if (warningCount > 0 || inProgressCount > 0) {
-      overall = 'yellow'; // Warning: Old errors or calls in progress
+    } else if (warningCount > 0) {
+      overall = 'yellow'; // Warning: errors older than an hour
     }
 
     return {
@@ -653,7 +854,10 @@ module.exports = {
   recordESICallSuccess,
   recordESICallError,
   recordRateLimit,
+  getETag,
+  recordETag,
   canFetchEndpoint,
+  getNextEligibleAt,
   getEndpointFreshness,
   getESICallStatus,
   getAllCharacterCallStatuses,

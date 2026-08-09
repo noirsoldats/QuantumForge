@@ -1,0 +1,158 @@
+<!--
+  Reactions Calculator view markup.
+
+  NOT a standalone page - fetched and cloned by reactions-view-renderer.js and
+  mounted into the application shell's #view-host. Styling comes from
+  reactions-view.css.
+
+  Ported from "Reactions Calculator (1a).dc.html". Layout, top to bottom:
+    search (bare, NOT in a card - its dropdown must not be clipped)
+    reaction header card: name, produces/cycle time, runs + facility
+    facility bonuses strip
+    two columns: reaction chain | production time + raw materials
+    reaction costs & profitability, with the job cost breakdown
+-->
+<template id="reactions-view-template">
+<div id="rx-view" class="rx-view">
+
+  <!-- ============================= HEADER ============================= -->
+  <div class="rx-head">
+    <div class="rx-head-text">
+      <h1>Reactions Calculator</h1>
+      <p class="rx-subtitle">
+        Material requirements, time and cost for any reaction, including its
+        intermediate chains.
+      </p>
+    </div>
+    <div class="rx-head-market">
+      <span class="rx-market-label">Prices from</span>
+      <div class="rx-market-host" id="rx-market-host"></div>
+    </div>
+  </div>
+
+  <div class="rx-scroll qf-scroll">
+    <!-- Centred column, matching the mockup's max-width + gap. -->
+    <div class="rx-inner">
+
+      <!-- ============================ SEARCH ============================
+           Deliberately NOT wrapped in a card: the inline dropdown is
+           absolutely positioned, and a card's overflow:hidden clips it. -->
+      <div class="rx-search-host" id="rx-search-host"></div>
+
+      <!-- ========================= EMPTY STATE ========================= -->
+      <div class="rx-empty" id="rx-empty">
+        <div class="rx-empty-title">No reaction selected</div>
+        <div class="rx-empty-text">
+          Search for a reaction above to see its materials, time and cost.
+        </div>
+      </div>
+
+      <!-- =========================== RESULTS =========================== -->
+      <div class="rx-results" id="rx-results" hidden>
+
+        <!-- reaction header card -->
+        <section class="rx-card">
+          <div class="rx-card-accent"></div>
+          <div class="rx-setup">
+            <div class="rx-setup-identity">
+              <img class="rx-setup-icon" id="rx-reaction-icon" alt="">
+              <div class="rx-setup-text">
+                <h2 id="rx-reaction-name">—</h2>
+                <div class="rx-setup-meta">
+                  <span class="rx-meta-item" id="rx-reaction-product"></span>
+                  <span class="rx-meta-item" id="rx-reaction-cycle"></span>
+                </div>
+              </div>
+            </div>
+
+            <div class="rx-setup-controls">
+              <div class="rx-field">
+                <label class="rx-field-label" for="rx-runs">Reaction Runs</label>
+                <input type="number" class="qf-input mono rx-runs-input" id="rx-runs"
+                       min="1" step="1" value="1">
+              </div>
+              <div class="rx-field rx-field-facility">
+                <label class="rx-field-label" for="rx-facility-host">Refinery Facility</label>
+                <div id="rx-facility-host"></div>
+              </div>
+              <div class="rx-field rx-field-action">
+                <button type="button" class="btn btn-primary" id="rx-calculate">Calculate</button>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- facility bonuses: a single strip, not a card -->
+        <div class="rx-bonuses" id="rx-bonuses" hidden>
+          <span class="rx-bonuses-facility" id="rx-bonuses-facility"></span>
+          <span class="rx-bonuses-divider"></span>
+          <div class="rx-bonus-list" id="rx-bonus-list"></div>
+        </div>
+
+        <!-- loading -->
+        <div class="rx-loading" id="rx-loading" hidden>
+          <div class="rx-spinner" aria-hidden="true"></div>
+          <span>Calculating…</span>
+        </div>
+
+        <!-- output -->
+        <div class="rx-output" id="rx-output" hidden>
+
+          <div class="rx-two-col">
+            <!-- reaction chain -->
+            <section class="rx-card">
+              <div class="rx-card-accent"></div>
+              <header class="rx-card-head">
+                <span class="rx-card-title">Reaction Chain</span>
+                <span class="rx-card-note">expanded to raw materials</span>
+              </header>
+              <div class="rx-tree" id="rx-tree"></div>
+            </section>
+
+            <!-- right column: time, then raw materials -->
+            <div class="rx-side-col">
+              <section class="rx-card">
+                <div class="rx-card-accent"></div>
+                <header class="rx-card-head">
+                  <span class="rx-card-title">Production Time</span>
+                </header>
+                <div class="rx-time" id="rx-time"></div>
+              </section>
+
+              <section class="rx-card">
+                <div class="rx-card-accent"></div>
+                <header class="rx-card-head">
+                  <span class="rx-card-title">Total Raw Materials</span>
+                  <span class="rx-card-count" id="rx-materials-count">0</span>
+                </header>
+                <div class="rx-materials" id="rx-materials"></div>
+                <div class="rx-materials-total" id="rx-materials-total" hidden>
+                  <span class="rx-materials-total-label">Total Materials Cost</span>
+                  <span class="rx-materials-total-value mono" id="rx-materials-total-value">—</span>
+                </div>
+              </section>
+            </div>
+          </div>
+
+          <!-- pricing -->
+          <section class="rx-card" id="rx-pricing-card" hidden>
+            <div class="rx-card-accent"></div>
+            <header class="rx-card-head">
+              <span class="rx-card-title">Reaction Costs &amp; Profitability</span>
+            </header>
+
+            <div class="rx-pricing-cards" id="rx-pricing-cards"></div>
+
+            <div class="rx-jobcost" id="rx-jobcost">
+              <div class="rx-jobcost-title">Job Cost Breakdown</div>
+              <div class="rx-jobcost-rows" id="rx-jobcost-rows"></div>
+            </div>
+          </section>
+
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+</template>

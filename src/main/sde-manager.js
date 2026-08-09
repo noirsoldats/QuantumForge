@@ -314,7 +314,9 @@ async function downloadSDE(progressCallback = null) {
 
     console.log(`Downloading SDE ${version} from GitHub (${(downloadInfo.size / 1024 / 1024).toFixed(2)} MB)`);
 
-    // Download the database file directly (no compression)
+    // Download the database file directly (no compression). This overwrites
+    // the live file in place, so any cached handle must be dropped first.
+    releaseSdeHandles();
     await downloadFile(downloadInfo.url, sdeFilePath, progressCallback);
 
     // Save version and source
@@ -481,6 +483,53 @@ function getSdePath() {
 }
 
 /**
+ * Release any cached handle on the SDE file before it is written or deleted.
+ *
+ * blueprint-calculator keeps a shared read-only connection so that hot paths
+ * (invention lookups run once per blueprint) do not reopen the database
+ * hundreds of times. That handle must be dropped before the file is replaced:
+ * on Windows an open handle blocks the delete outright, and elsewhere it
+ * leaves readers on the old file.
+ *
+ * Required lazily and defensively - this must never be the reason an SDE
+ * update fails.
+ */
+function releaseSdeHandles() {
+  const calculator = (() => {
+    try {
+      return require('./blueprint-calculator');
+    } catch (error) {
+      console.error('Error loading the blueprint calculator:', error);
+      return null;
+    }
+  })();
+
+  if (!calculator) return;
+
+  try {
+    calculator.closeSharedDatabase();
+  } catch (error) {
+    console.error('Error releasing SDE handles:', error);
+  }
+
+  /*
+   * Drop the material-tree cache too.
+   *
+   * Its entries hold material requirements read from the SDE, and a new SDE
+   * can change them - so a cached tree computed against the old database
+   * would keep serving superseded quantities until FIFO eviction pushed it
+   * out. Cleared here rather than at each call site because this function
+   * already runs at every point the SDE file is written, deleted or
+   * restored, which is exactly the set of moments the cache goes stale.
+   */
+  try {
+    calculator.clearMaterialCache();
+  } catch (error) {
+    console.error('Error clearing the material cache:', error);
+  }
+}
+
+/**
  * Check if SDE database exists
  * @returns {boolean} True if database exists
  */
@@ -494,6 +543,7 @@ function sdeExists() {
  */
 function deleteSDE() {
   try {
+    releaseSdeHandles();
     if (fs.existsSync(sdeFilePath)) {
       fs.unlinkSync(sdeFilePath);
     }
@@ -546,6 +596,7 @@ function restorePreviousSDE() {
     }
 
     // Delete current SDE if it exists
+    releaseSdeHandles();
     if (fs.existsSync(sdeFilePath)) {
       fs.unlinkSync(sdeFilePath);
     }
@@ -690,6 +741,7 @@ async function downloadAndValidateSDE(progressCallback = null) {
     }
 
     // Delete current SDE if exists
+    releaseSdeHandles();
     if (fs.existsSync(sdeFilePath)) {
       fs.unlinkSync(sdeFilePath);
     }

@@ -8,6 +8,49 @@ const { getCharacterDatabase } = require('./character-database');
  * - description: Human-readable description
  * - up: Function to apply the migration
  * - down: Function to rollback the migration (optional)
+ *
+ * ============================================================================
+ * EVERY SCHEMA MIGRATION MUST MANAGE ITS OWN TRANSACTION.
+ * ============================================================================
+ *
+ * runSchemaMigrations() does NOT wrap `up()` in a transaction, and it cannot:
+ * every schema migration here already opens its own, and SQLite does not
+ * support nesting them.
+ *
+ * So a migration that writes schema MUST follow this shape:
+ *
+ *     up: (db) => {
+ *       // ...existence guards / idempotency checks first...
+ *       db.pragma('foreign_keys = OFF');        // only for table rebuilds
+ *       try {
+ *         db.exec(`
+ *           BEGIN TRANSACTION;
+ *           ...
+ *           COMMIT;
+ *         `);
+ *         db.pragma('foreign_keys = ON');
+ *       } catch (error) {
+ *         db.exec('ROLLBACK');
+ *         db.pragma('foreign_keys = ON');
+ *         throw error;
+ *       }
+ *     }
+ *
+ * Without it, a partial failure leaves the schema half-changed AND the
+ * migration recorded as applied, so it never retries - the worst outcome.
+ *
+ * The runner enforces the COMMIT half of this: if `up()` returns with a
+ * transaction still open, the migration is rolled back and fails loudly rather
+ * than being silently discarded at connection close.
+ *
+ * The ONE deliberate exception is `009_recalculate_plans_nested_reactions`: it
+ * is a DATA migration that calls recalculatePlanMaterials(), which opens its
+ * own transactions internally. Wrapping it would nest them.
+ *
+ * Sibling system: market-data.db has its own runner in
+ * market-schema-migrations.js, with INDEPENDENT numbering starting at 001. That
+ * one DOES wrap each migration in a transaction - do not copy this file's
+ * pattern there, or you will nest.
  */
 
 // Define all migrations here
@@ -1699,7 +1742,426 @@ const migrations = [
     down: (db) => {
       console.log('[Migration 024] Rollback not implemented (would require table recreation)');
     }
-  }
+  },
+  {
+    id: '025_node_last_market_price',
+    description: 'Move last_market_price onto plan_material_nodes so every market lock records it, not just locks on overridden items',
+    up: (db) => {
+      // WHY: last_market_price lived on plan_price_overrides, so a market lock
+      // could only record it when an override row already existed. That made
+      // the triple (price_each, last_market_price, price_frozen_at) incoherent:
+      // two lived on the node, one lived on a table that may not exist yet.
+      //
+      // Set an override on an item that had never been locked while overridden,
+      // then remove it, and there was no snapshot to revert to - price_each
+      // stayed at the override value until the next refresh.
+      //
+      // Moving it onto the node lets ANY lock record it, so a later override
+      // and its removal always revert correctly.
+      console.log('[Migration 025] Moving last_market_price onto plan_material_nodes...');
+
+      const tableExists = db.prepare(`
+        SELECT name FROM sqlite_master WHERE type='table' AND name='plan_material_nodes'
+      `).get();
+      if (!tableExists) {
+        console.log('[Migration 025] plan_material_nodes does not exist, skipping');
+        return;
+      }
+
+      const columns = db.prepare('PRAGMA table_info(plan_material_nodes)').all();
+      if (columns.some((c) => c.name === 'last_market_price')) {
+        console.log('[Migration 025] plan_material_nodes.last_market_price already exists, skipping');
+        return;
+      }
+
+      db.exec('ALTER TABLE plan_material_nodes ADD COLUMN last_market_price REAL');
+
+      // Backfill. Two cases, in order of trustworthiness:
+      //
+      //  1. An override row already holds a snapshot -> carry it across; it was
+      //     captured by a real lock.
+      //  2. No override exists for the node -> price_each IS the locked market
+      //     price, so it is a truthful snapshot.
+      //
+      // Nodes that are overridden but have no snapshot are deliberately left
+      // NULL: price_each is the override there, and copying it would fabricate
+      // a market price - the exact contamination this schema change prevents.
+      const overridesExist = db.prepare(`
+        SELECT name FROM sqlite_master WHERE type='table' AND name='plan_price_overrides'
+      `).get();
+
+      if (overridesExist) {
+        const carried = db.prepare(`
+          UPDATE plan_material_nodes
+          SET last_market_price = (
+            SELECT o.last_market_price
+            FROM plan_price_overrides o
+            WHERE o.plan_id = plan_material_nodes.plan_id
+              AND o.type_id = plan_material_nodes.type_id
+          )
+          WHERE EXISTS (
+            SELECT 1 FROM plan_price_overrides o
+            WHERE o.plan_id = plan_material_nodes.plan_id
+              AND o.type_id = plan_material_nodes.type_id
+              AND o.last_market_price IS NOT NULL
+          )
+        `).run();
+        console.log(`[Migration 025] Carried ${carried.changes} snapshot(s) from override rows`);
+
+        const seeded = db.prepare(`
+          UPDATE plan_material_nodes
+          SET last_market_price = price_each
+          WHERE last_market_price IS NULL
+            AND price_each IS NOT NULL
+            AND NOT EXISTS (
+              SELECT 1 FROM plan_price_overrides o
+              WHERE o.plan_id = plan_material_nodes.plan_id
+                AND o.type_id = plan_material_nodes.type_id
+            )
+        `).run();
+        console.log(`[Migration 025] Seeded ${seeded.changes} non-overridden node(s) from price_each`);
+      } else {
+        const seeded = db.prepare(`
+          UPDATE plan_material_nodes
+          SET last_market_price = price_each
+          WHERE price_each IS NOT NULL
+        `).run();
+        console.log(`[Migration 025] Seeded ${seeded.changes} node(s) from price_each`);
+      }
+
+      // ---- Validate the backfill BEFORE discarding the source column ----
+      //
+      // The old column is the only thing that could recover from a bad
+      // backfill, so it is not dropped until the new one is proven correct.
+      // Throwing here leaves the new column populated and the old one intact -
+      // the migration is not marked applied, so it retries on next launch.
+      if (overridesExist) {
+        const mismatched = db.prepare(`
+          SELECT COUNT(*) AS n
+          FROM plan_material_nodes n
+          JOIN plan_price_overrides o
+            ON o.plan_id = n.plan_id AND o.type_id = n.type_id
+          WHERE o.last_market_price IS NOT NULL
+            AND (n.last_market_price IS NULL
+                 OR n.last_market_price != o.last_market_price)
+        `).get().n;
+
+        if (mismatched > 0) {
+          throw new Error(
+            `[Migration 025] Backfill validation failed: ${mismatched} node(s) do not match ` +
+            'their override snapshot. Aborting before the old column is dropped.'
+          );
+        }
+
+        // Every non-overridden node must carry a snapshot, since price_each IS
+        // its locked market price. A gap here means the seed pass missed rows.
+        const unseeded = db.prepare(`
+          SELECT COUNT(*) AS n
+          FROM plan_material_nodes n
+          WHERE n.last_market_price IS NULL
+            AND n.price_each IS NOT NULL
+            AND NOT EXISTS (
+              SELECT 1 FROM plan_price_overrides o
+              WHERE o.plan_id = n.plan_id AND o.type_id = n.type_id
+            )
+        `).get().n;
+
+        if (unseeded > 0) {
+          throw new Error(
+            `[Migration 025] Backfill validation failed: ${unseeded} non-overridden node(s) ` +
+            'have no market snapshot. Aborting before the old column is dropped.'
+          );
+        }
+
+        console.log('[Migration 025] Backfill validated');
+
+        // ---- Drop the superseded column ----
+        //
+        // SQLite cannot DROP COLUMN on a table with a composite primary key, so
+        // this is the table-rebuild pattern from migrations 001/005/024.
+        //
+        // NOTE: the character migration runner does NOT wrap migrations in a
+        // transaction (unlike the market one), so this manages its own.
+        //
+        // foreign_keys is toggled defensively rather than out of necessity:
+        // nothing currently REFERENCES plan_price_overrides (it only points
+        // outward at manufacturing_plans), so the DROP cannot cascade. Kept for
+        // consistency with the other rebuilds, and so adding an inbound FK
+        // later does not quietly make this unsafe.
+        const ovColumns = db.prepare('PRAGMA table_info(plan_price_overrides)').all();
+        if (ovColumns.some((c) => c.name === 'last_market_price')) {
+          console.log('[Migration 025] Dropping superseded plan_price_overrides.last_market_price...');
+
+          const before = db.prepare('SELECT COUNT(*) AS n FROM plan_price_overrides').get().n;
+
+          db.pragma('foreign_keys = OFF');
+          try {
+            db.exec(`
+              BEGIN TRANSACTION;
+
+              CREATE TABLE plan_price_overrides_new (
+                plan_id TEXT NOT NULL,
+                type_id INTEGER NOT NULL,
+                price REAL NOT NULL,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                PRIMARY KEY (plan_id, type_id),
+                FOREIGN KEY (plan_id) REFERENCES manufacturing_plans(plan_id) ON DELETE CASCADE
+              );
+
+              INSERT INTO plan_price_overrides_new
+                (plan_id, type_id, price, created_at, updated_at)
+              SELECT plan_id, type_id, price, created_at, updated_at
+              FROM plan_price_overrides;
+
+              DROP TABLE plan_price_overrides;
+              ALTER TABLE plan_price_overrides_new RENAME TO plan_price_overrides;
+
+              CREATE INDEX IF NOT EXISTS idx_plan_price_overrides_plan
+                ON plan_price_overrides(plan_id);
+
+              COMMIT;
+            `);
+            db.pragma('foreign_keys = ON');
+          } catch (error) {
+            db.exec('ROLLBACK');
+            db.pragma('foreign_keys = ON');
+            console.error('[Migration 025] Table rebuild failed:', error);
+            throw error;
+          }
+
+          const after = db.prepare('SELECT COUNT(*) AS n FROM plan_price_overrides').get().n;
+          if (after !== before) {
+            throw new Error(
+              `[Migration 025] Row count changed during rebuild (${before} -> ${after}); aborting.`
+            );
+          }
+          console.log(`[Migration 025] Rebuilt plan_price_overrides without the snapshot column (${after} row(s) preserved)`);
+        }
+      }
+
+      console.log('[Migration 025] Complete');
+    },
+    down: () => {
+      console.log('[Migration 025] Rollback not implemented (would require table recreation)');
+    }
+  },
+  {
+    id: '026_blueprint_sources',
+    description: 'Separate "use blueprints from" sources (characters + corp divisions) from the existing asset sources',
+    up: (db) => {
+      // WHY: blueprint ME/TE resolution read every blueprint row filed under a
+      // character, which includes CORP blueprints (same character_id, with
+      // is_corporation = 1). Nothing filtered them, so a corp BPO could - and
+      // did - silently override a personal blueprint's ME.
+      //
+      // Assets already have per-character + per-division opt-in. Blueprints get
+      // the same treatment, but as a SEPARATE axis: a corp may keep BPOs in a
+      // library division while materials live in a production division, so
+      // enabling one must not implicitly enable the other.
+      //
+      // Backfill policy - reproduce TODAY's behaviour exactly, nothing wider:
+      //
+      //   global characters -> ONLY accounts.defaultCharacterId. The Blueprint
+      //       Calculator resolves ME via esi.getDefaultCharacter(), the single
+      //       app-level default. There is exactly one.
+      //   plan characters   -> ONLY that plan's own character_id. Plan
+      //       intermediates resolve against the plan's owning character.
+      //   divisions         -> EMPTY everywhere. Corp blueprints become opt-in.
+      //
+      // NOT industry.defaultManufacturingCharacters. That list governs ASSETS
+      // and has never been a factor in blueprint ME resolution; seeding from it
+      // would silently widen blueprint sources beyond what the app does today.
+      db.exec('BEGIN TRANSACTION');
+      try {
+        const characterCols = db.prepare('PRAGMA table_info(character_settings)').all();
+        const hasCharacterCol = (name) => characterCols.some((c) => c.name === name);
+
+        if (!hasCharacterCol('use_blueprints_from')) {
+          db.exec(`
+            ALTER TABLE character_settings
+              ADD COLUMN use_blueprints_from INTEGER NOT NULL DEFAULT 0
+          `);
+        }
+        if (!hasCharacterCol('blueprint_enabled_divisions')) {
+          db.exec(`
+            ALTER TABLE character_settings
+              ADD COLUMN blueprint_enabled_divisions TEXT NOT NULL DEFAULT '[]'
+          `);
+        }
+
+        const planCols = db.prepare('PRAGMA table_info(plan_industry_settings)').all();
+        const hasPlanCol = (name) => planCols.some((c) => c.name === name);
+
+        if (!hasPlanCol('blueprint_characters_json')) {
+          db.exec(`
+            ALTER TABLE plan_industry_settings
+              ADD COLUMN blueprint_characters_json TEXT NOT NULL DEFAULT '[]'
+          `);
+        }
+        if (!hasPlanCol('blueprint_enabled_divisions_json')) {
+          db.exec(`
+            ALTER TABLE plan_industry_settings
+              ADD COLUMN blueprint_enabled_divisions_json TEXT NOT NULL DEFAULT '{}'
+          `);
+        }
+
+        // --- backfill: the app-level default character ---
+        //
+        // accounts.defaultCharacterId lives in quantum_config.json, not this
+        // database, so it is read through settings-manager. A failure to read
+        // it must not fail the migration: the columns are already correct and
+        // default to "off", and the user can tick the box. Losing the whole
+        // schema change over a config read would be worse.
+        let seededCharacters = 0;
+        try {
+          const { loadSettings } = require('./settings-manager');
+          const settings = loadSettings();
+          const defaultCharacterId = settings
+            && settings.accounts
+            && settings.accounts.defaultCharacterId;
+
+          if (defaultCharacterId) {
+            // Only a row that already exists - character_settings is created on
+            // demand, so an absent row correctly inherits the "off" default.
+            seededCharacters = db.prepare(`
+              UPDATE character_settings
+                 SET use_blueprints_from = 1
+               WHERE character_id = ?
+            `).run(defaultCharacterId).changes;
+
+            if (seededCharacters === 0) {
+              console.log(
+                `[Migration 026] Default character ${defaultCharacterId} has no ` +
+                'character_settings row yet; it will default to opted-out.'
+              );
+            }
+          } else {
+            // Distinct from the catch below: nothing to seed is a normal state
+            // (no default character chosen), a failed read is not. They looked
+            // identical in the logs before.
+            console.log(
+              '[Migration 026] No default character configured; no blueprint ' +
+              'sources seeded.'
+            );
+          }
+        } catch (error) {
+          console.error(
+            '[Migration 026] Could not read accounts.defaultCharacterId; ' +
+            'leaving every character opted out of blueprint sources:',
+            error
+          );
+        }
+
+        // --- backfill: each plan's own owning character ---
+        // Plan intermediates resolve against plan.character_id, so each plan
+        // seeds from ITSELF - not from the global default, and not from that
+        // plan's ASSET character list.
+        const seededPlans = db.prepare(`
+          UPDATE plan_industry_settings
+             SET blueprint_characters_json = (
+                   SELECT json_array(mp.character_id)
+                     FROM manufacturing_plans mp
+                    WHERE mp.plan_id = plan_industry_settings.plan_id
+                 )
+           WHERE EXISTS (
+                   SELECT 1
+                     FROM manufacturing_plans mp
+                    WHERE mp.plan_id = plan_industry_settings.plan_id
+                      AND mp.character_id IS NOT NULL
+                 )
+        `).run().changes;
+
+        db.exec('COMMIT');
+
+        console.log(
+          `[Migration 026] Blueprint sources added ` +
+          `(default character seeded: ${seededCharacters === 1 ? 'yes' : 'no'}, ` +
+          `${seededPlans} plan(s) seeded from their owning character). ` +
+          `Corp divisions start empty by design.`
+        );
+      } catch (error) {
+        db.exec('ROLLBACK');
+        console.error('[Migration 026] Migration failed:', error);
+        throw error;
+      }
+    },
+    down: () => {
+      console.log('[Migration 026] Rollback not implemented (SQLite cannot drop columns in place)');
+    }
+  },
+  {
+    id: '027_resolved_structures_cache',
+    description: 'Persist player-structure names across sessions, with a separate backoff for access-denied lookups',
+    up: (db) => {
+      // WHY: structure names were cached IN MEMORY only (esi-structures.js), so
+      // every launch re-attempted every structure from scratch. For structures
+      // the character cannot dock at, ESI answers 403 - and 4xx responses count
+      // against ESI's application-wide error limit (100 non-2xx/3xx per minute,
+      // after which ESI returns 420 for EVERY route). A user with assets spread
+      // across many inaccessible structures burned the budget on every launch
+      // and took unrelated background calls down with them.
+      //
+      // Two different TTLs, deliberately in two columns:
+      //
+      //   resolved_at    a NAME. Structures get renamed, and a stale name shown
+      //                  as fact is worse than a brief unknown - so 24h.
+      //   denied_at      an ACCESS FACT. This changes when docking rights
+      //                  change, not when the owner renames the structure, so
+      //                  it holds far longer (7 days). Giving denials the same
+      //                  24h TTL would restore the daily 403 burst this
+      //                  migration exists to stop.
+      //
+      // The TTLs live in esi-structures.js, not here - this table only records
+      // WHEN each thing happened. A manual refresh overrides both.
+      //
+      // NPC stations are deliberately absent: they resolve from the SDE
+      // (staStations) and never call ESI, so caching them would save nothing.
+      // Only >= 1 trillion Upwell structures are stored.
+      db.exec('BEGIN TRANSACTION');
+      try {
+        db.exec(`
+          CREATE TABLE IF NOT EXISTS resolved_structures (
+            structure_id    INTEGER PRIMARY KEY,
+            name            TEXT,
+            solar_system_id INTEGER,
+            type_id         INTEGER,
+            -- When a successful name lookup landed (NULL if never resolved).
+            resolved_at     INTEGER,
+            -- When ESI last refused access (NULL if never denied). Set on 403
+            -- and on a budget refusal, cleared by a successful resolve.
+            denied_at       INTEGER,
+            -- Which character the last successful lookup authenticated as.
+            -- Access is per-character, so this records who could see it.
+            resolved_by     INTEGER,
+            updated_at      INTEGER NOT NULL
+          )
+        `);
+
+        // Lookups are by primary key; these two support the sweep that finds
+        // entries eligible for re-resolution.
+        db.exec(`
+          CREATE INDEX IF NOT EXISTS idx_resolved_structures_resolved_at
+            ON resolved_structures(resolved_at)
+        `);
+        db.exec(`
+          CREATE INDEX IF NOT EXISTS idx_resolved_structures_denied_at
+            ON resolved_structures(denied_at)
+        `);
+
+        db.exec('COMMIT');
+        console.log('[Migration 027] Created resolved_structures cache table');
+      } catch (error) {
+        db.exec('ROLLBACK');
+        console.error('[Migration 027] Migration failed:', error);
+        throw error;
+      }
+    },
+    down: (db) => {
+      db.exec('DROP TABLE IF EXISTS resolved_structures');
+      console.log('[Migration 027] Dropped resolved_structures');
+    }
+  },
   // Add future migrations here
 ];
 
@@ -1801,11 +2263,34 @@ async function runSchemaMigrations() {
         // Run the migration
         await migration.up(db);
 
+        // A schema migration MUST leave no transaction open. If one is still
+        // in flight here the migration forgot to COMMIT, and everything it did
+        // would be silently rolled back when the connection closes - the app
+        // would then run against the OLD schema while the migration is recorded
+        // as applied. Roll back explicitly and fail loudly instead.
+        if (db.inTransaction) {
+          db.exec('ROLLBACK');
+          throw new Error(
+            `Migration ${migration.id} left a transaction open (missing COMMIT). ` +
+            'Rolled back; no changes were applied.'
+          );
+        }
+
         // Mark as applied
         markMigrationApplied(db, migration.id, migration.description);
 
         console.log(`[Schema Migrations] Migration ${migration.id} completed successfully`);
       } catch (error) {
+        // Defensive: a migration that threw mid-transaction without its own
+        // ROLLBACK would otherwise leave the connection wedged.
+        if (db.inTransaction) {
+          try {
+            db.exec('ROLLBACK');
+            console.error(`[Schema Migrations] Rolled back open transaction from ${migration.id}`);
+          } catch (rollbackError) {
+            console.error('[Schema Migrations] Rollback failed:', rollbackError);
+          }
+        }
         console.error(`[Schema Migrations] Migration ${migration.id} failed:`, error);
         throw new Error(`Migration ${migration.id} failed: ${error.message}`);
       }

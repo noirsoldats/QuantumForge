@@ -293,6 +293,13 @@
   "character_settings": {
     "columns": [
       {
+        "name": "blueprint_enabled_divisions",
+        "type": "TEXT",
+        "notnull": 1,
+        "dflt_value": "'[]'",
+        "pk": 0
+      },
+      {
         "name": "character_id",
         "type": "INTEGER",
         "notnull": 0,
@@ -325,6 +332,13 @@
         "type": "TEXT",
         "notnull": 1,
         "dflt_value": "'[]'",
+        "pk": 0
+      },
+      {
+        "name": "use_blueprints_from",
+        "type": "INTEGER",
+        "notnull": 1,
+        "dflt_value": "0",
         "pk": 0
       }
     ],
@@ -1168,6 +1182,20 @@
   "plan_industry_settings": {
     "columns": [
       {
+        "name": "blueprint_characters_json",
+        "type": "TEXT",
+        "notnull": 1,
+        "dflt_value": "'[]'",
+        "pk": 0
+      },
+      {
+        "name": "blueprint_enabled_divisions_json",
+        "type": "TEXT",
+        "notnull": 1,
+        "dflt_value": "'{}'",
+        "pk": 0
+      },
+      {
         "name": "default_characters_json",
         "type": "TEXT",
         "notnull": 1,
@@ -1469,6 +1497,13 @@
         "pk": 0
       },
       {
+        "name": "last_market_price",
+        "type": "REAL",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0
+      },
+      {
         "name": "me_level",
         "type": "INTEGER",
         "notnull": 0,
@@ -1624,13 +1659,6 @@
         "pk": 0
       },
       {
-        "name": "last_market_price",
-        "type": "REAL",
-        "notnull": 0,
-        "dflt_value": null,
-        "pk": 0
-      },
-      {
         "name": "plan_id",
         "type": "TEXT",
         "notnull": 1,
@@ -1769,6 +1797,82 @@
         "unique": 0,
         "columns": [
           "status"
+        ]
+      }
+    ]
+  },
+  "resolved_structures": {
+    "columns": [
+      {
+        "name": "denied_at",
+        "type": "INTEGER",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0
+      },
+      {
+        "name": "name",
+        "type": "TEXT",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0
+      },
+      {
+        "name": "resolved_at",
+        "type": "INTEGER",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0
+      },
+      {
+        "name": "resolved_by",
+        "type": "INTEGER",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0
+      },
+      {
+        "name": "solar_system_id",
+        "type": "INTEGER",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0
+      },
+      {
+        "name": "structure_id",
+        "type": "INTEGER",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 1
+      },
+      {
+        "name": "type_id",
+        "type": "INTEGER",
+        "notnull": 0,
+        "dflt_value": null,
+        "pk": 0
+      },
+      {
+        "name": "updated_at",
+        "type": "INTEGER",
+        "notnull": 1,
+        "dflt_value": null,
+        "pk": 0
+      }
+    ],
+    "indexes": [
+      {
+        "name": "idx_resolved_structures_denied_at",
+        "unique": 0,
+        "columns": [
+          "denied_at"
+        ]
+      },
+      {
+        "name": "idx_resolved_structures_resolved_at",
+        "unique": 0,
+        "columns": [
+          "resolved_at"
         ]
       }
     ]

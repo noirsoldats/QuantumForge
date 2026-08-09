@@ -1,0 +1,158 @@
+<!--
+  Facilities Manager view markup.
+
+  NOT a standalone page - fetched and cloned by facilities-view-renderer.js and
+  mounted into the application shell's #view-host. Styling comes from
+  facilities-view.css.
+
+  Ported from "Facilities Manager (1a).dc.html": an add/edit form card with
+  live cost-index, structure-bonus and rig-effect panels, above a grid of
+  configured facility cards.
+-->
+<template id="facilities-view-template">
+<div id="fac-view" class="fac-view">
+
+  <!-- ============================ HEADER ============================ -->
+  <div class="fac-head">
+    <div class="fac-head-text">
+      <h1>Facilities Manager</h1>
+      <p class="fac-subtitle">
+        Structures and stations available to your industry jobs. Bonuses here
+        feed every manufacturing calculation.
+      </p>
+    </div>
+    <div class="fac-count">
+      <span class="fac-count-value" id="fac-count">0</span>
+      <span class="fac-count-label">Facilities</span>
+    </div>
+  </div>
+
+  <div class="fac-scroll qf-scroll">
+
+    <!-- ========================= ADD / EDIT ========================= -->
+    <section class="fac-card fac-form-card" id="fac-form-card">
+      <div class="fac-card-accent"></div>
+
+      <header class="fac-card-head">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+             stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M3 21V9l7-4v4l7-4v16z"></path>
+          <line x1="10" y1="9" x2="10" y2="13"></line>
+          <line x1="14" y1="9" x2="14" y2="13"></line>
+        </svg>
+        <span class="fac-card-title" id="fac-form-title">Add Facility</span>
+        <span class="fac-editing-badge" id="fac-editing-badge" hidden>Editing</span>
+      </header>
+
+      <form class="fac-form" id="fac-form" novalidate>
+        <div class="fac-grid-2">
+          <div class="fac-field">
+            <label class="fac-label" for="fac-usage-host">Facility Usage</label>
+            <div id="fac-usage-host"></div>
+          </div>
+          <div class="fac-field">
+            <label class="fac-label" for="fac-name">Facility Name</label>
+            <input type="text" class="qf-input" id="fac-name" placeholder="Enter facility name"
+                   autocomplete="off">
+          </div>
+          <div class="fac-field">
+            <label class="fac-label" for="fac-type">Facility Type</label>
+            <select class="qf-select" id="fac-type">
+              <option value="station">NPC Station</option>
+              <option value="structure">Player Structure</option>
+            </select>
+          </div>
+          <div class="fac-field">
+            <label class="fac-label" for="fac-region-host">Region</label>
+            <div id="fac-region-host"></div>
+          </div>
+          <div class="fac-field">
+            <label class="fac-label" for="fac-system-host">Solar System</label>
+            <div id="fac-system-host"></div>
+          </div>
+          <div class="fac-field" id="fac-structure-field" hidden>
+            <label class="fac-label" for="fac-structure">Structure Type</label>
+            <!-- A plain select, not QFSearchSelect: five fixed options, and
+                 <optgroup> gives the non-selectable category headers for
+                 free (binding rule 5). -->
+            <select class="qf-select" id="fac-structure"></select>
+          </div>
+        </div>
+
+        <!-- Structure-only: rigs and owner tax. -->
+        <div id="fac-structure-extras" hidden>
+          <div class="fac-grid-3">
+            <div class="fac-field">
+              <label class="fac-label" for="fac-rig1-host">
+                Rig Slot 1 <span class="fac-optional">(Optional)</span>
+              </label>
+              <div id="fac-rig1-host"></div>
+            </div>
+            <div class="fac-field">
+              <label class="fac-label" for="fac-rig2-host">
+                Rig Slot 2 <span class="fac-optional">(Optional)</span>
+              </label>
+              <div id="fac-rig2-host"></div>
+            </div>
+            <div class="fac-field">
+              <label class="fac-label" for="fac-rig3-host">
+                Rig Slot 3 <span class="fac-optional">(Optional)</span>
+              </label>
+              <div id="fac-rig3-host"></div>
+            </div>
+          </div>
+
+          <div class="fac-grid-2 fac-grid-spaced">
+            <div class="fac-field fac-field-narrow">
+              <label class="fac-label" for="fac-tax">
+                Facility Tax (%) <span class="fac-optional">— set by structure owner</span>
+              </label>
+              <input type="number" class="qf-input mono" id="fac-tax"
+                     min="0" max="100" step="0.01" placeholder="0.00">
+            </div>
+          </div>
+        </div>
+
+        <!-- ---------------------- live info panels ---------------------- -->
+        <div class="fac-info" id="fac-info" hidden>
+
+          <div class="fac-panel" id="fac-cost-panel" hidden>
+            <div class="fac-panel-title">System Cost Indices</div>
+            <div class="fac-index-grid" id="fac-cost-indices"></div>
+          </div>
+
+          <div class="fac-panel" id="fac-bonus-panel" hidden>
+            <div class="fac-panel-title">
+              Structure Bonuses
+              <span class="fac-panel-note" id="fac-structure-name"></span>
+            </div>
+            <div class="fac-bonus-grid" id="fac-bonuses"></div>
+          </div>
+
+          <div class="fac-panel" id="fac-rig-panel" hidden>
+            <div class="fac-panel-title">Rig Effects</div>
+            <div class="fac-rig-list" id="fac-rig-effects"></div>
+          </div>
+
+        </div>
+
+        <footer class="fac-form-actions">
+          <button type="button" class="btn btn-secondary" id="fac-clear">Clear</button>
+          <button type="submit" class="btn btn-primary" id="fac-submit">Add Facility</button>
+        </footer>
+      </form>
+    </section>
+
+    <!-- ======================= CONFIGURED LIST ======================= -->
+    <section class="fac-list-section">
+      <header class="fac-list-head">
+        <h2>Manufacturing Facilities</h2>
+        <span class="fac-list-count" id="fac-list-count">0</span>
+      </header>
+
+      <div class="fac-card-grid" id="fac-list"></div>
+    </section>
+
+  </div>
+</div>
+</template>

@@ -199,6 +199,62 @@ Secondary windows are separate BrowserWindow instances (Settings, Skills, Bluepr
 2. Expose in `src/preload/preload.js`: Add method to appropriate namespace in `electronAPI`
 3. Call from renderer: `await window.electronAPI.namespace.action(args)`
 
+### Calling an existing IPC method — check the contract, don't infer it
+
+**Before calling any `electronAPI` method, read the handler's parameter list and
+the destructure it performs.** IPC is untyped and silent: a wrong argument
+position or a misspelled payload key throws nothing, logs nothing, and leaves a
+`undefined` where a real value belonged. Every instance below shipped, and
+every one was invisible until someone read the handler.
+
+Three things to verify, in this order:
+
+**1. Positional vs. object.** Some methods take positional arguments, not a
+config object. `plans.create(characterId, planName, description)` is
+positional — passing `{ name }` puts the object in the `characterId` slot,
+drops the name, and creates a plan against a nonsense owner under an
+auto-generated name. It still "succeeds".
+
+**2. Payload keys must match the destructure exactly.**
+`addBlueprintToPlan` destructures `{ blueprintTypeId, runs, lines, meLevel,
+teLevel, facilityId, facilitySnapshot }`. Anything else is dropped on the
+floor:
+
+```js
+// WRONG - none of these three keys are read
+{ productionLines: 3, materialEfficiency: 10, timeEfficiency: 20 }
+// RIGHT
+{ lines: 3, meLevel: 10, teLevel: 20 }
+```
+
+`productionLines` cost Manufacturing Plans its Production Lines input — the
+user's value was discarded and every blueprint went in on one line.
+`materialEfficiency` meant every blueprint added from Manufacturing Summary
+carried an **undefined ME**.
+
+**3. Filter arguments are not optional just because they can be omitted.**
+`plans.getAll(characterId)` filters on `character_id`. Calling `getAll()` with
+no argument returns an empty list, so a plan dropdown shows nothing and reads
+as "no plans exist".
+
+**Return shapes count too.** `loot:getCharacterSkills` returns an ENVELOPE —
+`{ found, skills }` — not the map. `cleanupTool:refreshAssets` reports
+per-character failures in `errors[]` and leaves `success: true`, so checking
+`success === false` alone silently swallows them.
+
+**Test mocks must mirror the real signature.** Every bug above survived a green
+suite because the mock accepted whatever the renderer happened to send:
+
+```js
+// WRONG - accepts any shape, so the assertion enshrines the bug
+create: async (data) => { calls.push({ data }); return { planId: 'p1' }; }
+// RIGHT - the real signature; a wrong call now fails loudly
+create: async (characterId, planName, description) => { ... }
+```
+
+This is the same failure mode as inventing fixture column types or database
+mock shapes (see **Mock Patterns** below), applied to the IPC boundary.
+
 ### Querying SDE Data
 
 Always check if SDE exists before querying:
@@ -266,10 +322,11 @@ Use appropriate database library based on module context.
    - Visual progress bars for completion tracking
 
 5. **Auto-Refresh**:
-   - Background refresh every 15 minutes for active plans only
-   - Fetches latest ESI industry jobs and wallet transactions
-   - Silent updates with console logging
-   - Manual refresh button available in Analytics tab
+   - Open plans re-match every 5 minutes against already-fetched ESI data (no network call)
+   - ESI fetching itself is driven by the main-process background cycle
+     (`esi-background-refresh.js`), not this timer
+   - Only the Jobs and Transactions tabs are reloaded; other tabs are not refreshed
+   - Manual refresh button available in Analytics tab (does an explicit fetch + match)
 
 **UI Tabs** (`public/manufacturing-plans.html`, `src/renderer/manufacturing-plans-renderer.js`):
 - **Overview**: Summary stats (material cost, product value, profit, ROI), plan description
@@ -294,6 +351,174 @@ Use appropriate database library based on module context.
 3. Apply pricing method (VWAP/percentile/historical/hybrid/immediate)
 4. Apply price modifiers from market settings
 5. Return price with confidence indicator and metadata
+
+## UI Redesign Conventions
+
+Binding rules for the UI overhaul (porting the `Quantum Forge UI Redesign/` mockups). Each one
+cost real debugging time in the mockup project — treat them as non-negotiable, not stylistic
+preferences.
+
+### 1. Row highlights use `box-shadow` only — never a toggled background
+
+A `background-color` set on a row highlighted on its **first paint** does not clear reliably; the
+inline-style diff leaves the tint stuck even when the next style sets `transparent`. `box-shadow`
+toggles cleanly.
+
+```css
+/* on  */ box-shadow: inset 0 0 0 200px var(--qf-accent-dim), inset 3px 0 0 var(--qf-accent);
+/* off */ box-shadow: none;
+```
+
+Keep `background-color: transparent` constant in the base. Never drive a row highlight with a
+toggled `background` / `background-color`.
+
+### 2. Keyboard-combobox highlight index lives on a plain instance field
+
+Keep the moving highlight index on an instance field (`this.hiIndex`), mutate it synchronously in
+the handler, then **move the highlight in place — never re-render the list** (see 2a).
+**Start it at `-1`** so no row is highlighted on first paint — a row hot on first paint is exactly
+what triggers rule 1. Reset to `-1` on open, close, query change, and select.
+
+Standard contract to replicate everywhere: ↑/↓ move (first press opens and selects row 0), Enter
+confirms the highlighted row (opens first if closed), Esc closes, mouse hover syncs the index.
+
+### 2a. Moving the highlight must NOT rebuild the rows
+
+**A `mouseenter` handler that re-renders the list makes the list unclickable by mouse.** A click
+requires mousedown *and* mouseup on the same element, and `mouseenter` always fires first — so
+rebuilding the rows destroys the element the mousedown landed on and the browser never delivers
+the click. Keyboard selection keeps working, which is why this hides easily.
+
+Toggle the class on the existing elements instead, and scroll the active row into view:
+
+```js
+function moveComboHighlight(host, index) {
+  const rows = [...host.querySelectorAll('.combo-row')];
+  rows.forEach((row, i) => {
+    const on = i === index;
+    row.classList.toggle('is-hi', on);
+    row.setAttribute('aria-selected', on ? 'true' : 'false');
+  });
+  rows[index]?.scrollIntoView({ block: 'nearest' });
+}
+```
+
+Applies to **both** hover and ↑/↓ — a full re-render on arrow keys also discards scroll position
+and every row listener for no benefit. Only rebuild when the row *set* changes (new query, new
+results), never when only the selection moves.
+
+`QFSearchSelect` already does this correctly (`_syncHighlight` + `_scrollHighlightIntoView`);
+it is the reference. Testing note: assert **element identity across the hover**
+(`after[0] === before[0]`), not just that the class moved — re-querying the DOM after a rebuild
+passes while the bug is present.
+
+### 3. Conditional styles must be symmetric
+
+Both branches of any `cond ? A : B` style string must set the **same set of properties**, using
+longhands (`background-color`, `background-image`, `border-color`, `box-shadow`) rather than
+shorthands. A property set in only one branch never resets, and the highlight sticks.
+
+### 4. Text input recipe
+
+Raw `<input type="text|number">` and `<textarea>` must match the select/dropdown triggers sitting
+beside them:
+
+- `background: var(--qf-surface-sunken)` — **not** `--qf-surface`, which is nearly invisible on an
+  elevated card and reads as "no background"
+- `border: 1px solid var(--qf-border)`, `border-radius: var(--qf-radius-md)`
+- `color: var(--qf-text-primary)`, `font-size: var(--qf-text-sm)`, padding `8px 12px`
+- Mono fields (ISK, ME/TE, runs) add `font-family: var(--qf-font-mono)`
+- Numeric fields (tax %, ME, runs) get an explicit small width — never full-bleed across a row
+
+### 5. One shared searchable dropdown
+
+All searchable dropdowns are the single shared `QFSearchSelect`
+(`public/shared/qf-search-select.js`). **Never fork or re-implement it** — edit the shared file so
+every screen stays identical. Non-searchable dropdowns with roughly five or fewer fixed options
+stay a plain `<select class="qf-select">`.
+
+It covers **both** shapes:
+
+```js
+// Fixed list — filters in memory
+new QFSearchSelect(host, { options, value, onChange });
+
+// Remote/async — the component owns debounce, out-of-order responses, and the
+// loading / "type to search" / "no matches" states; you only run the query
+new QFSearchSelect(host, {
+  onSearch: (q) => searchSomething(q),   // -> Promise<options>
+  minQueryLength: 2,
+  debounceMs: 200,
+});
+```
+
+If it does not do what a screen needs, **extend the shared component** — do not hand-roll a
+local one. Hand-rolling is what reintroduced the rule-2a bug: the shared component never had it.
+
+**Lifecycle:** each instance owns a document-level `mousedown` listener and can attach a popover
+to `<body>`, so removing its container is not enough. Call `destroy()` when the form rebuilds or
+the modal closes, and route *every* close path (X, Cancel, backdrop click, Escape) through the
+same teardown. `market-view-renderer.js` (`searchSelectField` / `destroySearchSelects`) is the
+reference implementation.
+
+### 6. Keep the box-sizing rule
+
+```css
+.qf-input, .qf-select { box-sizing: border-box; }
+```
+
+Inputs overflow their containers without it. Do not drop it.
+
+### 6a. `hidden` loses to any explicit `display`
+
+The `hidden` attribute is only `display: none` at the **browser-default** level, so any
+rule that sets `display` — `flex`, `grid`, `block` — overrides it and the element stays
+visible. This has now shipped as a bug twice: the Market modals, and the Blueprint
+Calculator opening straight into its Add to Plan modal with the empty state and both tab
+panels rendered on top of each other.
+
+Whenever an element is toggled with `el.hidden = …`, its CSS must win `hidden` back:
+
+```css
+/* per-view catch-all — preferred, covers every element in the view */
+#my-view [hidden] { display: none !important; }
+
+/* or per-class, if the view has only one such element */
+.my-panel[hidden] { display: none; }
+```
+
+`.modal[hidden]` is already handled in `shared/components.css`. **jsdom does not apply
+stylesheets**, so `expect(el.hidden).toBe(true)` passes while the user sees the element —
+a renderer test cannot catch this. Assert against the stylesheet text instead.
+
+### 6b. `styles.css` styles bare TAGS — they leak into ported views
+
+`styles.css` predates the view system and styles two bare element tags:
+
+```css
+header { background: rgba(0,0,0,0.5); padding: …; border-bottom: 2px solid …; }  /* :161 */
+header h1 { …gradient text fill… }                                               /* :168 */
+main { … }                                                                       /* :185 */
+```
+
+Every view is loaded into `index.html`, which loads `styles.css`. A `<header>` inside a view
+therefore picks up a full-bleed **page** header — dark wash, 2px border, page-scale padding —
+**by tag name, with no class involved**. This shipped on ESI Status as a dark background behind
+the character name, and `header h1` was simultaneously fighting the view's own title rule.
+
+**Use `<div>` (or `<section>`) for in-view headers, not `<header>`.** A semantic `<header>` is
+only safe if the view's own rule overrides `background`, `padding` *and* `border` — relying on
+that is fragile, since a rule that merely sets layout leaves the wash in place. Do **not** fix
+this by editing `styles.css`: every un-ported page still depends on those rules.
+
+Known outstanding instance: `.fac-list-head` (`facilities-view.css:348`) sets neither
+`background` nor `padding` and is carrying the wash today.
+
+### 7. Manufacturing Plan prices are locked
+
+Plan prices are frozen at a user-chosen point and **never auto-update on market refresh**. Only an
+explicit "Re-lock Prices" action adopts live prices. Live-data subscriptions may update *drift
+indicators* against the locked values, but must never write the locked price itself.
 
 ## Testing Patterns
 

@@ -139,6 +139,79 @@ async function getSkillNames(skillIds) {
 }
 
 /**
+ * Get name, group and training-rank for many skills in ONE query.
+ *
+ * Replaces getSkillNames() + a per-skill getSkillGroup() loop for callers that
+ * need more than the name. A character has 300-500 skills, so a per-skill round
+ * trip is exactly the pattern that made the Assets screen unusable.
+ *
+ * `rank` is attribute 275 ("Training time multiplier"), the standard SP
+ * multiplier shown in-game as "rank x5". It is stored as either valueInt or
+ * valueFloat depending on the row, hence the COALESCE.
+ *
+ * @param {number[]} skillIds
+ * @returns {Promise<Object>} typeID -> { name, groupId, groupName, rank }
+ */
+async function getSkillInfo(skillIds) {
+  if (!skillIds || skillIds.length === 0) return {};
+
+  try {
+    const database = await getDatabase();
+
+    return new Promise((resolve, reject) => {
+      const placeholders = skillIds.map(() => '?').join(',');
+      const query = `
+        SELECT t.typeID,
+               t.typeName,
+               g.groupID,
+               g.groupName,
+               CAST(COALESCE(a.valueInt, a.valueFloat) AS INTEGER) AS rank
+          FROM invTypes t
+          LEFT JOIN invGroups g ON t.groupID = g.groupID
+          LEFT JOIN dgmTypeAttributes a
+                 ON a.typeID = t.typeID AND a.attributeID = 275
+         WHERE t.typeID IN (${placeholders})
+      `;
+
+      database.all(query, skillIds, (err, rows) => {
+        if (err) {
+          console.error('Error querying skill info:', err);
+          reject(err);
+          return;
+        }
+
+        const map = {};
+        rows.forEach((row) => {
+          map[row.typeID] = {
+            name: row.typeName,
+            groupId: row.groupID,
+            groupName: row.groupName || 'Other',
+            rank: row.rank || 1,
+          };
+        });
+
+        // A skill missing from the SDE still needs a usable row rather than
+        // vanishing from the list.
+        skillIds.forEach((id) => {
+          if (!map[id]) {
+            map[id] = { name: `Skill ${id}`, groupId: null, groupName: 'Other', rank: 1 };
+          }
+        });
+
+        resolve(map);
+      });
+    });
+  } catch (error) {
+    console.error('Error getting skill info:', error);
+    const fallback = {};
+    skillIds.forEach((id) => {
+      fallback[id] = { name: `Skill ${id}`, groupId: null, groupName: 'Other', rank: 1 };
+    });
+    return fallback;
+  }
+}
+
+/**
  * Get all skills from SDE
  * @returns {Promise<Array>} Array of all skills
  */
@@ -1358,6 +1431,7 @@ module.exports = {
   closeDatabase,
   getSkillName,
   getSkillNames,
+  getSkillInfo,
   getAllSkills,
   getSkillGroup,
   searchSkills,

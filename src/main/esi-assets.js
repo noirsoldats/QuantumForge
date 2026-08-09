@@ -121,6 +121,20 @@ function saveAssets(assetsData) {
   try {
     const db = getCharacterDatabase();
 
+    // A gated fetch returns an empty list, and this is a delete-then-insert, so
+    // writing it would delete every stored asset. See the fuller note in
+    // settings-manager.js updateCharacterSkills.
+    //
+    // Guarded on `skipped` ONLY: an empty hangar is a legitimate state, so
+    // refusing every empty write would make it impossible to represent.
+    if (assetsData && assetsData.skipped) {
+      console.log(
+        `[Assets] Skipped save for character ${assetsData.characterId}: the fetch was ` +
+        'gated, so there is nothing to write (existing assets kept).'
+      );
+      return false;
+    }
+
     // Begin transaction
     db.exec('BEGIN TRANSACTION');
 

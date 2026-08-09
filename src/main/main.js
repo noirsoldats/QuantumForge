@@ -15,8 +15,7 @@ if (isPortable()) {
   logInfo('App', `Data directory: ${getDataPath()}`);
 }
 
-const { createSettingsWindow } = require('./settings-window');
-const { createAuditWindow } = require('./audit-window');
+const { registerWindowControlHandlers, getFramelessOptions, trackWindowChrome } = require('./window-controls');
 const { initAutoUpdater, checkForUpdates } = require('./auto-updater');
 const { getWindowBounds, trackWindowState } = require('./window-state-manager');
 const { runStartupChecks } = require('./startup-manager');
@@ -215,6 +214,7 @@ const {
   getReprocessingMaterials,
 } = require('./sde-database');
 const { initializeMarketDatabase, getMarketDatabase } = require('./market-database');
+const marketWatchlists = require('./market-watchlists');
 const { createAuthErrorWindow, setupAuthErrorWindowHandlers, broadcastAuthError, buildAuthErrorInfo } = require('./auth-error-window');
 const { initializeESIStatusDatabase } = require('./esi-status-tracker');
 const { startBackgroundRefresh, stopBackgroundRefresh, runRefreshCycle, getGlobalRefreshStatus } = require('./esi-background-refresh');
@@ -235,10 +235,36 @@ let mainWindow;
 /**
  * Create splash screen window
  */
+/**
+ * Splash width. The card fills the window edge to edge, so this IS the card
+ * width - there is no page padding around it.
+ */
+const SPLASH_WIDTH = 460;
+
+/**
+ * Starting height, in CONTENT pixels.
+ *
+ * The renderer measures the card and calls `startup:fitToContent` as soon as it
+ * has laid out, so this only governs the first frame. It is set to the card's
+ * measured height in its OPENING state - five task rows, since the SDE download
+ * row appears only when there is a download - so the window does not visibly
+ * jump the moment it becomes visible.
+ */
+const SPLASH_INITIAL_HEIGHT = 534;
+
 function createSplashWindow() {
   const splashWindow = new BrowserWindow({
-    width: 700,
-    height: 650,
+    // The window is sized to its CONTENT, not the other way round: the card's
+    // height changes as startup progresses (the SDE row appears only when there
+    // is a download; the action and error panels replace the task list), and a
+    // fixed window left a visible margin around the smaller states.
+    //
+    // Deliberately NOT tracked in windowStates: it is unresizable and always
+    // centred, so there is no user choice to remember - and a remembered size
+    // would fight the next redesign exactly as the old 700x650 did.
+    width: SPLASH_WIDTH,
+    height: SPLASH_INITIAL_HEIGHT,
+    useContentSize: true, // heights below are CONTENT, ignoring any frame
     frame: false,
     resizable: false,
     center: true,
@@ -253,9 +279,57 @@ function createSplashWindow() {
     backgroundColor: '#1e1e2e',
   });
 
+  // Registered before the page loads, so the renderer's first fit call - which
+  // fires as soon as it has laid out - can never arrive before the handler.
+  registerSplashResizeHandler();
+
   splashWindow.loadFile(path.join(__dirname, '../../public/splash.html'));
 
   return splashWindow;
+}
+
+/**
+ * Resize the splash to fit its content, keeping it centred.
+ *
+ * Registered once, not per-window: the splash is a singleton and the sender is
+ * resolved from the event, so a stale handler can never target the wrong
+ * window.
+ *
+ * Growing a centred window only moves its bottom edge, so it drifts upward off
+ * centre as content is added. Re-centring after each resize keeps it put.
+ */
+let splashResizeHandlerRegistered = false;
+
+function registerSplashResizeHandler() {
+  // `ipcMain.handle` THROWS on a duplicate channel, and the splash can be
+  // created more than once in a session (first-launch wizard, then normal
+  // startup).
+  if (splashResizeHandlerRegistered) return;
+  splashResizeHandlerRegistered = true;
+
+  ipcMain.handle('startup:fitToContent', (event, contentHeight) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (!win || win.isDestroyed()) return false;
+
+    const height = Math.round(Number(contentHeight));
+    if (!Number.isFinite(height) || height <= 0) return false;
+
+    // Never grow past the work area of the display it is on - a tall error
+    // state on a small screen must stay reachable rather than run off it.
+    const { screen } = require('electron');
+    const display = screen.getDisplayMatching(win.getBounds());
+    const maxHeight = display.workArea.height - 40;
+    const clamped = Math.min(height, maxHeight);
+
+    const [, currentHeight] = win.getContentSize();
+    // A 1px jitter between measurements would otherwise cause an endless
+    // resize/re-measure loop.
+    if (Math.abs(currentHeight - clamped) <= 2) return true;
+
+    win.setContentSize(SPLASH_WIDTH, clamped);
+    win.center();
+    return true;
+  });
 }
 
 function createWindow() {
@@ -266,6 +340,7 @@ function createWindow() {
     ...windowBounds,
     show: false, // Don't show until ready
     backgroundColor: '#1e1e2e', // Prevents white flash on Windows
+    ...getFramelessOptions(),
     webPreferences: {
       preload: path.join(__dirname, '../preload/preload.js'),
       nodeIntegration: false,
@@ -277,6 +352,8 @@ function createWindow() {
 
   // Track window state changes
   trackWindowState(mainWindow, 'main');
+  // Push maximize/restore state so the custom title bar can swap its glyph.
+  trackWindowChrome(mainWindow);
 
   // Show window when ready to prevent white screen
   mainWindow.once('ready-to-show', () => {
@@ -284,7 +361,9 @@ function createWindow() {
   });
 
   // Load the index.html
-  mainWindow.loadFile(path.join(__dirname, '../../public/index.html'));
+  mainWindow.loadFile(path.join(__dirname, '../../public/index.html'), {
+    query: { role: 'main' },
+  });
 
   // Open DevTools in development
   if (process.env.NODE_ENV === 'development') {
@@ -328,52 +407,10 @@ function createWindow() {
     console.log('Renderer process is responsive again');
   });
 
-  // Prevent close if there are unsaved changes
-  mainWindow.on('close', async (e) => {
-    // Check if we're on the market page by checking the URL
-    const currentUrl = mainWindow.webContents.getURL();
-
-    if (currentUrl.includes('market.html')) {
-      e.preventDefault();
-
-      // Ask the renderer if there are unsaved changes
-      mainWindow.webContents.send('market:checkUnsavedChanges');
-
-      // Wait for response
-      const hasUnsaved = await new Promise((resolve) => {
-        const timeout = setTimeout(() => {
-          resolve(false);
-        }, 1000);
-
-        ipcMain.once('market:unsavedChangesResponse', (event, hasChanges) => {
-          clearTimeout(timeout);
-          resolve(hasChanges);
-        });
-      });
-
-      if (hasUnsaved) {
-        const response = await dialog.showMessageBox(mainWindow, {
-          type: 'warning',
-          buttons: ['Cancel', 'Close Without Saving'],
-          defaultId: 0,
-          cancelId: 0,
-          title: 'Unsaved Changes',
-          message: 'You have unsaved changes in Market Settings.',
-          detail: 'Are you sure you want to close without saving?',
-        });
-
-        if (response.response === 1) {
-          // User chose to close without saving
-          mainWindow.destroy();
-        }
-        // If response is 0 (Cancel), the window stays open
-      } else {
-        // No unsaved changes, allow close
-        mainWindow.destroy();
-      }
-    }
-    // If not on market page, allow normal close
-  });
+  // No close guard: every Market edit (overrides, favourites, watchlists,
+  // market sets) commits immediately via IPC, so there is no in-memory state a
+  // close could discard. The old guard sniffed for a `market.html` frame; that
+  // page no longer exists, so the guard could never fire and was removed.
 
   mainWindow.on('closed', () => {
     mainWindow = null;
@@ -413,8 +450,19 @@ app.whenReady().then(async () => {
     const { needsSchemaMigrations, runSchemaMigrations } = require('./database-schema-migrations');
     if (needsSchemaMigrations()) {
       console.log('[App] Running database schema migrations...');
-      await runSchemaMigrations();
-      console.log('[App] Database schema migrations complete');
+      try {
+        await runSchemaMigrations();
+        console.log('[App] Database schema migrations complete');
+      } catch (error) {
+        // A failed migration leaves the schema in a state the app's queries do
+        // not expect. Continuing risks writing bad data on top of it, so this
+        // is unconditionally fatal - unlike the generic startup handler, which
+        // only surfaces a dialog when no window exists (a splash window is up
+        // by this point, so that check would silently swallow this).
+        logError('schema-migration', error);
+        showFatalErrorDialog(error, 'schema-migration');
+        return; // showFatalErrorDialog calls app.exit(1)
+      }
     }
 
     // Run character data migration (JSON to SQLite)
@@ -563,19 +611,45 @@ async function startNormalApplication() {
 
 // Setup all IPC handlers
 function setupIPCHandlers() {
+  // Window controls for the custom frameless title bar
+  registerWindowControlHandlers();
+
+  // Forward data-change events to every renderer frame, so screens can react to
+  // fresh data instead of only reading it at load time.
+  const { registerDataEventBroadcast } = require('./data-events');
+  registerDataEventBroadcast();
+
   // Handle IPC for opening settings
+  // Settings mounts in the MAIN window's view pane rather than opening its own
+  // window. Callers can be anywhere - a framed legacy tool, or a separate
+  // window like the Audit Log - so route the main window and focus it.
+  // Settings is a view in the main window - there is no Settings window. The
+  // request may originate from a framed tool or another window, so route it to
+  // the main window's shell router.
   ipcMain.on('open-settings', () => {
-    createSettingsWindow();
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.focus();
+    // Per-frame: only the top frame hosts the router.
+    const { sendToWindow } = require('./broadcast');
+    sendToWindow(mainWindow, 'shell:showView', { view: 'settings' });
   });
 
   // Audit Mode
   ipcMain.handle('audit:openWindow', () => {
-    createAuditWindow();
+    // Standalone shell view: the generic host every own-window screen uses.
+    const { openViewWindow } = require('./view-window');
+    openViewWindow('audit-log', {}, {
+      title: 'Audit Log',
+      defaults: { width: 1100, height: 700 },
+    });
   });
 
-  ipcMain.handle('audit:getRecords', (event, filters) => {
-    const { getRecords } = require('./audit-recorder');
-    return getRecords(filters);
+  ipcMain.handle('audit:getRecords', async (event, filters) => {
+    // Records hold type IDs only; names are resolved here in one batched SDE
+    // query rather than at each of the recorder's hot call sites.
+    const { getRecords, withTypeNames } = require('./audit-recorder');
+    return withTypeNames(getRecords(filters));
   });
 
   ipcMain.handle('audit:clearRecords', () => {
@@ -603,6 +677,10 @@ function setupIPCHandlers() {
       const { setAuditEnabled } = require('./audit-recorder');
       setAuditEnabled(updates.auditModeEnabled);
     }
+    // Every settings write funnels through here, so one emit covers the app.
+    // Without it a screen showing a setting's state can only poll for it.
+    const { emitSettingsChanged } = require('./data-events');
+    emitSettingsChanged({ category, updates });
     return result;
   });
 
@@ -667,6 +745,14 @@ function setupIPCHandlers() {
     return getCharacter(characterId);
   });
 
+  // Corporation names are not stored anywhere, so every screen that wanted
+  // one fell back to "Corporation <id>". Session-cached; at most one ESI call
+  // per corporation.
+  ipcMain.handle('esi:resolveCorporationNames', async (event, corporationIds) => {
+    const { resolveCorporationNames } = require('./esi-corporations');
+    return await resolveCorporationNames(corporationIds);
+  });
+
   ipcMain.handle('esi:setDefaultCharacter', (event, characterId) => {
     const result = setDefaultCharacter(characterId);
     if (result && mainWindow && !mainWindow.isDestroyed()) {
@@ -707,14 +793,26 @@ function setupIPCHandlers() {
     return await fetchServerStatus();
   });
 
+  // Read-only: never triggers an ESI call. Footers use this so opening a
+  // window does not cost a fetch - the background cycle owns fetching.
+  ipcMain.handle('status:getCached', () => {
+    const { getCachedServerStatus } = require('./esi-server-status');
+    return getCachedServerStatus();
+  });
+
   ipcMain.handle('status:getLastFetchTime', () => {
     return getLastServerStatusFetchTime();
   });
 
   // ESI Status Monitoring IPC Handlers
   ipcMain.handle('esiStatus:openWindow', () => {
-    const { createESIStatusWindow } = require('./esi-status-window');
-    createESIStatusWindow();
+    // Standalone shell view: same generic host every other own-window screen
+    // uses, so there is no per-screen window module to keep in step.
+    const { openViewWindow } = require('./view-window');
+    openViewWindow('esi-status', {}, {
+      title: 'ESI Status',
+      defaults: { width: 1200, height: 750 },
+    });
   });
 
   ipcMain.handle('esiStatus:getAggregated', () => {
@@ -753,6 +851,23 @@ function setupIPCHandlers() {
   ipcMain.handle('esiStatus:cleanup', () => {
     const { cleanupOldHistory } = require('./esi-status-tracker');
     return cleanupOldHistory(7);
+  });
+
+  // Blueprint source settings - a SEPARATE axis from the asset divisions.
+  // These never write the asset columns and vice versa.
+  ipcMain.handle('divisions:getBlueprintSettings', (event, characterId) => {
+    const { getCharacterBlueprintSettings } = require('./settings-manager');
+    return getCharacterBlueprintSettings(characterId);
+  });
+
+  ipcMain.handle('divisions:updateBlueprintDivisions', (event, characterId, divisions) => {
+    const { setBlueprintEnabledDivisions } = require('./settings-manager');
+    return setBlueprintEnabledDivisions(characterId, divisions);
+  });
+
+  ipcMain.handle('divisions:setUseBlueprintsFrom', (event, characterId, enabled) => {
+    const { setUseBlueprintsFrom } = require('./settings-manager');
+    return setUseBlueprintsFrom(characterId, enabled);
   });
 
   // Character Division Settings IPC Handlers
@@ -984,6 +1099,18 @@ function setupIPCHandlers() {
   ipcMain.handle('skills:fetch', async (event, characterId) => {
     try {
       const skillsData = await fetchCharacterSkills(characterId);
+
+      // A gated fetch is not a failure and not a success - ESI was never
+      // asked, so the stored skills are still the best data we have. Saying so
+      // is what stops the caller reporting "refreshed" over unchanged data.
+      if (skillsData.skipped) {
+        return {
+          success: true,
+          skipped: true,
+          reason: 'Skills were refreshed recently; ESI has nothing newer yet.',
+        };
+      }
+
       const success = updateCharacterSkills(characterId, skillsData);
       if (success) {
         return { success: true, skills: skillsData };
@@ -1015,15 +1142,25 @@ function setupIPCHandlers() {
     return getSkillsCacheStatus(characterId);
   });
 
-  ipcMain.handle('skills:openWindow', (event, characterId) => {
-    const { createSkillsWindow } = require('./skills-window');
-    createSkillsWindow(characterId);
-  });
+  // No skills:openWindow handler: the Skills Manager is a native shell view,
+  // opened via the generic window.openView('skills', { characterId }).
 
   // Handle IPC for blueprint management
   ipcMain.handle('blueprints:fetch', async (event, characterId) => {
     try {
       const blueprintsData = await fetchCharacterBlueprints(characterId);
+
+      // Gated: ESI was never asked, so the stored blueprints are unchanged and
+      // still correct. Reporting a plain success would claim a refresh that
+      // did not happen. See the note in updateCharacterSkills.
+      if (blueprintsData.skipped) {
+        return {
+          success: true,
+          skipped: true,
+          reason: 'Blueprints were refreshed recently; ESI has nothing newer yet.',
+        };
+      }
+
       const success = updateCharacterBlueprints(characterId, blueprintsData);
       if (success) {
         return { success: true, blueprints: blueprintsData };
@@ -1063,23 +1200,36 @@ function setupIPCHandlers() {
     return getBlueprintsCacheStatus(characterId);
   });
 
-  ipcMain.handle('blueprints:openWindow', (event, characterId) => {
-    const { createBlueprintsWindow } = require('./blueprints-window');
-    createBlueprintsWindow(characterId);
-  });
+  // No blueprints:openWindow handler: the Blueprint Manager is a native shell
+  // view, opened via the generic window.openView('blueprints', { characterId }).
 
   // Assets IPC Handlers
   ipcMain.handle('assets:fetch', async (event, characterId) => {
     try {
-      // Fetch character assets
+      // Fetch character assets. saveAssets refuses a gated payload, so a skip
+      // cannot delete the stored assets - see the note in updateCharacterSkills.
       const characterAssetsData = await fetchCharacterAssets(characterId);
       saveAssets(characterAssetsData);
 
       // Fetch corporation assets if character is in a corp
       const character = getCharacter(characterId);
+      let corporationAssetsData = null;
       if (character && character.corporationId) {
-        const corporationAssetsData = await fetchCorporationAssets(characterId, character.corporationId);
+        corporationAssetsData = await fetchCorporationAssets(characterId, character.corporationId);
         saveAssets(corporationAssetsData);
+      }
+
+      // Only a refresh where NOTHING was fetched counts as skipped; a partial
+      // one still updated something worth reloading for.
+      const allSkipped = characterAssetsData.skipped
+        && (!corporationAssetsData || corporationAssetsData.skipped);
+
+      if (allSkipped) {
+        return {
+          success: true,
+          skipped: true,
+          reason: 'Assets were refreshed recently; ESI has nothing newer yet.',
+        };
       }
 
       return { success: true };
@@ -1098,11 +1248,6 @@ function setupIPCHandlers() {
 
   ipcMain.handle('assets:getCacheStatus', (event, characterId, isCorporation) => {
     return getAssetsCacheStatus(characterId, isCorporation);
-  });
-
-  ipcMain.handle('assets:openWindow', (event, characterId) => {
-    const { createAssetsWindow } = require('./assets-window');
-    createAssetsWindow(characterId);
   });
 
   // Industry Jobs IPC Handlers
@@ -1199,6 +1344,11 @@ function setupIPCHandlers() {
 
   ipcMain.handle('plans:updateCharacterDivisions', async (event, planId, characterId, divisions) => {
     return updatePlanCharacterDivisions(planId, characterId, divisions);
+  });
+
+  ipcMain.handle('plans:updateCharacterBlueprintDivisions', (event, planId, characterId, divisions) => {
+    const { updatePlanCharacterBlueprintDivisions } = require('./manufacturing-plans');
+    return updatePlanCharacterBlueprintDivisions(planId, characterId, divisions);
   });
 
   ipcMain.handle('plans:addBlueprint', async (event, planId, blueprintConfig) => {
@@ -1298,13 +1448,25 @@ function setupIPCHandlers() {
     return await getPlanMaterials(planId, includeAssets);
   });
 
+  // Live prices for drift DISPLAY only - never writes. The plan's cost basis
+  // stays locked until an explicit "Re-lock Prices" (binding rule 7).
+  ipcMain.handle('plans:getMaterialDrift', async (event, planId, marketSetId) => {
+    const { getPlanMaterialDrift } = require('./manufacturing-plans');
+    let marketSet = null;
+    if (marketSetId) {
+      const { getMarketSets } = require('./settings-manager');
+      marketSet = (getMarketSets() || []).find(s => String(s.id) === String(marketSetId)) || null;
+    }
+    return await getPlanMaterialDrift(planId, marketSet);
+  });
+
   ipcMain.handle('plans:getProducts', (event, planId) => {
     return getPlanProducts(planId);
   });
 
-  ipcMain.handle('plans:getProductOwnedAssets', (event, planId, typeId) => {
+  ipcMain.handle('plans:getProductOwnedAssets', async (event, planId, typeId) => {
     const { getProductOwnedAssets } = require('./manufacturing-plans');
-    return getProductOwnedAssets(planId, typeId);
+    return await getProductOwnedAssets(planId, typeId);
   });
 
   ipcMain.handle('plans:getSummary', async (event, planId) => {
@@ -1343,11 +1505,6 @@ function setupIPCHandlers() {
       }
     }
     return result;
-  });
-
-  ipcMain.handle('plans:openWindow', () => {
-    const { createManufacturingPlansWindow } = require('./manufacturing-plans-window');
-    createManufacturingPlansWindow();
   });
 
   // Plan Matching Handlers
@@ -1498,22 +1655,58 @@ function setupIPCHandlers() {
     return getJournalDetail(journalId, isCorp);
   });
 
-  // Manufacturing Summary Window
-  ipcMain.handle('manufacturingSummary:openWindow', () => {
-    const { createManufacturingSummaryWindow } = require('./manufacturing-summary-window');
-    createManufacturingSummaryWindow();
+  // No manufacturingSummary:openWindow handler: the Manufacturing Summary is a
+  // native shell view and mounts in the main window's content pane.
+
+  // No cleanupTool:openWindow - What Can I Build? is a native shell view and
+  // mounts in the main window's content pane.
+
+  /**
+   * Frames that have asked to stop their in-flight What Can I Build? run.
+   * Keyed by webContents id so two windows cannot cancel each other.
+   */
+  const wcibCancellations = new Set();
+
+  ipcMain.handle('wcib:calculate', async (event, options = {}) => {
+    const runKey = event.sender.id;
+    wcibCancellations.delete(runKey);
+
+    try {
+      const { calculate } = require('./what-can-i-build');
+      const { withPriceCache } = require('./market-read-cache');
+
+      // Same shape as the summary sweep: many blueprints, heavily overlapping
+      // material lists, one session for the run.
+      return await withPriceCache(() => calculate(
+        options,
+        (progress) => {
+          // Sent to the CALLING frame only - two windows could each be
+          // running, and a broadcast would cross their progress bars.
+          try {
+            if (event.sender && !event.sender.isDestroyed()) {
+              event.sender.send('wcib:progress', progress);
+            }
+          } catch (_) {
+            /* the frame went away mid-run */
+          }
+        },
+        () => wcibCancellations.has(runKey)
+      ), 'what can i build');
+    } catch (error) {
+      // A user-requested stop is not a failure.
+      if (error && error.cancelled) {
+        return { cancelled: true, rows: [], assetTypeCount: 0 };
+      }
+      console.error('Error calculating buildable items:', error);
+      throw new Error(error.message || 'Failed to calculate buildable items');
+    } finally {
+      wcibCancellations.delete(runKey);
+    }
   });
 
-  // Cleanup Tool Window
-  ipcMain.handle('cleanupTool:openWindow', () => {
-    const { createCleanupToolWindow } = require('./cleanup-tool-window');
-    createCleanupToolWindow();
-  });
-
-  // Loot Analyzer Window
-  ipcMain.handle('lootAnalyzer:openWindow', () => {
-    const { createLootAnalyzerWindow } = require('./loot-analyzer-window');
-    createLootAnalyzerWindow();
+  ipcMain.handle('wcib:cancel', (event) => {
+    wcibCancellations.add(event.sender.id);
+    return true;
   });
 
   ipcMain.handle('cleanupTool:getAssetSources', async () => {
@@ -1532,18 +1725,21 @@ function setupIPCHandlers() {
   });
 
   ipcMain.handle('blueprints:openInCalculator', (event, blueprintTypeId, meLevel) => {
-    // Focus or create main window
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.focus();
-      // Navigate to calculator page and send blueprint data
-      mainWindow.loadFile(path.join(__dirname, '../../public/blueprint-calculator.html')).then(() => {
-        // Wait for the DOM to be ready and listeners to be set up
-        // Use a longer timeout to ensure initialization is complete
-        setTimeout(() => {
-          mainWindow.webContents.send('calculator:openBlueprint', { blueprintTypeId, meLevel });
-        }, 500);
-      });
-    }
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    mainWindow.focus();
+
+    // Ask the shell to show the calculator with the blueprint as a mount
+    // parameter. The view reads it during mount, so there is no window in which
+    // the event can arrive before a listener exists.
+    //
+    // This replaces a loadFile() + setTimeout(500) handoff: the old page had no
+    // way to signal readiness, so the delay was a guess. On a slow start the
+    // event landed before the renderer subscribed and the blueprint silently
+    // never opened.
+    mainWindow.webContents.send('shell:showView', {
+      view: 'blueprint-calculator',
+      params: { blueprintTypeId, meLevel },
+    });
   });
 
   // Handle IPC for blueprint calculator
@@ -1551,8 +1747,7 @@ function setupIPCHandlers() {
     searchBlueprints,
     calculateBlueprintMaterials,
     getBlueprintProduct,
-    getTypeName,
-    getOwnedBlueprintME
+    getTypeName
   } = require('./blueprint-calculator');
 
   ipcMain.handle('calculator:searchBlueprints', (event, searchTerm, limit) => {
@@ -1592,8 +1787,15 @@ function setupIPCHandlers() {
     return getTypeName(typeId);
   });
 
-  ipcMain.handle('calculator:getOwnedBlueprintME', (event, characterId, blueprintTypeId) => {
-    return getOwnedBlueprintME(characterId, blueprintTypeId);
+  // NOTE: `calculator:getOwnedBlueprintME` and the getOwnedBlueprintME helper
+  // it wrapped are both gone. resolveOwnedBlueprint supersedes them: it returns
+  // ME *and* TE plus which copy won, and distinguishes "owns an ME 0 blueprint"
+  // from "owns nothing" - which the old number-only return could not.
+  ipcMain.handle('calculator:resolveOwnedBlueprint', (event, blueprintTypeId) => {
+    const { resolveOwnedBlueprint } = require('./blueprint-calculator');
+    // Returns ME *and* TE plus which copy won, so the calculator can show
+    // where a value came from instead of an unexplained number.
+    return resolveOwnedBlueprint(blueprintTypeId);
   });
 
   ipcMain.handle('calculator:getRigBonuses', (event, rigTypeId) => {
@@ -1638,8 +1840,8 @@ function setupIPCHandlers() {
     return { success: true };
   });
 
-  ipcMain.handle('calculator:findBestDecryptor', async (event, inventionData, materialPrices, productPrice, skills, facility, optimizationStrategy, customVolume, marketSetId) => {
-    console.log('[IPC Handler] Received optimizationStrategy:', optimizationStrategy, 'customVolume:', customVolume);
+  ipcMain.handle('calculator:findBestDecryptor', async (event, inventionData, materialPrices, productPrice, skills, facility, optimizationStrategy, marketSetId) => {
+    console.log('[IPC Handler] Received optimizationStrategy:', optimizationStrategy);
 
     const { findBestDecryptor, getDefaultFacility } = require('./blueprint-calculator');
     const { getMarketSetById, getDefaultMarketSet } = require('./settings-manager');
@@ -1649,14 +1851,22 @@ function setupIPCHandlers() {
 
     // Default optimization strategy if not provided
     const strategy = optimizationStrategy || 'total-per-item';
-    const volume = customVolume || 1;
 
     // Resolve market set
     const marketSet = marketSetId ? getMarketSetById(marketSetId) : getDefaultMarketSet();
 
-    console.log('[IPC Handler] Using strategy:', strategy, 'volume:', volume);
+    console.log('[IPC Handler] Using strategy:', strategy);
 
-    return await findBestDecryptor(inventionData, materialPrices, productPrice, skills, facilityToUse, strategy, volume, marketSet);
+    // One session for the whole sweep. The 9 decryptor options each price the
+    // same material set twice (1 run and a full BPC - both genuinely needed,
+    // since ME rounding is applied per run-batch and a 5-run batch is not 5x a
+    // 1-run batch), so ~198 price calls read the same handful of order books.
+    // The cache dies with this handler; it can never serve a later calculation.
+    const { withPriceCache } = require('./market-read-cache');
+    return await withPriceCache(
+      () => findBestDecryptor(inventionData, materialPrices, productPrice, skills, facilityToUse, strategy, marketSet),
+      'invention decryptor sweep'
+    );
   });
 
   // ============================================================================
@@ -1815,6 +2025,149 @@ function setupIPCHandlers() {
     }
   });
 
+  /**
+   * Every profitability metric for one product, from ONE history read.
+   *
+   * The Manufacturing Summary used to call six separate renderer functions per
+   * blueprint - SVR, velocity, saturation, momentum, stability, demand growth -
+   * and each fetched the SAME product history itself. A 200-blueprint run made
+   * ~1,200 history calls where ~200 would do. History is fetched one type at a
+   * time and expires daily, so that was the dominant cost on the screen.
+   *
+   * Fetching here, once, and handing the rows to the pure metric functions
+   * collapses that to a single call per product.
+   */
+  ipcMain.handle('metrics:forProduct', async (event, options = {}) => {
+    try {
+      const {
+        regionId,
+        productTypeId,
+        svrPeriod = 30,
+        productionTimeHours = 0,
+        profitPerUnit = 0,
+        locationFilter = null,
+      } = options;
+
+      if (!productTypeId || Number.isNaN(Number(productTypeId))) {
+        return null;
+      }
+
+      const { collectProductMetrics } = require('./manufacturing-metrics');
+
+      // One history read and one order read, shared by every metric.
+      const [history, orders] = await Promise.all([
+        fetchMarketHistory(regionId, productTypeId, false).catch(() => []),
+        fetchMarketOrders(regionId, productTypeId, locationFilter).catch(() => []),
+      ]);
+
+      return collectProductMetrics({
+        history,
+        orders,
+        svrPeriod,
+        productionTimeHours,
+        profitPerUnit,
+      });
+    } catch (error) {
+      console.error('Error collecting product metrics:', error);
+      return null;
+    }
+  });
+
+  /**
+   * Material cost volatility for one blueprint's material list.
+   *
+   * Kept separate from metrics:forProduct because it reads a DIFFERENT set of
+   * histories (the materials, not the product) and is the one metric whose
+   * cost scales with recipe size rather than with blueprint count.
+   */
+  ipcMain.handle('metrics:materialVolatility', async (event, options = {}) => {
+    try {
+      const { regionId, materials = {}, period = 30 } = options;
+      const entries = Object.entries(materials);
+      if (entries.length === 0) return 0;
+
+      const { calculateMaterialCostVolatility } = require('./manufacturing-metrics');
+
+      const withHistory = await Promise.all(entries.map(async ([typeId, quantity]) => {
+        const parsed = parseInt(typeId, 10);
+        if (!parsed || Number.isNaN(parsed)) return null;
+        const history = await fetchMarketHistory(regionId, parsed, false).catch(() => []);
+        return { quantity, history };
+      }));
+
+      return calculateMaterialCostVolatility(withHistory.filter(Boolean), period);
+    } catch (error) {
+      console.error('Error calculating material cost volatility:', error);
+      return 0;
+    }
+  });
+
+  /**
+   * Frames that have asked to stop their in-flight summary.
+   *
+   * Keyed by webContents id rather than a single flag: two windows can each be
+   * calculating, and cancelling one must not abort the other. Entries are
+   * cleared when the run starts and again when it settles.
+   */
+  const summaryCancellations = new Set();
+
+  /**
+   * Run the whole Manufacturing Summary.
+   *
+   * The orchestration used to live in the renderer, reaching every helper it
+   * needed one IPC call at a time. It now runs here, next to those helpers,
+   * and streams progress back over `summary:progress` so the caller can show a
+   * bar without polling.
+   */
+  ipcMain.handle('summary:calculate', async (event, options = {}) => {
+    // Keyed per frame: two windows can each run their own summary, and one
+    // cancelling must not abort the other.
+    const runKey = event.sender.id;
+    summaryCancellations.delete(runKey);
+
+    try {
+      const { calculateSummary } = require('./manufacturing-summary');
+      const { withPriceCache } = require('./market-read-cache');
+
+      // A summary sweep prices hundreds of blueprints whose material lists
+      // overlap heavily (every T2 ship wants the same moon goo), so the same
+      // order books are read over and over. The session ends when this handler
+      // returns - including on cancel - so a later run always re-reads.
+      const rows = await withPriceCache(() => calculateSummary(
+        options,
+        (progress) => {
+          // Sent to the CALLING frame only: two windows could be running their
+          // own summary, and a broadcast would cross the progress bars.
+          try {
+            if (event.sender && !event.sender.isDestroyed()) {
+              event.sender.send('summary:progress', progress);
+            }
+          } catch (_) {
+            /* the frame went away mid-run */
+          }
+        },
+        () => summaryCancellations.has(runKey)
+      ), 'manufacturing summary');
+
+      return { cancelled: false, rows };
+    } catch (error) {
+      // A user-requested stop is not a failure - reported so the renderer can
+      // restore its button without showing an error toast.
+      if (error && error.cancelled) {
+        return { cancelled: true, rows: [] };
+      }
+      console.error('Error calculating manufacturing summary:', error);
+      throw new Error(error.message || 'Failed to calculate the manufacturing summary');
+    } finally {
+      summaryCancellations.delete(runKey);
+    }
+  });
+
+  ipcMain.handle('summary:cancel', (event) => {
+    summaryCancellations.add(event.sender.id);
+    return true;
+  });
+
   ipcMain.handle('market:fetchData', async (event, regionId, typeId) => {
     try {
       return await fetchMarketData(regionId, typeId);
@@ -1866,6 +2219,62 @@ function setupIPCHandlers() {
     }
   });
 
+  // Batched pricing for list views.
+  //
+  // The per-item handler above is right for one lookup, but a view pricing a
+  // thousand assets would make a thousand IPC round-trips - the exact pattern
+  // that made the Assets screen hammer ESI. Dedupe by typeId here and price
+  // each distinct type once.
+  //
+  // Uses calculateRealisticPrice (never fetchBulkPrices/Fuzzwork directly), so
+  // overrides, pricing method, modifiers and confidence all behave as they do
+  // everywhere else.
+  ipcMain.handle('market:calculatePrices', async (event, typeIds, options = {}) => {
+    try {
+      const {
+        regionId = null,
+        locationId = null,
+        priceType = 'sell',
+        marketSetId = null,
+        settingsScope = 'input',
+        // Order-book only. History is a sanity check on the order book, and it
+        // costs one ESI call per type that expires daily - prohibitive when
+        // valuing a whole hangar. See calculateRealisticPrice.
+        skipHistory = false,
+      } = options || {};
+
+      const set = marketSetId ? getMarketSetById(marketSetId) : getDefaultMarketSet();
+      if (!set) throw new Error(`Market Set not found: ${marketSetId}`);
+      const settings = settingsScope === 'output' ? set.outputProducts : set.inputMaterials;
+
+      // Location lives per scope on a market set; there is no top-level
+      // set.regionId, so fall back to the scope's own configuration.
+      const effectiveRegionId = regionId || (settings && settings.regionId) || null;
+      const effectiveLocationId = locationId || (settings && settings.locationId) || null;
+
+      const unique = [...new Set((typeIds || []).filter((id) => id != null))];
+      const out = {};
+
+      for (const typeId of unique) {
+        try {
+          const result = await calculateRealisticPrice(
+            typeId, effectiveRegionId, effectiveLocationId, priceType, 1, settings,
+            { skipHistory }
+          );
+          out[typeId] = result;
+        } catch (error) {
+          // One unpriceable item must not lose the rest of the list.
+          out[typeId] = { price: 0, confidence: 'none', warning: error.message };
+        }
+      }
+
+      return out;
+    } catch (error) {
+      console.error('Error calculating bulk prices:', error);
+      return {};
+    }
+  });
+
   ipcMain.handle('market:getPriceOverride', (event, typeId) => {
     return getPriceOverride(typeId);
   });
@@ -1885,6 +2294,239 @@ function setupIPCHandlers() {
   ipcMain.handle('market:getLastFetchTime', () => {
     return getLastMarketFetchTime();
   });
+
+  /**
+   * Search items that are actually traded in a region.
+   *
+   * Names live in the SDE and orders live in market-data.db, so this searches
+   * the SDE by name first, then intersects with the region's cached orders.
+   * Returns [] when the region has no market data yet - by design: the caller
+   * is asking what is tradeable HERE, not what exists in the game.
+   */
+  ipcMain.handle('market:searchTradedItems', async (event, regionId, searchTerm, limit = 50) => {
+    try {
+      if (!regionId) return { success: true, items: [] };
+
+      const { searchMarketItems } = require('./sde-database');
+      const { getTradedTypeIds } = require('./market-database');
+
+      const term = (searchTerm || '').trim();
+      if (term.length < 2) return { success: true, items: [] };
+
+      const sdeMatches = await searchMarketItems(term);
+      if (!sdeMatches || sdeMatches.length === 0) return { success: true, items: [] };
+
+      const byId = new Map(sdeMatches.map((r) => [r.typeID, r.typeName]));
+      const traded = getTradedTypeIds(regionId, [...byId.keys()], limit);
+
+      return {
+        success: true,
+        items: traded.map((t) => ({
+          typeId: t.typeId,
+          typeName: byId.get(t.typeId) || `Type ${t.typeId}`,
+          volume: t.volume,
+          orderCount: t.orderCount,
+        })),
+      };
+    } catch (error) {
+      console.error('Error searching traded items:', error);
+      return { success: false, error: error.message, items: [] };
+    }
+  });
+
+  /** Plans referencing a type, with their locked prices (inspector). */
+  ipcMain.handle('market:getPlansUsingType', (event, typeId) => {
+    try {
+      const { getPlansUsingType } = require('./manufacturing-plans');
+      return { success: true, plans: getPlansUsingType(typeId) };
+    } catch (error) {
+      console.error('Error getting plans using type:', error);
+      return { success: false, error: error.message, plans: [] };
+    }
+  });
+
+  /**
+   * Re-lock one material in one plan at the current market price.
+   * Explicit user action - see relockPlanMaterialPrice for why this does not
+   * conflict with "plan prices never auto-update".
+   */
+  ipcMain.handle('market:relockPlanMaterial', (event, planId, typeId, price) => {
+    try {
+      const { relockPlanMaterialPrice } = require('./manufacturing-plans');
+      return relockPlanMaterialPrice(planId, typeId, price);
+    } catch (error) {
+      console.error('Error re-locking plan material:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  /** Cached price history for the market data drawer. */
+  ipcMain.handle('market:getCachedHistory', async (event, regionId, typeId, days) => {
+    try {
+      const cached = getCachedMarketHistory(regionId, typeId, days);
+      if (cached && cached.length > 0) {
+        return { success: true, history: cached, fetched: false };
+      }
+
+      // Nothing cached: fetch on demand, the same way calculateRealisticPrice
+      // does when an item is first priced. fetchMarketHistory owns the
+      // cache/staleness decision (11:05 UTC cutoff) and writes through, so a
+      // second open of the drawer is served from cache.
+      console.log(`[Market] No cached history for type ${typeId} in region ${regionId}; fetching on demand`);
+      await fetchMarketHistory(regionId, typeId);
+
+      return {
+        success: true,
+        history: getCachedMarketHistory(regionId, typeId, days),
+        fetched: true,
+      };
+    } catch (error) {
+      console.error('Error getting market history:', error);
+      return { success: false, error: error.message, history: [] };
+    }
+  });
+
+  /** Seeded trade hubs, for the market set editor's location picker. */
+  ipcMain.handle('market:getMarketLocations', () => {
+    try {
+      const { getMarketLocations } = require('./market-database');
+      return { success: true, locations: getMarketLocations() };
+    } catch (error) {
+      console.error('Error getting market locations:', error);
+      return { success: false, error: error.message, locations: [] };
+    }
+  });
+
+  /** Best buy/sell and traded volume per type, straight from the order book. */
+  ipcMain.handle('market:getOrderBookSummary', (event, regionId, typeIds) => {
+    try {
+      const { getOrderBookSummary } = require('./market-database');
+      const summary = getOrderBookSummary(regionId, typeIds || []);
+      // Maps do not survive IPC structured cloning as Maps in all cases; send
+      // a plain object keyed by typeId.
+      const out = {};
+      summary.forEach((v, k) => { out[k] = v; });
+      return { success: true, summary: out };
+    } catch (error) {
+      console.error('Error getting order book summary:', error);
+      return { success: false, error: error.message, summary: {} };
+    }
+  });
+
+  // ---- Market watchlists, items, favourites, alerts ----
+  // Handlers return {success, ...} so renderers can surface validation errors
+  // (empty name, bad alert rule) as toasts rather than unhandled rejections.
+  ipcMain.handle('market:getWatchlists', () => {
+    try {
+      return { success: true, watchlists: marketWatchlists.getWatchlists() };
+    } catch (error) {
+      console.error('Error getting watchlists:', error);
+      return { success: false, error: error.message, watchlists: [] };
+    }
+  });
+
+  ipcMain.handle('market:getWatchlist', (event, watchlistId) => {
+    try {
+      return { success: true, watchlist: marketWatchlists.getWatchlist(watchlistId) };
+    } catch (error) {
+      console.error('Error getting watchlist:', error);
+      return { success: false, error: error.message, watchlist: null };
+    }
+  });
+
+  ipcMain.handle('market:createWatchlist', (event, data) => {
+    try {
+      return { success: true, watchlist: marketWatchlists.createWatchlist(data) };
+    } catch (error) {
+      console.error('Error creating watchlist:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('market:updateWatchlist', (event, watchlistId, updates) => {
+    try {
+      return { success: true, watchlist: marketWatchlists.updateWatchlist(watchlistId, updates) };
+    } catch (error) {
+      console.error('Error updating watchlist:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('market:deleteWatchlist', (event, watchlistId) => {
+    try {
+      return { success: marketWatchlists.deleteWatchlist(watchlistId) };
+    } catch (error) {
+      console.error('Error deleting watchlist:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('market:addWatchlistItem', (event, watchlistId, typeId, alert) => {
+    try {
+      return { success: true, item: marketWatchlists.addWatchlistItem(watchlistId, typeId, alert) };
+    } catch (error) {
+      console.error('Error adding watchlist item:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('market:updateWatchlistItem', (event, itemId, updates) => {
+    try {
+      return { success: true, item: marketWatchlists.updateWatchlistItem(itemId, updates) };
+    } catch (error) {
+      console.error('Error updating watchlist item:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('market:rebaselineWatchlistItem', (event, itemId, prices) => {
+    try {
+      return { success: true, item: marketWatchlists.rebaselineWatchlistItem(itemId, prices) };
+    } catch (error) {
+      console.error('Error re-baselining watchlist item:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('market:removeWatchlistItem', (event, itemId) => {
+    try {
+      return { success: marketWatchlists.removeWatchlistItem(itemId) };
+    } catch (error) {
+      console.error('Error removing watchlist item:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('market:getFavorites', () => {
+    try {
+      return { success: true, favorites: marketWatchlists.getFavorites() };
+    } catch (error) {
+      console.error('Error getting favorites:', error);
+      return { success: false, error: error.message, favorites: [] };
+    }
+  });
+
+  ipcMain.handle('market:toggleFavorite', (event, typeId) => {
+    try {
+      return { success: true, isFavorite: marketWatchlists.toggleFavorite(typeId) };
+    } catch (error) {
+      console.error('Error toggling favorite:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('market:setFavorite', (event, typeId, isFavorite) => {
+    try {
+      return { success: true, isFavorite: marketWatchlists.setFavorite(typeId, isFavorite) };
+    } catch (error) {
+      console.error('Error setting favorite:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  // No `market:evaluateWatchlistAlerts`: there is no background alert engine.
+  // Whether a rule is currently hit is derived in the renderer from the live
+  // price against its baseline - see market-watchlists.js.
 
   // Global ESI background refresh — manual "refresh now" + status.
   ipcMain.handle('esi:refreshGlobalNow', async () => {
@@ -1918,13 +2560,36 @@ function setupIPCHandlers() {
 
   ipcMain.handle('market:refreshMultipleRegions', async (event, regionIds) => {
     const { refreshMultipleRegions } = require('./esi-market');
-    return await refreshMultipleRegions(regionIds);
+    const result = await refreshMultipleRegions(regionIds);
+
+    // Prices moved, so the material-tree cache is stale - its entries carry
+    // their own `pricing` object and the key has no price component. Same
+    // reasoning as in market:updateAllMarketData below.
+    try {
+      const { clearMaterialCache } = require('./blueprint-calculator');
+      clearMaterialCache();
+    } catch (error) {
+      console.error('Could not clear the material cache after a region refresh:', error);
+    }
+
+    return result;
   });
 
   // Unified market data update - refreshes all configured regions, adjusted prices, and cost indices
   ipcMain.handle('market:updateAllMarketData', async (event) => {
     const { getUniqueRegions } = require('./blueprint-pricing');
-    const { refreshMultipleRegions, manualRefreshAdjustedPrices, refreshStructuresInRegion } = require('./esi-market');
+    const {
+      refreshMultipleRegions,
+      manualRefreshAdjustedPrices,
+      refreshStructuresInRegion,
+      emitRefreshStage,
+      setRefreshProgressTarget,
+    } = require('./esi-market');
+
+    // Progress goes back to the frame that asked for it, and nowhere else. A
+    // Market view open in another window must not pop a dialog for a refresh
+    // someone else started.
+    setRefreshProgressTarget(event.sender);
 
     const results = {
       marketData: null,
@@ -1944,6 +2609,10 @@ function setupIPCHandlers() {
       const regionIds = [...allRegionIds];
       console.log(`[UpdateAllMarketData] Refreshing ${regionIds.length} region(s) across all Market Sets:`, regionIds);
 
+      // Announce the shape of the work before any of it starts, so the UI can
+      // show a real total rather than an anonymous spinner.
+      emitRefreshStage({ phase: 'starting', current: 0, total: regionIds.length });
+
       // Step 2: Refresh market data for all regions (public orders only)
       results.marketData = await refreshMultipleRegions(regionIds);
       if (!results.marketData.success) {
@@ -1956,16 +2625,54 @@ function setupIPCHandlers() {
         results.errors.push(`Structure market refresh failed: ${err.message}`);
       }
 
+      // How much of the request was actually served, versus already-cached.
+      // Reported because a refresh that legitimately skips everything looks
+      // identical to one that worked - it just returns fast and says nothing.
+      results.skipped = {
+        regions: (results.marketData && results.marketData.rateLimitedCount) || 0,
+        structures: (structureResult.rateLimited || []).length,
+      };
+      results.refreshed = {
+        regions: (results.marketData && results.marketData.refreshedCount) || 0,
+        structures: (structureResult.refreshed || []).length,
+      };
+
       // Step 4: Refresh adjusted prices
+      emitRefreshStage({ phase: 'adjusted-prices', current: 1, total: 1 });
       results.adjustedPrices = await manualRefreshAdjustedPrices();
       if (!results.adjustedPrices.success) {
         results.errors.push('Failed to refresh adjusted prices');
       }
 
       // Step 5: Refresh cost indices
+      emitRefreshStage({ phase: 'cost-indices', current: 1, total: 1 });
       results.costIndices = await fetchCostIndices();
 
       results.success = results.errors.length === 0;
+
+      /*
+       * Drop the material-tree cache BEFORE announcing the refresh.
+       *
+       * Cached entries carry their `pricing` object, and the cache key has no
+       * price component - only blueprint/ME/facility/character/market set. So
+       * without this, up to MAX_CACHE_SIZE blueprints keep serving the OLD
+       * profit and ROI after a refresh, until FIFO eviction happens to push
+       * them out. Cleared first so any listener reacting to the event
+       * recomputes against fresh prices rather than racing the clear.
+       */
+      try {
+        const { clearMaterialCache } = require('./blueprint-calculator');
+        clearMaterialCache();
+      } catch (error) {
+        console.error('Could not clear the material cache after a market refresh:', error);
+      }
+
+      // Tell every window market data changed, so staleness indicators can
+      // clear themselves instead of waiting for a reload.
+      try {
+        const { emitMarketChanged } = require('./data-events');
+        emitMarketChanged({ regionIds, scope: 'all' });
+      } catch (_) { /* never break the refresh */ }
       results.message = results.success
         ? `Updated market data for ${regionIds.length} region(s), adjusted prices, and cost indices`
         : `Update completed with errors: ${results.errors.join(', ')}`;
@@ -1976,6 +2683,12 @@ function setupIPCHandlers() {
       results.errors.push(error.message);
       results.message = `Update failed: ${error.message}`;
       return results;
+    } finally {
+      // `finally`, not the success path: a refresh that throws must still tell
+      // the UI it is over, or the progress dialog stays up forever.
+      emitRefreshStage({ phase: 'done', current: 1, total: 1 });
+      // Released so a later refresh cannot send progress to a stale frame.
+      setRefreshProgressTarget(null);
     }
   });
 
@@ -2413,6 +3126,19 @@ function setupIPCHandlers() {
     }
   });
 
+  // Name + group + training rank for many skills in one query. Prefer this over
+  // getSkillNames when the caller needs grouping: a character has 300-500
+  // skills, so a per-skill lookup is the pattern to avoid.
+  ipcMain.handle('sde:getSkillInfo', async (event, skillIds) => {
+    try {
+      const { getSkillInfo } = require('./sde-database');
+      return await getSkillInfo(skillIds);
+    } catch (error) {
+      console.error('Error getting skill info:', error);
+      throw new Error(error.message || 'Failed to get skill info from SDE');
+    }
+  });
+
   ipcMain.handle('sde:getAllSkills', async () => {
     try {
       return await getAllSkills();
@@ -2615,6 +3341,25 @@ function setupIPCHandlers() {
     }
   });
 
+  // ESI error-budget state, so the user can see WHAT is erroring and report
+  // it rather than just experiencing the app going quiet.
+  ipcMain.handle('esiStatus:getErrorBudget', () => {
+    const { getStatus } = require('./esi-error-budget');
+    return getStatus();
+  });
+
+  // Batched location resolution. One call for a whole asset list, deduped by
+  // location - the per-asset version meant a thousand round-trips on load.
+  ipcMain.handle('location:resolveMany', async (event, locationIds, characterId, isCorporation) => {
+    try {
+      const { resolveLocationInfoMany } = require('./location-resolver');
+      return await resolveLocationInfoMany(locationIds, characterId, isCorporation);
+    } catch (error) {
+      console.error('Error resolving locations:', error);
+      return {};
+    }
+  });
+
   // Location resolution IPC handler
   ipcMain.handle('location:resolve', async (event, locationId, characterId, isCorporation) => {
     try {
@@ -2629,6 +3374,63 @@ function setupIPCHandlers() {
         fullPath: 'Error',
         locationType: 'error',
       };
+    }
+  });
+
+  // Structure cache IPC handlers
+  //
+  // Player-structure names are cached persistently (24h) and access denials are
+  // backed off far longer (7 days) because re-asking ESI for a structure the
+  // character cannot dock at returns 403, and 4xx responses spend the
+  // application-wide error budget. This handler is the escape hatch that makes
+  // that long backoff acceptable: it clears BOTH timers and re-resolves.
+  ipcMain.handle('structures:manualRefresh', async (event, options = {}) => {
+    try {
+      const { characterId = null, structureIds = null } = options || {};
+      const { refreshStructures } = require('./esi-structures');
+      const { getStats } = require('./structure-cache');
+
+      // Default target: the structures actually referenced by stored assets,
+      // not every structure ever seen. Bounded by what the user can look at.
+      let ids = structureIds;
+      if (!Array.isArray(ids) || ids.length === 0) {
+        const { getCharacterDatabase } = require('./character-database');
+        const { SPAWNED_ITEM_MIN } = require('./location-classifier');
+        const db = getCharacterDatabase();
+        const rows = db.prepare(`
+          SELECT DISTINCT location_id FROM assets WHERE location_id >= ?
+        `).all(SPAWNED_ITEM_MIN);
+
+        // An asset's own item_id is a container, not a structure. Exclude them
+        // so we only re-resolve things that could actually BE structures.
+        const ownItemIds = new Set(
+          db.prepare('SELECT item_id FROM assets').all().map((r) => r.item_id)
+        );
+        ids = rows
+          .map((r) => r.location_id)
+          .filter((id) => !ownItemIds.has(id));
+      }
+
+      const summary = await refreshStructures(ids, characterId);
+
+      // Names may have changed, so previously formatted paths are stale.
+      const { clearAllLocationCache } = require('./location-resolver');
+      clearAllLocationCache();
+
+      return { success: true, ...summary, stats: getStats() };
+    } catch (error) {
+      console.error('Error refreshing structures:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('structures:getStats', () => {
+    try {
+      const { getStats } = require('./structure-cache');
+      return getStats();
+    } catch (error) {
+      console.error('Error reading structure cache stats:', error);
+      return { total: 0, fresh: 0, denied: 0 };
     }
   });
 

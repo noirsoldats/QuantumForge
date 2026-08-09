@@ -161,6 +161,70 @@ describe('esi-status-tracker rate-limit extensions', () => {
     });
   });
 
+  describe('getNextEligibleAt', () => {
+    // Drives the background cycle's self-scheduling. Every case here is one
+    // that pinned the scheduler at its 30s floor forever.
+    const seed = (callKey, endpointType, nextAllowedAt) => {
+      tracker.recordESICallStart(callKey, {
+        category: 'character', characterId: 1, endpointType, endpointLabel: endpointType,
+      });
+      if (nextAllowedAt !== undefined) {
+        tracker.recordESICallSuccess(callKey, null, nextAllowedAt, 0, Date.now());
+      }
+    };
+
+    test('returns the soonest future deadline', () => {
+      seed('a_jobs', 'industry_jobs', Date.now() + 5 * 60000);
+      seed('a_status', 'server_status', Date.now() + 60000);
+
+      const at = tracker.getNextEligibleAt(['industry_jobs', 'server_status']);
+      expect(at - Date.now()).toBeGreaterThan(50000);
+      expect(at - Date.now()).toBeLessThan(70000);
+    });
+
+    test('IGNORES never-fetched placeholder rows', () => {
+      // initializeCharacterEndpoints inserts these with a NULL deadline.
+      // Treating NULL as "due since epoch" made MIN() return 0 forever.
+      seed('a_pending', 'industry_jobs');                        // no success
+      seed('a_status', 'server_status', Date.now() + 60000);
+
+      const at = tracker.getNextEligibleAt(['industry_jobs', 'server_status']);
+      expect(at - Date.now()).toBeGreaterThan(50000);
+    });
+
+    test('IGNORES deadlines already in the past', () => {
+      // A missing scope fails every attempt and recordESICallError never moves
+      // next_allowed_at, so a stale deadline would stay "due" forever.
+      seed('a_stale', 'industry_jobs', Date.now() - 60 * 60000);
+      seed('a_status', 'server_status', Date.now() + 60000);
+
+      const at = tracker.getNextEligibleAt(['industry_jobs', 'server_status']);
+      expect(at - Date.now()).toBeGreaterThan(50000);
+    });
+
+    test('null when nothing has a usable deadline', () => {
+      seed('a_pending', 'industry_jobs');
+      seed('a_stale', 'server_status', Date.now() - 1000);
+
+      expect(tracker.getNextEligibleAt(['industry_jobs', 'server_status'])).toBeNull();
+    });
+
+    test('only considers the requested endpoint types', () => {
+      // Market endpoints go stale-eligible and STAY there when the user is not
+      // using that screen - they must not drag the cycle awake.
+      seed('a_market', 'market_orders', Date.now() - 60 * 60000);
+      seed('a_status', 'server_status', Date.now() + 120000);
+
+      const at = tracker.getNextEligibleAt(['server_status']);
+      expect(at - Date.now()).toBeGreaterThan(110000);
+    });
+
+    test('null for an empty or missing type list', () => {
+      expect(tracker.getNextEligibleAt([])).toBeNull();
+      expect(tracker.getNextEligibleAt()).toBeNull();
+    });
+  });
+
   test('getEndpointFreshness reports eligibility + ratelimit info', () => {
     tracker.recordESICallStart('character_1_skills', {
       category: 'character', characterId: 1, endpointType: 'skills', endpointLabel: 'Skills',
@@ -172,5 +236,42 @@ describe('esi-status-tracker rate-limit extensions', () => {
     expect(fresh.callKey).toBe('character_1_skills');
     expect(fresh.eligible).toBe(false);
     expect(fresh.ratelimitRemaining).toBe(10);
+  });
+
+  describe('aggregated status', () => {
+    const startCall = (callKey) => tracker.recordESICallStart(callKey, {
+      category: 'character', characterId: 1, endpointType: 'skills', endpointLabel: 'Skills',
+    });
+
+    test('a call in flight does NOT turn the footer amber', () => {
+      // recordESICallStart leaves the row 'in_progress'. Counting that as a
+      // warning made the indicator flash on every refresh cycle, which trains
+      // the user to ignore it - so a normal in-flight call must stay green.
+      startCall('character_1_skills');
+      tracker.recordESICallSuccess('character_1_skills', null, null, 0, Date.now());
+
+      startCall('character_1_assets');
+
+      const agg = tracker.getAggregatedStatus();
+      expect(agg.inProgressCount).toBe(1);
+      expect(agg.overall).toBe('green');
+    });
+
+    test('a recent error still turns it red', () => {
+      startCall('character_1_skills');
+      tracker.recordESICallError('character_1_skills', 'boom', 500);
+
+      expect(tracker.getAggregatedStatus().overall).toBe('red');
+    });
+
+    test('an in-flight call does not mask a recent error', () => {
+      startCall('character_1_skills');
+      tracker.recordESICallError('character_1_skills', 'boom', 500);
+      startCall('character_1_assets');
+
+      const agg = tracker.getAggregatedStatus();
+      expect(agg.inProgressCount).toBe(1);
+      expect(agg.overall).toBe('red');
+    });
   });
 });

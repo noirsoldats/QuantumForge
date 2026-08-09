@@ -42,8 +42,24 @@ async function fetchServerStatus(forceRefresh = false) {
       skipGate: true,
     });
 
-    const data = result.data || {};
+    const data = (result.data && !Array.isArray(result.data)) ? result.data : {};
     const now = Date.now();
+
+    // `players` is NOT NULL in the schema, and ESI omits it when the cluster is
+    // down or returns an unexpected shape (esiFetch also yields `[]` for an
+    // expected-empty response, which is not an object at all). Writing that
+    // straight to SQLite threw SQLITE_CONSTRAINT_NOTNULL and turned a routine
+    // downtime into a background-refresh error. Treat a missing player count as
+    // "status unknown": report it, keep the last known row, persist nothing.
+    if (typeof data.players !== 'number') {
+      console.warn('[Server Status] Response carried no player count; leaving cached status in place');
+      return {
+        success: false,
+        error: 'ESI returned no player count (cluster down or unexpected shape)',
+        serverStatus: 'unknown',
+        lastFetch: now,
+      };
+    }
 
     // Determine server status from response
     const serverStatus = data.vip ? 'restarting' : 'online';

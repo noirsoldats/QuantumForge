@@ -1,0 +1,107 @@
+<div id="skills-view" class="sk-view">
+
+  <!-- header: character identity + actions -->
+  <div class="sk-header">
+    <div class="sk-identity">
+      <img id="sk-portrait" class="sk-portrait" src="" alt="">
+      <div>
+        <h1 id="sk-character-name" class="sk-name">&nbsp;</h1>
+        <p class="sk-subtitle">Total SP: <span id="sk-total-sp" class="sk-mono">—</span></p>
+      </div>
+    </div>
+    <div class="sk-header-actions">
+      <button type="button" id="sk-clear-overrides" class="btn btn-secondary btn-sm"
+              title="Reset every skill to its actual trained level" hidden>
+        Clear All Overrides
+      </button>
+      <button type="button" id="sk-refresh-btn" class="btn btn-secondary btn-sm"
+              title="Fetch the latest skills from ESI">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 2v6h-6M3 12a9 9 0 0 1 15-6.7L21 8M3 22v-6h6M21 12a9 9 0 0 1-15 6.7L3 16"></path></svg>
+        <span id="sk-refresh-label">Refresh from API</span>
+      </button>
+    </div>
+  </div>
+
+  <!-- summary strip -->
+  <div id="sk-summary" class="sk-summary"></div>
+
+  <!-- body -->
+  <div class="sk-body">
+
+    <!-- sidebar: search + filters -->
+    <div class="sk-sidebar qf-scroll">
+      <div class="sk-search-wrap">
+        <input type="text" id="sk-search" class="sk-input sk-search-input"
+               placeholder="Search skills…" aria-label="Search skills">
+        <button type="button" id="sk-search-clear" class="sk-search-clear"
+                aria-label="Clear search" title="Clear search (Esc)" hidden>&times;</button>
+      </div>
+
+      <div class="sk-facet-block">
+        <div class="sk-facet-head">
+          <h4>Show</h4>
+        </div>
+        <div id="sk-status-filters" class="sk-facet-list"></div>
+      </div>
+
+      <div class="sk-facet-block">
+        <div class="sk-facet-head">
+          <h4>Skill Group</h4>
+          <button type="button" id="sk-clear-groups" class="sk-clear" hidden>Clear</button>
+        </div>
+        <div id="sk-group-facets" class="sk-facet-list"></div>
+      </div>
+
+      <div class="sk-hint">
+        Click a level (0–5) to set an <span class="sk-hint-accent">override</span> for planning.
+        Overrides don’t change your character — they let you model skills you haven’t trained yet.
+      </div>
+    </div>
+
+    <!-- content -->
+    <div class="sk-content qf-scroll">
+      <div id="sk-loading" class="sk-loading">
+        <div class="sk-spinner" aria-hidden="true"></div>
+        <span>Loading skills…</span>
+      </div>
+
+      <div id="sk-groups" class="sk-groups" hidden></div>
+
+      <div id="sk-empty" class="sk-empty" hidden>
+        <div class="sk-empty-icon">
+          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"></path><path d="M12 4v16"></path><path d="M4 8l4-4 4 4"></path><path d="M8 4v10"></path></svg>
+        </div>
+        <div class="sk-empty-title" id="sk-empty-title">No skills match</div>
+        <div id="sk-empty-text" class="sk-empty-text"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- status line -->
+  <div class="sk-statusline">
+    <span id="sk-shown-count"></span>
+    <span class="sk-spacer"></span>
+    <span id="sk-cache-status" class="sk-cache-status"></span>
+  </div>
+
+  <!-- clear-overrides confirmation -->
+  <div id="sk-confirm-modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="sk-confirm-title" hidden>
+    <div class="modal-content sk-confirm-modal">
+      <div class="modal-header">
+        <h2 id="sk-confirm-title">Clear All Overrides</h2>
+        <button type="button" class="modal-close" id="sk-confirm-close" aria-label="Close dialog">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p id="sk-confirm-text" class="sk-confirm-text"></p>
+        <p class="sk-confirm-note">
+          This only affects planning overrides. Your character’s actual trained levels are never changed.
+        </p>
+      </div>
+      <div class="modal-footer">
+        <button type="button" id="sk-confirm-cancel" class="btn btn-secondary btn-sm">Cancel</button>
+        <button type="button" id="sk-confirm-ok" class="btn btn-primary btn-sm">Clear Overrides</button>
+      </div>
+    </div>
+  </div>
+
+</div>

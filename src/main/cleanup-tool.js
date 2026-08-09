@@ -4,49 +4,28 @@
  */
 
 const { getCharacter, getCharacterDivisionSettings } = require('./settings-manager');
+const {
+  isInEnabledDivision,
+  divisionFromLocationFlag,
+  unionDivisionsByCorp,
+} = require('./corp-divisions');
 const { getAssets, fetchCharacterAssets, fetchCorporationAssets, saveAssets } = require('./esi-assets');
 const { getCharacterDatabase } = require('./character-database');
 
 /**
- * Extract division ID from location flag
- * @param {string} locationFlag - Location flag (e.g., "CorpSAG2")
- * @returns {number|null} Division ID (1-7) or null
- */
-function extractDivisionId(locationFlag) {
-  if (!locationFlag) return null;
-
-  const match = locationFlag.match(/CorpSAG(\d)/);
-  if (match && match[1]) {
-    return parseInt(match[1], 10);
-  }
-
-  return null;
-}
-
-/**
  * Check if an asset is in an enabled corporation division
+ *
+ * BEHAVIOUR CHANGE: this used to include corp assets when no divisions were
+ * configured, or when the location flag would not parse. That was a bug - it
+ * surfaced corp holdings the user never opted into. A corp asset now counts
+ * only when its division is explicitly enabled.
+ *
  * @param {Object} asset - Asset object with locationFlag
  * @param {number[]} enabledDivisions - Array of enabled division IDs (1-7)
  * @returns {boolean} True if asset is in an enabled division
  */
 function isAssetInEnabledDivision(asset, enabledDivisions) {
-  // If no divisions are enabled, include all corp assets (backward compatibility)
-  if (!enabledDivisions || enabledDivisions.length === 0) {
-    return true;
-  }
-
-  const locationFlag = asset.locationFlag;
-  if (!locationFlag || !locationFlag.startsWith('CorpSAG')) {
-    // Asset is not in a corporation hangar division - include it
-    return true;
-  }
-
-  const divisionId = extractDivisionId(locationFlag);
-  if (divisionId === null) {
-    return true; // Can't parse, include to be safe
-  }
-
-  return enabledDivisions.includes(divisionId);
+  return isInEnabledDivision(asset.locationFlag, enabledDivisions);
 }
 
 /**
@@ -63,6 +42,14 @@ async function getAssetSources() {
       return [];
     }
 
+    // Corporation names are not stored locally, so resolve them from ESI in
+    // one deduped, session-cached call. Characters often share a corp, so
+    // this is usually far fewer requests than characters.
+    const { resolveCorporationNames } = require('./esi-corporations');
+    const corpNames = await resolveCorporationNames(
+      characters.map(c => c.corporationId)
+    );
+
     const sources = [];
 
     for (const character of characters) {
@@ -70,7 +57,10 @@ async function getAssetSources() {
         characterId: character.characterId,
         characterName: character.characterName,
         corporationId: character.corporationId,
-        corporationName: character.corporationName || `Corporation ${character.corporationId}`,
+        // Falls back to the bare ID: a rate-limited or deleted corporation
+        // must still be identifiable.
+        corporationName: corpNames[character.corporationId]
+          || `Corporation ${character.corporationId}`,
         portrait: character.portrait,
         hasPersonalAssets: true,
         hasCorpAssets: false,
@@ -169,7 +159,6 @@ async function refreshAssets(characterIds) {
 function aggregateAssets(sources) {
   try {
     const aggregatedAssets = {}; // { typeId: totalQuantity }
-    const processedCorps = new Set(); // Track corporations to avoid double-counting
 
     // Process personal assets
     if (sources.personal && sources.personal.length > 0) {
@@ -181,22 +170,29 @@ function aggregateAssets(sources) {
       }
     }
 
-    // Process corporation assets with division filtering
+    // Process corporation assets with division filtering.
+    //
+    // Read each corp ONCE using the union of its characters' enabled divisions.
+    // Corp assets are stored per character who can see them, so reading every
+    // character double-counts; the old guard deduped by skipping the corp after
+    // the first character, which silently discarded the other characters'
+    // division choices.
     if (sources.corporation && sources.corporation.length > 0) {
+      const corpEntries = [];
       for (const source of sources.corporation) {
         const character = getCharacter(source.characterId);
-        if (!character) continue;
+        if (!character || !character.corporationId) continue;
+        corpEntries.push({
+          characterId: source.characterId,
+          corporationId: character.corporationId,
+          divisions: source.divisions || [],
+        });
+      }
 
-        const corpId = character.corporationId;
-        if (!corpId || processedCorps.has(corpId)) continue;
-
-        processedCorps.add(corpId);
-
-        const corpAssets = getAssets(source.characterId, true);
-        const enabledDivisions = source.divisions || [];
-
+      for (const corp of unionDivisionsByCorp(corpEntries)) {
+        const corpAssets = getAssets(corp.readerCharacterId, true);
         for (const asset of corpAssets) {
-          if (isAssetInEnabledDivision(asset, enabledDivisions)) {
+          if (isAssetInEnabledDivision(asset, corp.divisions)) {
             aggregatedAssets[asset.typeId] = (aggregatedAssets[asset.typeId] || 0) + asset.quantity;
           }
         }
@@ -210,58 +206,21 @@ function aggregateAssets(sources) {
   }
 }
 
-/**
- * Calculate buildable runs and on-hand percentage for a blueprint
- * @param {Object} params - Calculation parameters
- * @param {number} params.blueprintTypeId - Blueprint type ID
- * @param {Object} params.materials - Materials required per run { typeId: quantity }
- * @param {Object} params.assets - Available assets { typeId: quantity }
- * @returns {Object} Result with buildableRuns and percentOnHand
+/*
+ * `calculateBuildableRuns` used to live here. It was never imported, never
+ * wired to IPC, and computed `percentOnHand` as a weighted AVERAGE across
+ * materials - so holding 100% of one material and 0% of another reported 50%
+ * buildable when nothing could be built. The live figure has always come from
+ * the renderer's minimum-based version, which is now in what-can-i-build.js
+ * as `calculateBuildable`. Deleted rather than left as a second, wrong answer.
  */
-function calculateBuildableRuns(params) {
-  const { materials, assets } = params;
-
-  if (!materials || Object.keys(materials).length === 0) {
-    return { buildableRuns: 0, percentOnHand: 0, materialBreakdown: [] };
-  }
-
-  let minRuns = Infinity;
-  let totalRequired = 0;
-  let totalAvailable = 0;
-  const materialBreakdown = [];
-
-  for (const [typeId, quantityPerRun] of Object.entries(materials)) {
-    const typeIdNum = parseInt(typeId, 10);
-    const available = assets[typeIdNum] || 0;
-    const runsFromMaterial = Math.floor(available / quantityPerRun);
-
-    minRuns = Math.min(minRuns, runsFromMaterial);
-    totalRequired += quantityPerRun;
-    totalAvailable += Math.min(available, quantityPerRun); // Cap at what's needed per run
-
-    materialBreakdown.push({
-      typeId: typeIdNum,
-      required: quantityPerRun,
-      available: available,
-      runsSupported: runsFromMaterial,
-    });
-  }
-
-  const buildableRuns = minRuns === Infinity ? 0 : minRuns;
-  const percentOnHand = totalRequired > 0 ? (totalAvailable / totalRequired) * 100 : 0;
-
-  return {
-    buildableRuns,
-    percentOnHand: Math.min(100, percentOnHand), // Cap at 100%
-    materialBreakdown,
-  };
-}
 
 module.exports = {
   getAssetSources,
   refreshAssets,
   aggregateAssets,
-  calculateBuildableRuns,
   isAssetInEnabledDivision,
-  extractDivisionId,
+  // Re-exported so this module's public surface is unchanged; the
+  // implementation now lives in corp-divisions.js.
+  extractDivisionId: divisionFromLocationFlag,
 };

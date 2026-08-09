@@ -1,0 +1,699 @@
+<!--
+  Market Manager view markup.
+
+  NOT a standalone page - fetched and cloned by market-view-renderer.js and
+  mounted into the application shell's #view-host. Styling comes from
+  market-view.css.
+
+  Layout:  [ context pane 250px | tab strip + tab panels | inspector ]
+
+  Watchlist modals live inside #market-view so the scoped stylesheet reaches
+  them; they reuse the shared .modal* classes from components.css.
+-->
+<template id="market-view-template">
+  <div id="market-view" class="mk-root">
+
+    <!-- Context pane: characters, market sets, pricing shortcuts -->
+    <aside class="mk-context qf-scroll">
+      <div class="mk-context-title">Characters</div>
+      <div class="mk-context-list" id="mk-characters"></div>
+
+      <div class="mk-context-title mk-context-title-action">
+        <span>Market Sets</span>
+        <button type="button" class="mk-icon-btn" id="mk-new-set" title="New market set" aria-label="New market set">
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <line x1="12" y1="5" x2="12" y2="19"></line>
+            <line x1="5" y1="12" x2="19" y2="12"></line>
+          </svg>
+        </button>
+      </div>
+      <div class="mk-context-list" id="mk-set-list"></div>
+
+      <div class="mk-context-title mk-context-title-action">
+        <span>Watchlists</span>
+        <button type="button" class="mk-icon-btn" id="mk-new-watchlist" title="New watchlist" aria-label="New watchlist">
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <line x1="12" y1="5" x2="12" y2="19"></line>
+            <line x1="5" y1="12" x2="19" y2="12"></line>
+          </svg>
+        </button>
+      </div>
+      <div class="mk-context-list" id="mk-watchlist-nav"></div>
+
+      <div class="mk-context-title">Pricing</div>
+      <div class="mk-context-list">
+        <button type="button" class="mk-context-row" id="mk-goto-overrides">
+          <span>Overrides</span>
+          <span class="mk-count" id="mk-override-count">0</span>
+        </button>
+      </div>
+    </aside>
+
+    <!-- Main column -->
+    <div class="mk-main">
+
+      <div class="mk-tabs" role="tablist">
+        <button type="button" class="mk-tab is-active" data-mk-tab="pricing" role="tab" aria-selected="true">
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M3 3v18h18"></path>
+            <path d="M7 14l4-4 3 3 5-6"></path>
+          </svg>
+          Pricing
+        </button>
+        <button type="button" class="mk-tab" data-mk-tab="overview" role="tab" aria-selected="false">Overview</button>
+        <button type="button" class="mk-tab" data-mk-tab="overrides" role="tab" aria-selected="false">
+          Overrides<span class="mk-tab-badge" id="mk-tab-override-count">0</span>
+        </button>
+        <button type="button" class="mk-tab" data-mk-tab="watchlists" role="tab" aria-selected="false">
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7z"></path>
+            <circle cx="12" cy="12" r="3"></circle>
+          </svg>
+          Watchlists<span class="mk-tab-badge mk-tab-badge-alert" id="mk-tab-alert-count" hidden>0</span>
+        </button>
+      </div>
+
+      <div class="mk-panels qf-scroll">
+
+        <!-- ============ Pricing ============ -->
+        <section class="mk-panel is-active" id="mk-panel-pricing" role="tabpanel">
+          <div class="mk-summary" id="mk-summary"></div>
+
+          <div class="mk-toolbar">
+            <div class="mk-search">
+              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <circle cx="11" cy="11" r="8"></circle>
+                <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+              </svg>
+              <input type="text" class="qf-input" id="mk-search" placeholder="Filter items…" aria-label="Filter items">
+              <button type="button" class="mk-search-clear" id="mk-search-clear" title="Clear filter (Esc)" aria-label="Clear filter" hidden>
+                <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <line x1="18" y1="6" x2="6" y2="18"></line>
+                  <line x1="6" y1="6" x2="18" y2="18"></line>
+                </svg>
+              </button>
+            </div>
+            <button class="secondary-button" id="mk-refresh-market">
+              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M21 2v6h-6"></path>
+                <path d="M3 12a9 9 0 0 1 15-6.7L21 8"></path>
+                <path d="M3 22v-6h6"></path>
+                <path d="M21 12a9 9 0 0 1-15 6.7L3 16"></path>
+              </svg>
+              <span class="btn-label">Refresh Market Data</span>
+            </button>
+          </div>
+
+          <div class="mk-table-wrap">
+            <table class="mk-table">
+              <thead>
+                <tr>
+                  <th class="mk-col-fav" scope="col"><span class="mk-sr">Favourite</span></th>
+                  <th scope="col">Item</th>
+                  <th class="mk-num" scope="col">Buy</th>
+                  <th class="mk-num" scope="col">Sell</th>
+                  <th class="mk-num" scope="col">Volume</th>
+                  <th scope="col">Confidence</th>
+                  <th class="mk-col-actions" scope="col"><span class="mk-sr">Market data</span></th>
+                </tr>
+              </thead>
+              <tbody id="mk-rows"></tbody>
+            </table>
+            <div class="mk-empty" id="mk-rows-empty" hidden>
+              <p>No market data yet</p>
+              <small>Refresh market data to populate prices for this set.</small>
+            </div>
+          </div>
+        </section>
+
+        <!-- ============ Overview ============ -->
+        <section class="mk-panel" id="mk-panel-overview" role="tabpanel">
+          <div class="mk-panel-head mk-panel-head-baseline">
+            <h2>Market Sets</h2>
+            <div class="mk-panel-head-actions">
+              <button class="secondary-button" id="mk-refresh-all">
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M21 2v6h-6"></path>
+                  <path d="M3 12a9 9 0 0 1 15-6.7L21 8"></path>
+                  <path d="M3 22v-6h6"></path>
+                  <path d="M21 12a9 9 0 0 1-15 6.7L3 16"></path>
+                </svg>
+                <span class="btn-label">Refresh All</span>
+              </button>
+              <button class="primary-button" id="mk-new-set-overview">
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <line x1="12" y1="5" x2="12" y2="19"></line>
+                  <line x1="5" y1="12" x2="19" y2="12"></line>
+                </svg>
+                <span class="btn-label">New Market Set</span>
+              </button>
+            </div>
+          </div>
+          <p class="mk-panel-intro">Each region you track, its data source and how current its pricing is. Refresh any set to pull the latest.</p>
+          <div class="mk-set-cards" id="mk-set-cards"></div>
+        </section>
+
+        <!-- ============ Overrides ============ -->
+        <section class="mk-panel" id="mk-panel-overrides" role="tabpanel">
+          <div class="mk-panel-head">
+            <div>
+              <h2>Price Overrides</h2>
+              <p>Manual prices that replace market data wherever an item is priced.</p>
+            </div>
+            <button class="primary-button" id="mk-add-override">
+              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <line x1="12" y1="5" x2="12" y2="19"></line>
+                <line x1="5" y1="12" x2="19" y2="12"></line>
+              </svg>
+              <span class="btn-label">Add Override</span>
+            </button>
+          </div>
+
+          <div class="mk-table-wrap">
+            <table class="mk-table">
+              <thead>
+                <tr>
+                  <th scope="col">Item</th>
+                  <th class="mk-num" scope="col">Market</th>
+                  <th class="mk-num" scope="col">Override</th>
+                  <th class="mk-num" scope="col">Delta</th>
+                  <th scope="col">Note</th>
+                  <th class="mk-col-actions" scope="col"><span class="mk-sr">Actions</span></th>
+                </tr>
+              </thead>
+              <tbody id="mk-override-rows"></tbody>
+            </table>
+            <div class="mk-empty" id="mk-overrides-empty" hidden>
+              <p>No price overrides</p>
+              <small>Add one to pin an item's price regardless of market data.</small>
+            </div>
+          </div>
+        </section>
+
+        <!-- ============ Watchlists ============ -->
+        <section class="mk-panel" id="mk-panel-watchlists" role="tabpanel">
+
+          <!-- Shown when no watchlist exists at all -->
+          <div class="mk-empty mk-empty-lg" id="mk-wl-empty" hidden>
+            <svg xmlns="http://www.w3.org/2000/svg" width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7z"></path>
+              <circle cx="12" cy="12" r="3"></circle>
+            </svg>
+            <p>No watchlists yet</p>
+            <small>Track items and get alerted when their price crosses a threshold.</small>
+            <button class="primary-button" id="mk-wl-empty-new">
+              <span class="btn-label">New Watchlist</span>
+            </button>
+          </div>
+
+          <!-- The active watchlist -->
+          <div class="mk-wl-body" id="mk-wl-body" hidden>
+            <div class="mk-wl-head">
+              <div class="mk-wl-head-main">
+                <div class="mk-wl-eyebrow">Watchlist</div>
+                <div class="mk-wl-title-row">
+                  <h2 id="mk-wl-name">--</h2>
+                  <button type="button" class="mk-icon-btn" id="mk-wl-edit" title="Edit name &amp; description" aria-label="Edit watchlist">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                      <path d="M12 20h9"></path>
+                      <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"></path>
+                    </svg>
+                  </button>
+                  <button type="button" class="mk-icon-btn mk-icon-btn-danger" id="mk-wl-delete" title="Delete watchlist" aria-label="Delete watchlist">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                      <polyline points="3 6 5 6 21 6"></polyline>
+                      <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                    </svg>
+                  </button>
+                </div>
+                <p class="mk-wl-desc" id="mk-wl-desc" hidden></p>
+                <div class="mk-wl-basis">
+                  <span>Tracking against</span>
+                  <span class="mk-wl-market-pill" id="mk-wl-market">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--qf-accent)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                      <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"></path>
+                      <circle cx="12" cy="10" r="3"></circle>
+                    </svg>
+                    <span id="mk-wl-market-name">--</span>
+                  </span>
+                </div>
+              </div>
+              <div class="mk-wl-head-actions">
+                <button class="secondary-button" id="mk-wl-add-item">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <line x1="12" y1="5" x2="12" y2="19"></line>
+                    <line x1="5" y1="12" x2="19" y2="12"></line>
+                  </svg>
+                  <span class="btn-label">Add Item</span>
+                </button>
+                <button class="primary-button" id="mk-wl-new">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7z"></path>
+                    <circle cx="12" cy="12" r="3"></circle>
+                  </svg>
+                  <span class="btn-label">New Watchlist</span>
+                </button>
+              </div>
+            </div>
+
+            <div class="mk-wl-stats">
+              <div class="mk-wl-stat">
+                <div class="mk-wl-stat-label">Items Tracked</div>
+                <div class="mk-wl-stat-value" id="mk-wl-stat-count">0</div>
+              </div>
+              <div class="mk-wl-stat">
+                <div class="mk-wl-stat-label">Est. Value</div>
+                <div class="mk-wl-stat-value is-accent" id="mk-wl-stat-value">--</div>
+              </div>
+              <div class="mk-wl-stat" id="mk-wl-stat-alert-card">
+                <div class="mk-wl-stat-label">Alerts Triggered</div>
+                <div class="mk-wl-stat-value" id="mk-wl-stat-alerts">0</div>
+              </div>
+            </div>
+
+            <div class="mk-table-wrap">
+              <table class="mk-table mk-wl-table">
+                <thead>
+                  <tr>
+                    <th scope="col">Item</th>
+                    <th class="mk-num" scope="col" title="Buy price when this item was baselined">Base Buy</th>
+                    <th class="mk-num" scope="col">Buy</th>
+                    <th class="mk-num" scope="col" title="Sell price when this item was baselined">Base Sell</th>
+                    <th class="mk-num" scope="col">Sell</th>
+                    <th class="mk-num" scope="col" title="Change from the baseline: buy / sell">Drift</th>
+                    <th scope="col">Alerts</th>
+                    <th class="mk-col-actions" scope="col"><span class="mk-sr">Actions</span></th>
+                  </tr>
+                </thead>
+                <tbody id="mk-wl-rows"></tbody>
+              </table>
+              <div class="mk-empty" id="mk-wl-items-empty" hidden>
+                <p>No items on this watchlist</p>
+                <small>Add an item to start tracking its price.</small>
+              </div>
+            </div>
+          </div>
+        </section>
+
+      </div>
+    </div>
+
+    <!-- Inspector: details for the selected row -->
+    <aside class="mk-inspector qf-scroll" id="mk-inspector">
+      <div class="mk-inspector-head">
+        <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--qf-accent)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <rect x="4" y="11" width="16" height="10" rx="2"></rect>
+          <path d="M8 11V7a4 4 0 0 1 8 0v4"></path>
+        </svg>
+        <span id="mk-inspector-title">Inspector</span>
+      </div>
+      <div class="mk-inspector-empty" id="mk-inspector-empty">
+        <p>Select an item</p>
+        <small>Pick a row to see its pricing detail.</small>
+      </div>
+      <div class="mk-inspector-body" id="mk-inspector-body" hidden></div>
+    </aside>
+
+    <!-- ============ Full market data drawer ============
+         Slides in over the view from the right. Opened by the inspector's
+         "View Full Market Data" button and each row's "Data" button. -->
+    <div class="mk-drawer-scrim" id="mk-drawer" hidden>
+      <div class="mk-drawer qf-scroll" role="dialog" aria-modal="true" aria-labelledby="mk-drawer-name">
+        <div class="mk-drawer-head">
+          <div class="mk-drawer-ident">
+            <img class="mk-drawer-icon" id="mk-drawer-icon" alt="" loading="lazy">
+            <div>
+              <div class="mk-drawer-title-row">
+                <h2 id="mk-drawer-name">--</h2>
+                <span class="mk-drawer-typeid" id="mk-drawer-typeid"></span>
+              </div>
+              <div class="mk-drawer-sub" id="mk-drawer-sub"></div>
+            </div>
+          </div>
+          <div class="mk-drawer-head-right">
+            <div class="mk-drawer-sync">
+              <div class="mk-drawer-sync-label">Market data</div>
+              <div class="mk-drawer-sync-value" id="mk-drawer-sync">--</div>
+            </div>
+            <button type="button" class="mk-drawer-close" id="mk-drawer-close" aria-label="Close">&times;</button>
+          </div>
+        </div>
+
+        <div class="mk-drawer-grid">
+          <!-- Price history -->
+          <section class="mk-card mk-card-wide">
+            <div class="mk-card-bar"></div>
+            <div class="mk-card-body">
+              <div class="mk-card-head">
+                <h4>Price History</h4>
+                <div class="mk-card-head-right">
+                  <span class="mk-card-note">30-day</span>
+                  <span class="mk-trend" id="mk-drawer-trend">--</span>
+                </div>
+              </div>
+              <div id="mk-drawer-chart"></div>
+              <div class="mk-chart-axis">
+                <span id="mk-drawer-hist-low">--</span>
+                <span>Low · High</span>
+                <span id="mk-drawer-hist-high">--</span>
+              </div>
+            </div>
+          </section>
+
+          <!-- Order book -->
+          <section class="mk-card">
+            <div class="mk-card-bar"></div>
+            <div class="mk-card-body">
+              <div class="mk-card-head"><h4>Order Book</h4></div>
+              <div class="mk-orderbook">
+                <div>
+                  <div class="mk-order-title is-sell">Sell Orders</div>
+                  <div id="mk-drawer-sell"></div>
+                </div>
+                <div>
+                  <div class="mk-order-title is-buy">Buy Orders</div>
+                  <div id="mk-drawer-buy"></div>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <!-- Statistics -->
+          <section class="mk-card">
+            <div class="mk-card-bar"></div>
+            <div class="mk-card-body">
+              <div class="mk-card-head"><h4>Statistics</h4></div>
+              <div class="mk-stats" id="mk-drawer-stats"></div>
+            </div>
+          </section>
+
+          <!-- Price calculation methods -->
+          <section class="mk-card mk-card-wide">
+            <div class="mk-card-bar"></div>
+            <div class="mk-card-body">
+              <div class="mk-card-head"><h4>Price Calculation Methods</h4></div>
+              <p class="mk-card-desc">Comparison of pricing methods for manufacturing calculations</p>
+              <div class="mk-calcs" id="mk-drawer-calcs"></div>
+            </div>
+          </section>
+        </div>
+
+        <div class="mk-drawer-foot">
+          <button class="secondary-button" id="mk-drawer-override">
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <line x1="12" y1="1" x2="12" y2="23"></line>
+              <path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path>
+            </svg>
+            <span class="btn-label">Set Override</span>
+          </button>
+          <button class="primary-button" id="mk-drawer-done"><span class="btn-label">Close</span></button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ================== Watchlist modals ==================
+         Reuse the shared .modal* classes from components.css rather than
+         forking a parallel set. Hidden via [hidden] until opened. -->
+
+    <!-- New / Edit watchlist. One form serving both modes; the renderer sets
+         the title and which action the confirm button performs. -->
+    <div class="modal" id="mk-wl-modal" role="dialog" aria-modal="true" aria-labelledby="mk-wl-modal-title" hidden>
+      <div class="modal-content mk-modal">
+        <div class="modal-header">
+          <h2 id="mk-wl-modal-title">New Watchlist</h2>
+          <button type="button" class="modal-close" data-mk-close="mk-wl-modal" aria-label="Close dialog">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div class="mk-field">
+            <label class="mk-label" for="mk-wl-form-name">Watchlist Name</label>
+            <input type="text" class="qf-input" id="mk-wl-form-name" maxlength="50" placeholder="e.g. Mining Minerals">
+            <div class="mk-field-hint">Shown in the sidebar. Max 50 characters.</div>
+          </div>
+
+          <div class="mk-field">
+            <label class="mk-label" for="mk-wl-form-market">Tracked Market Set</label>
+            <select class="qf-select" id="mk-wl-form-market"></select>
+            <div class="mk-field-hint">All prices and alerts in this watchlist evaluate against this market's configured basis.</div>
+          </div>
+
+          <div class="mk-field">
+            <label class="mk-label" for="mk-wl-form-desc">Description <span class="mk-label-optional">(optional)</span></label>
+            <input type="text" class="qf-input" id="mk-wl-form-desc" placeholder="What is this watchlist for?">
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="secondary-button" data-mk-close="mk-wl-modal"><span class="btn-label">Cancel</span></button>
+          <button class="primary-button" id="mk-wl-form-save"><span class="btn-label">Create Watchlist</span></button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Market set editor. One form for create and edit; the renderer sets the
+         title, prefills for edit, and routes save to add vs update. -->
+    <div class="modal" id="mk-set-modal" role="dialog" aria-modal="true" aria-labelledby="mk-set-modal-title" hidden>
+      <div class="modal-content mk-modal mk-modal-wide">
+        <div class="modal-header">
+          <h2 id="mk-set-modal-title">New Market Set</h2>
+          <button type="button" class="modal-close" data-mk-close="mk-set-modal" aria-label="Close dialog">&times;</button>
+        </div>
+        <div class="modal-body qf-scroll">
+          <div class="mk-field">
+            <label class="mk-label" for="mk-set-name">Market Set Name</label>
+            <input type="text" class="qf-input" id="mk-set-name" maxlength="60" placeholder="e.g. Jita Primary, Amarr Secondary">
+          </div>
+
+          <!-- Scope bodies are built by the renderer so input and output stay
+               structurally identical, exactly as the mockup has them. -->
+          <div class="mk-scope">
+            <h3 class="mk-scope-title">Input Materials Settings</h3>
+            <p class="mk-scope-desc">Configure location and pricing for buying raw materials</p>
+            <div class="mk-scope-body" id="mk-scope-input"></div>
+          </div>
+
+          <div class="mk-scope">
+            <h3 class="mk-scope-title">Output Products Settings</h3>
+            <p class="mk-scope-desc">Configure location and pricing for selling manufactured products</p>
+            <label class="mk-scope-mirror">
+              <input type="checkbox" id="mk-set-mirror">
+              <span>Use same market location as Input Materials</span>
+            </label>
+            <div class="mk-scope-body" id="mk-scope-output"></div>
+          </div>
+        </div>
+        <div class="modal-footer mk-set-footer">
+          <button class="danger-button" id="mk-set-delete" hidden>
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <polyline points="3 6 5 6 21 6"></polyline>
+              <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"></path>
+            </svg>
+            <span class="btn-label">Delete Set</span>
+          </button>
+          <span class="mk-set-footer-spacer"></span>
+          <span class="mk-modal-actions">
+            <button class="secondary-button" id="mk-set-reset">
+              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M21 2v6h-6M3 12a9 9 0 0 1 15-6.7L21 8M3 22v-6h6M21 12a9 9 0 0 1-15 6.7L3 16"></path>
+              </svg>
+              <span class="btn-label">Reset to Defaults</span>
+            </button>
+            <button class="secondary-button" data-mk-close="mk-set-modal"><span class="btn-label">Cancel</span></button>
+            <button class="primary-button" id="mk-set-save">
+              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
+                <polyline points="17 21 17 13 7 13 7 21"></polyline>
+                <polyline points="7 3 7 8 15 8"></polyline>
+              </svg>
+              <span class="btn-label">Create Market Set</span>
+            </button>
+          </span>
+        </div>
+      </div>
+    </div>
+
+    <!--
+      Market refresh progress.
+
+      A full refresh spans regions AND structures across five phases, and
+      neither decomposes cleanly per market set - a set can span several
+      regions, and a region can belong to several sets. So progress is shown
+      once for the whole operation rather than smeared across set cards.
+
+      No close button: the refresh cannot be cancelled, so an X would either
+      lie or leave the work running invisibly. It closes itself when done.
+    -->
+    <div class="modal" id="mk-refresh-modal" role="dialog" aria-modal="true"
+         aria-labelledby="mk-refresh-title" hidden>
+      <div class="modal-content mk-modal mk-refresh-modal">
+        <div class="modal-header">
+          <h2 id="mk-refresh-title">Refreshing Market Data</h2>
+        </div>
+        <div class="modal-body">
+          <div class="mk-refresh-phase" id="mk-refresh-phase">Starting…</div>
+
+          <div class="mk-refresh-bar">
+            <span id="mk-refresh-fill"></span>
+          </div>
+
+          <div class="mk-refresh-detail">
+            <span id="mk-refresh-step"></span>
+            <span id="mk-refresh-pages" class="mk-refresh-pages"></span>
+          </div>
+
+          <ul class="mk-refresh-steps" id="mk-refresh-steps"></ul>
+        </div>
+      </div>
+    </div>
+
+    <!-- Add / edit a price override -->
+    <div class="modal" id="mk-override-modal" role="dialog" aria-modal="true" aria-labelledby="mk-override-modal-title" hidden>
+      <div class="modal-content mk-modal">
+        <div class="modal-header">
+          <h2 id="mk-override-modal-title">Add Price Override</h2>
+          <button type="button" class="modal-close" data-mk-close="mk-override-modal" aria-label="Close dialog">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div class="mk-field">
+            <div class="mk-label">Item</div>
+
+            <div class="mk-pick" id="mk-ov-pick" hidden>
+              <span class="mk-pick-text">
+                <span class="mk-pick-name" id="mk-ov-pick-name"></span>
+                <span class="mk-pick-sub" id="mk-ov-pick-sub"></span>
+              </span>
+              <button type="button" class="mk-pick-clear" id="mk-ov-clear" title="Change" aria-label="Change item">&times;</button>
+            </div>
+
+            <div id="mk-ov-search"></div>
+          </div>
+
+          <div class="mk-field mk-field-divided">
+            <label class="mk-label" for="mk-ov-price">Override Price (ISK)</label>
+            <input type="number" class="qf-input mk-input-num" id="mk-ov-price" min="0" step="any" placeholder="0.00">
+            <div class="mk-field-hint" id="mk-ov-market-hint">This price replaces market data everywhere the item is priced.</div>
+          </div>
+
+          <div class="mk-field">
+            <label class="mk-label" for="mk-ov-note">Note <span class="mk-label-optional">(optional)</span></label>
+            <input type="text" class="qf-input" id="mk-ov-note" maxlength="120" placeholder="Why is this price pinned?">
+          </div>
+        </div>
+        <div class="modal-footer mk-modal-footer-split">
+          <span class="mk-modal-summary" id="mk-ov-summary"></span>
+          <span class="mk-modal-actions">
+            <button class="secondary-button" data-mk-close="mk-override-modal"><span class="btn-label">Cancel</span></button>
+            <button class="primary-button" id="mk-ov-save" disabled><span class="btn-label">Save Override</span></button>
+          </span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Add item, with the keyboard-combobox search and an optional alert rule -->
+    <div class="modal" id="mk-additem-modal" role="dialog" aria-modal="true" aria-labelledby="mk-additem-title" hidden>
+      <div class="modal-content mk-modal">
+        <div class="modal-header">
+          <h2 id="mk-additem-title">Add Item</h2>
+          <button type="button" class="modal-close" data-mk-close="mk-additem-modal" aria-label="Close dialog">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div class="mk-field">
+            <div class="mk-label">Item</div>
+
+            <!-- Chosen item -->
+            <div class="mk-pick" id="mk-additem-pick" hidden>
+              <span class="mk-pick-text">
+                <span class="mk-pick-name" id="mk-additem-pick-name"></span>
+                <span class="mk-pick-sub" id="mk-additem-pick-sub"></span>
+              </span>
+              <button type="button" class="mk-pick-clear" id="mk-additem-clear" title="Change" aria-label="Change item">&times;</button>
+            </div>
+
+            <!-- Shared QFSearchSelect in async mode (binding rule 5). It owns
+                 the keyboard contract, highlight and result states. -->
+            <div id="mk-additem-search"></div>
+          </div>
+
+          <div class="mk-field mk-field-divided">
+            <div class="mk-label">Buy Price Alert <span class="mk-label-optional">(optional)</span></div>
+            <div class="mk-field-hint mk-alert-explain">Measured as a change from the baseline captured when the item is added.</div>
+            <div class="mk-alert-grid">
+              <div>
+                <label class="mk-label mk-label-sm" for="mk-additem-buy-type">Alert Type</label>
+                <select class="qf-select" id="mk-additem-buy-type" data-mk-side="buy">
+                  <option value="none">No alert</option>
+                  <option value="percent">Percent change</option>
+                  <option value="isk">ISK change</option>
+                </select>
+              </div>
+              <div id="mk-additem-buy-value-wrap">
+                <label class="mk-label mk-label-sm" for="mk-additem-buy-value" id="mk-additem-buy-value-label">Change (%)</label>
+                <input type="number" class="qf-input mk-input-num" id="mk-additem-buy-value" min="0" step="any">
+              </div>
+              <div class="mk-alert-none" id="mk-additem-buy-none">No buy alert on this item.</div>
+            </div>
+
+            <div class="mk-dir-row" id="mk-additem-buy-dir" hidden>
+              <button type="button" class="mk-dir" data-mk-side="buy" data-mk-dir="above">
+                <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <line x1="12" y1="19" x2="12" y2="5"></line>
+                  <polyline points="5 12 12 5 19 12"></polyline>
+                </svg>
+                <span>Rises by</span>
+              </button>
+              <button type="button" class="mk-dir" data-mk-side="buy" data-mk-dir="below">
+                <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <line x1="12" y1="5" x2="12" y2="19"></line>
+                  <polyline points="19 12 12 19 5 12"></polyline>
+                </svg>
+                <span>Falls by</span>
+              </button>
+            </div>
+          </div>
+          <div class="mk-field mk-field-divided">
+            <div class="mk-label">Sell Price Alert <span class="mk-label-optional">(optional)</span></div>
+            <div class="mk-field-hint mk-alert-explain">Measured as a change from the baseline captured when the item is added.</div>
+            <div class="mk-alert-grid">
+              <div>
+                <label class="mk-label mk-label-sm" for="mk-additem-sell-type">Alert Type</label>
+                <select class="qf-select" id="mk-additem-sell-type" data-mk-side="sell">
+                  <option value="none">No alert</option>
+                  <option value="percent">Percent change</option>
+                  <option value="isk">ISK change</option>
+                </select>
+              </div>
+              <div id="mk-additem-sell-value-wrap">
+                <label class="mk-label mk-label-sm" for="mk-additem-sell-value" id="mk-additem-sell-value-label">Change (%)</label>
+                <input type="number" class="qf-input mk-input-num" id="mk-additem-sell-value" min="0" step="any">
+              </div>
+              <div class="mk-alert-none" id="mk-additem-sell-none">No sell alert on this item.</div>
+            </div>
+
+            <div class="mk-dir-row" id="mk-additem-sell-dir" hidden>
+              <button type="button" class="mk-dir" data-mk-side="sell" data-mk-dir="above">
+                <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <line x1="12" y1="19" x2="12" y2="5"></line>
+                  <polyline points="5 12 12 5 19 12"></polyline>
+                </svg>
+                <span>Rises by</span>
+              </button>
+              <button type="button" class="mk-dir" data-mk-side="sell" data-mk-dir="below">
+                <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <line x1="12" y1="5" x2="12" y2="19"></line>
+                  <polyline points="19 12 12 19 5 12"></polyline>
+                </svg>
+                <span>Falls by</span>
+              </button>
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer mk-modal-footer-split">
+          <span class="mk-modal-summary" id="mk-additem-summary"></span>
+          <span class="mk-modal-actions">
+            <button class="secondary-button" data-mk-close="mk-additem-modal"><span class="btn-label">Cancel</span></button>
+            <button class="primary-button" id="mk-additem-save" disabled><span class="btn-label">Add to Watchlist</span></button>
+          </span>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</template>

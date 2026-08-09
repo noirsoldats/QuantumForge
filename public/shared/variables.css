@@ -1,77 +1,207 @@
 /* ============================================
    Quantum Forge - Design Tokens
    Dark Glassmorphism Theme
+
+   Token naming
+   ------------
+   `--qf-*` is the canonical token set, matching the Quantum Forge Design System
+   (see `Quantum Forge UI Redesign/_ds/.../tokens/`). Use these in all new work.
+
+   The legacy `--color-*` / `--radius-*` / `--font-size-*` / `--shadow-*` /
+   `--space-*` names are kept as ALIASES so existing stylesheets keep working.
+   They resolve to the same values - there is no visual difference. Prefer the
+   `--qf-*` names when writing or porting anything.
    ============================================ */
 
 :root {
-  /* ---- Colors: Dark Glassmorphism Palette ---- */
-  --color-bg-base:          #1e1e2e;
-  --color-bg-elevated:      #2d2d44;
-  --color-bg-surface:       rgba(255, 255, 255, 0.05);
-  --color-bg-surface-hover: rgba(255, 255, 255, 0.08);
+  /* ============================================
+     CANONICAL: Design System tokens (--qf-*)
+     ============================================ */
 
-  --color-border:           rgba(100, 180, 255, 0.2);
-  --color-border-active:    rgba(100, 180, 255, 0.5);
-  --color-border-subtle:    rgba(255, 255, 255, 0.08);
+  /* ---- Base backgrounds ---- */
+  --qf-bg-base:          #1e1e2e;  /* app base (gradient start) */
+  --qf-bg-elevated:      #2d2d44;  /* panels, cards, menus (gradient end) */
+  --qf-bg-app-gradient:  linear-gradient(135deg, #1e1e2e 0%, #2d2d44 100%);
 
-  --color-accent:           #64b4ff;
-  --color-accent-bright:    #9d7fff;
-  --color-accent-dim:       rgba(100, 180, 255, 0.1);
-  --color-accent-glow:      rgba(100, 180, 255, 0.3);
+  /* Glass surfaces - translucent white over the dark base */
+  --qf-surface:          rgba(255, 255, 255, 0.05);
+  --qf-surface-hover:    rgba(255, 255, 255, 0.08);
+  --qf-surface-sunken:   rgba(0, 0, 0, 0.30);  /* inset fields, headers */
+  --qf-scrim:            rgba(0, 0, 0, 0.70);  /* modal backdrop */
 
-  --color-text-primary:     #e0e0e0;
-  --color-text-muted:       #a0a0b0;
-  --color-text-heading:     #ffffff;
+  /* ---- Borders (blue-tinted, translucent) ---- */
+  --qf-border:           rgba(100, 180, 255, 0.20);
+  --qf-border-active:    rgba(100, 180, 255, 0.50);
+  --qf-border-subtle:    rgba(255, 255, 255, 0.08);
 
-  --color-success:          #4ade80;
-  --color-success-dim:      rgba(74, 222, 128, 0.15);
-  --color-error:            #ef4444;
-  --color-error-dim:        rgba(239, 68, 68, 0.15);
-  --color-warning:          #ff9800;
-  --color-warning-dim:      rgba(255, 152, 0, 0.15);
-  --color-info:             #64b4ff;
-  --color-info-dim:         rgba(100, 180, 255, 0.15);
+  /* ---- Accents ---- */
+  --qf-accent:           #64b4ff;  /* primary - signal blue */
+  --qf-accent-bright:    #9d7fff;  /* secondary - plasma violet */
+  --qf-accent-dim:       rgba(100, 180, 255, 0.10);
+  --qf-accent-glow:      rgba(100, 180, 255, 0.30);
+  --qf-accent-gradient:   linear-gradient(135deg, #64b4ff 0%, #9d7fff 100%);
+  --qf-accent-gradient-h: linear-gradient(90deg, #64b4ff 0%, #9d7fff 100%);
 
-  /* ---- Spacing Scale ---- */
-  --space-1:  4px;
-  --space-2:  8px;
-  --space-3:  12px;
-  --space-4:  16px;
-  --space-5:  20px;
-  --space-6:  24px;
-  --space-8:  32px;
-  --space-10: 40px;
+  /* ---- Text ---- */
+  --qf-text-heading:     #ffffff;
+  --qf-text-primary:     #e0e0e0;
+  --qf-text-muted:       #a0a0b0;
+  --qf-text-faint:       #808090;
+  --qf-text-on-accent:   #ffffff;
 
-  /* ---- Border Radius ---- */
-  --radius-sm: 4px;
-  --radius-md: 6px;
-  --radius-lg: 8px;
+  /* ---- Semantic / status ---- */
+  --qf-success:          #4ade80;
+  --qf-success-dim:      rgba(74, 222, 128, 0.15);
+  --qf-error:            #ef4444;
+  --qf-error-dim:        rgba(239, 68, 68, 0.15);
+  --qf-warning:          #ff9800;
+  --qf-warning-dim:      rgba(255, 152, 0, 0.15);
+  --qf-info:             #64b4ff;
+  --qf-info-dim:         rgba(100, 180, 255, 0.15);
 
-  /* ---- Transitions ---- */
-  --transition-fast: 0.15s ease;
-  --transition-base: 0.25s ease;
-
-  /* ---- Shadows ---- */
-  --shadow-sm:        0 2px 8px rgba(0, 0, 0, 0.4);
-  --shadow-md:        0 4px 16px rgba(0, 0, 0, 0.5);
-  --shadow-lg:        0 8px 32px rgba(0, 0, 0, 0.6);
-  --shadow-accent:    0 4px 20px rgba(100, 180, 255, 0.25);
-  --shadow-accent-lg: 0 10px 25px rgba(100, 180, 255, 0.3);
+  /* Special: "default / owned" highlight. Gold is reserved for the default
+     character marker and owned-blueprint stars - never a general accent. */
+  --qf-gold:             #ffd700;
+  --qf-gold-dim:         rgba(255, 215, 0, 0.10);
 
   /* ---- Typography ---- */
-  --font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-  --font-size-xs:   0.75rem;
-  --font-size-sm:   0.85rem;
-  --font-size-base: 1rem;
-  --font-size-lg:   1.1rem;
-  --font-size-xl:   1.3rem;
-  --font-size-2xl:  1.6rem;
-  --font-size-3xl:  2rem;
+  --qf-font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+  --qf-font-mono: 'SF Mono', ui-monospace, Menlo, Consolas, monospace;
+
+  --qf-text-xs:   0.75rem;   /* 12px - labels, badges, footer */
+  --qf-text-sm:   0.85rem;   /* 13.6px - body-small, controls, table cells */
+  --qf-text-base: 1rem;      /* 16px - body */
+  --qf-text-lg:   1.1rem;    /* 17.6px - card titles, lead */
+  --qf-text-xl:   1.3rem;    /* 20.8px - section / card headings */
+  --qf-text-2xl:  1.6rem;    /* 25.6px - page subtitles */
+  --qf-text-3xl:  2rem;      /* 32px - page titles */
+
+  --qf-weight-regular:  400;
+  --qf-weight-medium:   500;
+  --qf-weight-semibold: 600;
+  --qf-weight-bold:     700;
+
+  --qf-leading-tight:  1.2;
+  --qf-leading-snug:   1.4;
+  --qf-leading-normal: 1.5;
+
+  --qf-tracking-tight: -0.5px;  /* large gradient headings */
+  --qf-tracking-label: 0.5px;   /* uppercase eyebrow / stat labels */
+
+  /* ---- Spacing scale (4px base) ---- */
+  --qf-space-1:  4px;
+  --qf-space-2:  8px;
+  --qf-space-3:  12px;
+  --qf-space-4:  16px;
+  --qf-space-5:  20px;
+  --qf-space-6:  24px;
+  --qf-space-8:  32px;
+  --qf-space-10: 40px;
+
+  /* ---- Border radius ---- */
+  --qf-radius-sm:   4px;   /* inputs, chips, small controls */
+  --qf-radius-md:   6px;   /* cards, panels, buttons, menus */
+  --qf-radius-lg:   8px;   /* buttons, large panels, character cards */
+  --qf-radius-pill: 99px;  /* badges, progress tracks, pulse dots */
+
+  /* ---- Z-index scale ---- */
+  --qf-z-base:    1;
+  --qf-z-sticky:  10;
+  --qf-z-overlay: 100;
+  --qf-z-modal:   1000;
+  --qf-z-toast:   2000;
+
+  /* ---- Shadows: dark drop shadows + blue accent glows ---- */
+  --qf-shadow-sm:        0 2px 8px rgba(0, 0, 0, 0.40);
+  --qf-shadow-md:        0 4px 16px rgba(0, 0, 0, 0.50);
+  --qf-shadow-lg:        0 8px 32px rgba(0, 0, 0, 0.60);
+  --qf-shadow-accent:    0 4px 20px rgba(100, 180, 255, 0.25);
+  --qf-shadow-accent-lg: 0 10px 25px rgba(100, 180, 255, 0.30);
+
+  --qf-focus-ring: 0 0 0 2px var(--qf-accent-dim);
+
+  /* ---- Transitions ---- */
+  --qf-transition-fast: 0.15s ease;
+  --qf-transition-base: 0.25s ease;
+  --qf-transition-slow: 0.30s ease;
+
+  /* ---- Backdrop blur (glass) ---- */
+  --qf-blur:       10px;  /* footers, sticky bars */
+  --qf-blur-modal: 4px;   /* modal scrim */
+
+  /* ============================================
+     LEGACY ALIASES - do not use in new code.
+     Same values as above; kept so existing CSS keeps working.
+     ============================================ */
+
+  /* ---- Colors ---- */
+  --color-bg-base:          var(--qf-bg-base);
+  --color-bg-elevated:      var(--qf-bg-elevated);
+  --color-bg-surface:       var(--qf-surface);
+  --color-bg-surface-hover: var(--qf-surface-hover);
+
+  --color-border:           var(--qf-border);
+  --color-border-active:    var(--qf-border-active);
+  --color-border-subtle:    var(--qf-border-subtle);
+
+  --color-accent:           var(--qf-accent);
+  --color-accent-bright:    var(--qf-accent-bright);
+  --color-accent-dim:       var(--qf-accent-dim);
+  --color-accent-glow:      var(--qf-accent-glow);
+
+  --color-text-primary:     var(--qf-text-primary);
+  --color-text-muted:       var(--qf-text-muted);
+  --color-text-heading:     var(--qf-text-heading);
+
+  --color-success:          var(--qf-success);
+  --color-success-dim:      var(--qf-success-dim);
+  --color-error:            var(--qf-error);
+  --color-error-dim:        var(--qf-error-dim);
+  --color-warning:          var(--qf-warning);
+  --color-warning-dim:      var(--qf-warning-dim);
+  --color-info:             var(--qf-info);
+  --color-info-dim:         var(--qf-info-dim);
+
+  /* ---- Spacing ---- */
+  --space-1:  var(--qf-space-1);
+  --space-2:  var(--qf-space-2);
+  --space-3:  var(--qf-space-3);
+  --space-4:  var(--qf-space-4);
+  --space-5:  var(--qf-space-5);
+  --space-6:  var(--qf-space-6);
+  --space-8:  var(--qf-space-8);
+  --space-10: var(--qf-space-10);
+
+  /* ---- Border Radius ---- */
+  --radius-sm: var(--qf-radius-sm);
+  --radius-md: var(--qf-radius-md);
+  --radius-lg: var(--qf-radius-lg);
+
+  /* ---- Transitions ---- */
+  --transition-fast: var(--qf-transition-fast);
+  --transition-base: var(--qf-transition-base);
+
+  /* ---- Shadows ---- */
+  --shadow-sm:        var(--qf-shadow-sm);
+  --shadow-md:        var(--qf-shadow-md);
+  --shadow-lg:        var(--qf-shadow-lg);
+  --shadow-accent:    var(--qf-shadow-accent);
+  --shadow-accent-lg: var(--qf-shadow-accent-lg);
+
+  /* ---- Typography ---- */
+  --font-family:    var(--qf-font-sans);
+  --font-size-xs:   var(--qf-text-xs);
+  --font-size-sm:   var(--qf-text-sm);
+  --font-size-base: var(--qf-text-base);
+  --font-size-lg:   var(--qf-text-lg);
+  --font-size-xl:   var(--qf-text-xl);
+  --font-size-2xl:  var(--qf-text-2xl);
+  --font-size-3xl:  var(--qf-text-3xl);
 
   /* ---- Z-index Scale ---- */
-  --z-base:    1;
-  --z-sticky:  10;
-  --z-overlay: 100;
-  --z-modal:   1000;
-  --z-toast:   2000;
+  --z-base:    var(--qf-z-base);
+  --z-sticky:  var(--qf-z-sticky);
+  --z-overlay: var(--qf-z-overlay);
+  --z-modal:   var(--qf-z-modal);
+  --z-toast:   var(--qf-z-toast);
 }

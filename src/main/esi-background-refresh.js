@@ -27,6 +27,7 @@ const {
   saveWalletTransactions,
   saveWalletJournal,
 } = require('./esi-wallet');
+const { fetchServerStatus } = require('./esi-server-status');
 
 // Corp wallets are per-division. When a character has no divisions configured,
 // fall back to the master wallet (division 1) so the cycle still fetches something.
@@ -35,11 +36,67 @@ function enabledDivisionsFor(characterId) {
   return (enabledDivisions && enabledDivisions.length > 0) ? enabledDivisions : [1];
 }
 
-const TICK_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
+// The cycle is SELF-SCHEDULING: after each pass it asks the gate when the
+// soonest endpoint next comes due and sleeps until then. These only clamp it.
+//
+//   MIN — never busier than this, even if something reports overdue. Also the
+//         floor for the fastest endpoints (server_status is 1 min).
+//   MAX — a heartbeat, so a newly-added character is picked up even when
+//         nothing is tracked yet.
+const MIN_TICK_MS = 30 * 1000;      // 30 seconds
+const MAX_TICK_MS = 5 * 60 * 1000;  // 5 minutes
 
-let intervalHandle = null;
+/**
+ * The endpoint_type values this cycle actually fetches.
+ *
+ * Used to ask the gate "when is the next of MY endpoints due?". Most tracked
+ * endpoints (assets, blueprints, skills, market orders...) are fetched on
+ * demand by their own screens - waking the cycle for those would just burn a
+ * pass that fetches nothing. Keep in step with the task lists below.
+ */
+const CYCLE_ENDPOINT_TYPES = [
+  'server_status',
+  'industry_jobs',
+  'corporation_industry_jobs',
+  'wallet_transactions',
+  'corporation_wallet_transactions',
+  'wallet_journal',
+  'corporation_wallet_journal',
+];
+
+let timerHandle = null;
+let nextTickAt = null;
+let stopped = false;
 let lastCycleAt = null;
 let cycleRunning = false;
+
+/**
+ * Endpoints that belong to nobody - no character, no corporation, no auth.
+ *
+ * These run FIRST and outside the "any characters?" guard, because they are
+ * still meaningful on a fresh install with no character connected.
+ *
+ * Server status lives here rather than in the footer: it used to be fetched by
+ * a per-window footer timer, so N open windows meant N independent fetch
+ * cycles, and closing the last window stopped it entirely. Now main fetches it
+ * once and every footer just listens for the resulting esi:data-changed.
+ */
+const GLOBAL_TASKS = [
+  {
+    name: 'server_status',
+    run: async () => {
+      // Three shapes: a fresh fetch returns the status object directly, a
+      // rate-limited one returns { success, data, cached }, and a failure
+      // returns { success: false, error }.
+      const result = await fetchServerStatus();
+      if (!result || result.success === false) {
+        throw new Error(result?.error || 'server status fetch failed');
+      }
+      if (result.cached) return 'cached';
+      return result.players != null ? `${result.players} players` : 'ok';
+    },
+  },
+];
 
 /**
  * Per-character endpoint tasks. Each returns a short result tag for logging.
@@ -198,17 +255,41 @@ async function runRefreshCycle() {
 
   const summary = {
     startedAt,
+    global: [],
     characters: [],
     corporations: [],
     errors: [],
   };
 
   try {
+    // Unauthenticated endpoints first, and BEFORE the no-characters guard:
+    // they are still meaningful on a fresh install with nothing connected.
+    for (const task of GLOBAL_TASKS) {
+      try {
+        const result = await task.run();
+        summary.global.push({ task: task.name, result });
+      } catch (error) {
+        if (error.code === 'ESI_RATE_LIMITED') {
+          console.log(`[ESI Refresh] ${task.name} rate-limited, will retry next tick`);
+        } else {
+          console.error(`[ESI Refresh] ${task.name} failed:`, error.message);
+        }
+        summary.errors.push({ task: task.name, error: error.message, code: error.code });
+      }
+    }
+
     const characters = getCharacters();
     if (!characters || characters.length === 0) {
-      console.log('[ESI Refresh] No authenticated characters — nothing to do');
+      console.log('[ESI Refresh] No authenticated characters — global tasks only');
       lastCycleAt = Date.now();
-      return { ...summary, finishedAt: lastCycleAt, characterCount: 0 };
+      summary.finishedAt = lastCycleAt;
+      // Still emit: the footer and any freshness badge are driven by this,
+      // and they must update on a fresh install too.
+      try {
+        const { emitCycleComplete } = require('./data-events');
+        emitCycleComplete(summary);
+      } catch (_) { /* never let a listener break the cycle */ }
+      return { ...summary, characterCount: 0 };
     }
 
     // Personal endpoints for every character.
@@ -254,6 +335,17 @@ async function runRefreshCycle() {
     summary.characterCount = characters.length;
     summary.corporationCount = corpMap.size;
     console.log(`[ESI Refresh] Cycle complete in ${lastCycleAt - startedAt}ms — ${characters.length} char(s), ${corpMap.size} corp(s), ${summary.errors.length} error(s)`);
+
+    // This summary used to be returned to callers that only had a .catch(), so
+    // it was built and then thrown away. Emit it: it is the app's only signal
+    // that a whole refresh pass landed.
+    try {
+      const { emitCycleComplete } = require('./data-events');
+      emitCycleComplete(summary);
+    } catch (_) {
+      // Never let a listener break the cycle.
+    }
+
     return summary;
   } finally {
     cycleRunning = false;
@@ -265,30 +357,74 @@ async function runRefreshCycle() {
  * immediate cycle, then on the interval.
  */
 function startBackgroundRefresh() {
-  if (intervalHandle) {
-    clearInterval(intervalHandle);
-    intervalHandle = null;
+  stopBackgroundRefresh();
+  stopped = false;
+  console.log('[ESI Refresh] Starting global background refresh (self-scheduling)');
+
+  // Kick off an immediate cycle; it schedules the next one when it finishes.
+  runCycleThenReschedule();
+}
+
+/**
+ * Run a cycle and schedule the next one for when something is actually due.
+ *
+ * A fixed period was wrong in both directions: it delayed fast endpoints (a
+ * 1-minute floor polled every 5 minutes) and beat against slow ones (a 5-minute
+ * floor polled every 5 minutes wasted every other tick, halving the real rate).
+ * Asking the gate when the soonest endpoint comes due removes both problems -
+ * the policy table becomes the only thing deciding cadence, which is what it
+ * was always supposed to be.
+ */
+async function runCycleThenReschedule() {
+  try {
+    await runRefreshCycle();
+  } catch (error) {
+    console.error('[ESI Refresh] Cycle error:', error);
   }
-  console.log(`[ESI Refresh] Starting global background refresh (every ${TICK_INTERVAL_MS / 60000} min)`);
 
-  // Kick off an immediate cycle (don't await — let it run in the background).
-  runRefreshCycle().catch(err => console.error('[ESI Refresh] Initial cycle error:', err));
+  if (stopped) return;
 
-  intervalHandle = setInterval(() => {
-    runRefreshCycle().catch(err => console.error('[ESI Refresh] Cycle error:', err));
-  }, TICK_INTERVAL_MS);
+  const delay = computeNextDelayMs();
+  nextTickAt = Date.now() + delay;
+  console.log(`[ESI Refresh] Next cycle in ${Math.round(delay / 1000)}s`);
 
+  timerHandle = setTimeout(runCycleThenReschedule, delay);
   // Don't let the timer keep the process/event loop alive on quit.
-  if (intervalHandle.unref) intervalHandle.unref();
+  if (timerHandle.unref) timerHandle.unref();
+}
+
+/**
+ * How long to wait before the next cycle.
+ *
+ * Clamped at both ends: MIN stops a burst of back-to-back cycles when several
+ * endpoints are perpetually due (or the DB reports something already overdue),
+ * and MAX keeps a heartbeat so a newly-added character or a cleared table is
+ * picked up even when nothing is tracked yet.
+ */
+function computeNextDelayMs() {
+  let nextEligibleAt = null;
+  try {
+    const { getNextEligibleAt } = require('./esi-status-tracker');
+    nextEligibleAt = getNextEligibleAt(CYCLE_ENDPOINT_TYPES);
+  } catch (error) {
+    console.error('[ESI Refresh] Could not read next eligible time:', error);
+  }
+
+  // Nothing tracked yet (fresh install, or the status table was cleared).
+  if (nextEligibleAt == null) return MAX_TICK_MS;
+
+  const delay = nextEligibleAt - Date.now();
+  return Math.min(MAX_TICK_MS, Math.max(MIN_TICK_MS, delay));
 }
 
 /**
  * Stop the background refresh cycle.
  */
 function stopBackgroundRefresh() {
-  if (intervalHandle) {
-    clearInterval(intervalHandle);
-    intervalHandle = null;
+  stopped = true;
+  if (timerHandle) {
+    clearTimeout(timerHandle);
+    timerHandle = null;
     console.log('[ESI Refresh] Stopped global background refresh');
   }
 }
@@ -300,8 +436,10 @@ function getGlobalRefreshStatus() {
   return {
     running: cycleRunning,
     lastCycleAt,
-    intervalMs: TICK_INTERVAL_MS,
-    active: intervalHandle != null,
+    nextTickAt: timerHandle ? nextTickAt : null,
+    minTickMs: MIN_TICK_MS,
+    maxTickMs: MAX_TICK_MS,
+    active: timerHandle != null,
   };
 }
 
