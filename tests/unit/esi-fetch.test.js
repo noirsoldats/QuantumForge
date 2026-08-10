@@ -216,6 +216,117 @@ describe('pagination', () => {
     await esiFetch('skills', 'k', 'https://x/', { characterId: CHARACTER_ID });
     expect(global.fetch).toHaveBeenCalledTimes(1);
   });
+
+  /*
+   * onProgress reports the COUNT of pages fetched, never the number of the page
+   * that finished last. With parallelPages the pages resolve out of order, so
+   * reporting the page number made the Market Manager bar jump backwards and
+   * overstate itself - page 5 arriving first claimed 5 of 5 done.
+   */
+  describe('onProgress counts pages, not page numbers', () => {
+    /** Resolve page N only when its turn comes in `order`. */
+    function mockPagesResolvingInOrder(totalPages, order) {
+      const gates = new Map();
+      global.fetch.mockImplementation((url) => {
+        const m = /[?&]page=(\d+)/.exec(url);
+        const page = m ? parseInt(m[1], 10) : 1;
+        if (page === 1) {
+          return Promise.resolve(makeResponse({
+            body: [1], headers: { 'X-Pages': String(totalPages) },
+          }));
+        }
+        return new Promise((resolve) => {
+          gates.set(page, () => resolve(makeResponse({ body: [page] })));
+        });
+      });
+      // Release the gates in the requested order, once all are registered.
+      const release = async () => {
+        for (const page of order) {
+          while (!gates.has(page)) await Promise.resolve();
+          gates.get(page)();
+          await Promise.resolve();
+        }
+      };
+      return release;
+    }
+
+    test('reports a strictly increasing count when pages finish out of order', async () => {
+      const seen = [];
+      // 5 pages total; 2..5 come back scrambled.
+      const release = mockPagesResolvingInOrder(5, [4, 2, 5, 3]);
+
+      const p = esiFetch('market_orders', 'k', 'https://x/', {
+        requiresAuth: false,
+        skipGate: true,
+        parallelPages: true,
+        onProgress: (prog) => seen.push(prog),
+      });
+      await release();
+      await p;
+
+      // Page 1 is already in hand, so the first report is 2.
+      expect(seen.map(s => s.currentPage)).toEqual([2, 3, 4, 5]);
+      expect(seen.every(s => s.totalPages === 5)).toBe(true);
+      expect(seen[seen.length - 1].progress).toBe(100);
+    });
+
+    test('a page that fails out is NOT counted, and is reported as partial', async () => {
+      const seen = [];
+      // Page 1 carries X-Pages, page 2 fails out, page 3 succeeds. NOTE: page 1
+      // is itself requested as `page=1`, so it must be matched BEFORE the
+      // generic `page=` branch - otherwise X-Pages never lands, totalPages
+      // stays 1, and the pagination path never runs at all.
+      global.fetch.mockImplementation((url) => {
+        if (/[?&]page=1(&|$)/.test(url)) {
+          return Promise.resolve(makeResponse({ body: [1], headers: { 'X-Pages': '3' } }));
+        }
+        // A 500 throws straight out of fetchOne with no retry/backoff; a
+        // transport rejection would burn ~7s of real retry delay here. Either
+        // way it reaches the tolerated-failure catch already fully failed.
+        if (/[?&]page=2(&|$)/.test(url)) {
+          return Promise.resolve(makeResponse({ status: 500, body: 'boom' }));
+        }
+        return Promise.resolve(makeResponse({ body: [9] }));
+      });
+
+      const result = await esiFetch('market_orders', 'k', 'https://x/', {
+        requiresAuth: false,
+        skipGate: true,
+        parallelPages: true,
+        onProgress: (prog) => seen.push(prog),
+      });
+
+      // Only the ONE page that succeeded is counted. Progress stops at 2 of 3 -
+      // a failed page must never be painted over as completed.
+      expect(seen.map(s => s.currentPage)).toEqual([2]);
+      expect(seen[seen.length - 1].progress).toBeCloseTo(66.67, 1);
+
+      // ...and the shortfall is surfaced, so the caller can raise an error
+      // rather than reporting a clean refresh over missing orders.
+      expect(result.partial).toBe(true);
+      expect(result.failedPages).toHaveLength(1);
+      expect(result.failedPages[0].page).toBe(2);
+      // Page 2's orders are genuinely absent from the data.
+      expect(result.data).toEqual([1, 9]);
+    });
+
+    test('a fully successful paginated fetch is not flagged partial', async () => {
+      const result = await (async () => {
+        global.fetch.mockImplementation((url) => (
+          /[?&]page=1(&|$)/.test(url)
+            ? Promise.resolve(makeResponse({ body: [1], headers: { 'X-Pages': '2' } }))
+            : Promise.resolve(makeResponse({ body: [2] }))
+        ));
+        return esiFetch('market_orders', 'k', 'https://x/', {
+          requiresAuth: false, skipGate: true, parallelPages: true,
+        });
+      })();
+
+      expect(result.partial).toBeUndefined();
+      expect(result.failedPages).toBeUndefined();
+      expect(result.data).toEqual([1, 2]);
+    });
+  });
 });
 
 describe('gate', () => {

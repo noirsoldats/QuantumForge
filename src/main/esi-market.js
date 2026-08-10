@@ -235,6 +235,30 @@ async function fetchMarketOrders(regionId, typeId = null, locationFilter = null,
     // Store in database
     storeMarketOrders(allOrders, regionId);
 
+    /*
+     * A partial fetch (pages that failed out after their retries) still stamps
+     * fetch metadata like a complete one. Deliberate: the pages already spent
+     * their retries, so skipping the stamp would send the next refresh straight
+     * back at a region that is evidently having trouble. The TTL is short, so
+     * waiting it out costs little and the backoff is worth more than the gap.
+     *
+     * The user is told the data is incomplete rather than left to infer it.
+     */
+    if (result.partial) {
+      const failed = result.failedPages || [];
+      console.error(
+        `[Market] Region ${regionId}: ${failed.length} of ${result.pages} pages failed - ` +
+        `stored ${allOrders.length} orders; data for this region is incomplete until the next refresh.`
+      );
+      emitFetchProgress({
+        regionId,
+        error: true,
+        failedPages: failed.length,
+        totalPages: result.pages,
+        message: `Region ${regionId}: ${failed.length} of ${result.pages} pages failed to fetch. Market data is incomplete.`,
+      });
+    }
+
     // Update fetch metadata
     updateFetchMetadata(cacheKey, result.cacheExpiresAt);
 

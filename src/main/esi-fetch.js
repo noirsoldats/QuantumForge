@@ -237,6 +237,10 @@ function withPage(url, page) {
  * @param {string} [opts.category] - Status category ('character' | 'corporation' | 'universe')
  * @param {string} [opts.endpointLabel] - Human label for the status row
  * @returns {Promise<Object>} On success: { data, cacheExpiresAt, nextAllowedAt, rateLimit, status, pages }.
+ *   If some pages failed out after their retries, adds { partial: true,
+ *   failedPages: [{ page, message }] } - `data` is short by those pages, and
+ *   onProgress will have stopped below totalPages. Callers should surface this
+ *   rather than treating the result as a complete refresh.
  *   When gated: { skipped: true, reason, nextAllowedAt }.
  *   Throws tagged errors (ESI_TOKEN_REFRESH_FAILED, ESI_SCOPE_ERROR, ESI_RATE_LIMITED).
  *   Role-403 returns { data: [], roleForbidden: true } (caller maps to empty).
@@ -453,16 +457,32 @@ async function esiFetch(endpointType, callKey, url, opts = {}) {
       if (xPages) totalPages = parseInt(xPages, 10) || 1;
     }
 
+    // Pages that failed out completely (all retries exhausted). Surfaced on the
+    // result so a caller can report "8 of 9 pages" instead of treating a short
+    // result as a clean refresh.
+    const failedPages = [];
+
     let allData;
     if (Array.isArray(first.body)) {
       allData = [...first.body];
 
       if (policy.paginated && totalPages > 1) {
+        // Progress is the COUNT of finished pages, not the page number that
+        // happened to finish last. With parallelPages the pages complete out of
+        // order, so reporting `p` made the bar jump around and read wrong (page
+        // 7 of 9 arriving first claimed 78% when one page was done). Page 1 is
+        // already in hand by this point, hence the starting value.
+        let pagesDone = 1;
+        const reportPage = () => {
+          if (!onProgress) return;
+          pagesDone += 1;
+          const done = pagesDone;
+          try { onProgress({ currentPage: done, totalPages, progress: (done / totalPages) * 100 }); } catch (_) { /* ignore */ }
+        };
+
         const fetchPage = async (p) => {
           const r = await fetchOne(withPage(url, p));
-          if (onProgress) {
-            try { onProgress({ currentPage: p, totalPages, progress: (p / totalPages) * 100 }); } catch (_) { /* ignore */ }
-          }
+          reportPage();
           return (r.body && Array.isArray(r.body)) ? r.body : [];
         };
 
@@ -474,6 +494,12 @@ async function esiFetch(endpointType, callKey, url, opts = {}) {
               // Propagate rate-limit/scope errors; swallow per-page transient failures.
               if (err.code === 'ESI_RATE_LIMITED' || err.code === 'ESI_SCOPE_ERROR') throw err;
               console.error(`[esiFetch] page fetch failed for ${endpointType}: ${err.message}`);
+              // Deliberately does NOT advance the count. This page already
+              // exhausted its retries in fetchWithRetry, so it did not succeed,
+              // and progress counts successes - the bar stops short (e.g. 8 of
+              // 9) and the caller reports the error. Counting the attempt would
+              // paint 100% over a result silently missing a page's orders.
+              failedPages.push({ page: p, message: err.message });
               return [];
             }));
           }
@@ -520,6 +546,8 @@ async function esiFetch(endpointType, callKey, url, opts = {}) {
       rateLimit,
       status: lastStatus,
       pages: totalPages,
+      // Present only when pages failed out; `data` is short by those pages.
+      ...(failedPages.length ? { failedPages, partial: true } : {}),
     };
   } catch (error) {
     // Preserve tagged errors for callers/IPC to broadcast; record network errors.

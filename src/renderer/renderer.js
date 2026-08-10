@@ -499,7 +499,9 @@ async function refreshMarketData() {
     if (!p) return;
     const pct = Number(p.progress);
     if (Number.isFinite(pct)) {
-      const pages = p.totalPages > 1 ? ` · page ${p.currentPage} of ${p.totalPages}` : '';
+      // `currentPage` is the COUNT of pages fetched, not a page number - pages
+      // come back out of order, so it never identifies a specific page.
+      const pages = p.totalPages > 1 ? ` · ${p.currentPage} of ${p.totalPages} pages` : '';
       setMarketProgress(true, {
         percent: pct,
         indeterminate: false,

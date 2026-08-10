@@ -616,8 +616,16 @@ async function fetchMarketData() {
     updateFetchStatus('market-prices', 'in-progress', 'Fetching market orders...');
 
     disposeProgress = window.electronAPI.market.onFetchProgress((progress) => {
+      if (!progress) return;
+      // Failed-page notices share this channel and carry no counts.
+      if (progress.error) {
+        updateFetchStatus('market-prices', 'in-progress',
+          progress.message || 'Some market pages failed to fetch.');
+        return;
+      }
+      // Count of pages fetched, not a page number - they arrive out of order.
       updateFetchStatus('market-prices', 'in-progress',
-        `Fetching page ${progress.currentPage}/${progress.totalPages}...`);
+        `Fetched ${progress.currentPage}/${progress.totalPages} pages...`);
     });
 
     const result = await window.electronAPI.market.manualRefresh(regionId);

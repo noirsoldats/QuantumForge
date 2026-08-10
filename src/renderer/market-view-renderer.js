@@ -452,20 +452,40 @@
 
     const pagesEl = document.getElementById('mk-refresh-pages');
     if (pagesEl) {
+      // "5 of 9 pages", not "page 5 of 9" - `current` is the COUNT of pages
+      // fetched so far, and pages arrive out of order, so it does not identify
+      // any particular page.
       pagesEl.textContent = refreshProgress.pages
-        ? `page ${refreshProgress.pages.current} of ${refreshProgress.pages.total}`
+        ? `${refreshProgress.pages.current} of ${refreshProgress.pages.total} pages`
         : '';
     }
 
     // Overall bar: whole phases completed, plus fractional progress within the
-    // current one. Page counts deliberately do NOT feed this - they would make
-    // the bar jump around inside a single step.
+    // current one.
+    //
+    // Page counts DO feed this now. They used to be excluded because they were
+    // the number of the last page to finish, which arrives out of order under
+    // parallel pagination and made the bar jump backwards. It is now a COUNT of
+    // pages fetched, so it only ever increases and it smooths the current
+    // item's share instead of the bar sitting still through a 20-page fetch.
+    //
+    // A page that fails out is never counted, so a partial fetch stops short of
+    // its total - that is intended, and the error is reported separately.
     const fill = document.getElementById('mk-refresh-fill');
     if (fill) {
       const total = REFRESH_PHASES.length;
       const doneCount = refreshProgress.completed.length;
+      // `current` counts items STARTED, so the current item's share is already
+      // included. Page counts refine that last item's share - but only when we
+      // actually have them: `pages` is null for a single-page item and between
+      // stages, and subtracting a whole item there would walk the bar backwards.
+      const pages = refreshProgress.pages;
+      const items = refreshProgress.current;
+      const itemsDone = pages && pages.total > 0
+        ? Math.max(items - 1, 0) + Math.min(pages.current / pages.total, 1)
+        : items;
       const within = refreshProgress.total > 0
-        ? Math.min(refreshProgress.current / refreshProgress.total, 1)
+        ? Math.min(itemsDone / refreshProgress.total, 1)
         : 0;
       const ratio = Math.min((doneCount + within) / total, 1);
       fill.style.width = `${Math.round(ratio * 100)}%`;
@@ -4184,7 +4204,17 @@
     // Feeds the sub-line of the same dialog - a 20-page structure otherwise
     // looks stalled for its whole duration.
     ctx.track(window.electronAPI.market.onFetchProgress((p) => {
-      if (!p || !refreshProgress.open) return;
+      if (!p) return;
+
+      // A page that failed out after its retries. Raised even when the dialog
+      // is closed - the fetch runs on regardless, and silently serving prices
+      // off an incomplete order book is exactly what this is here to prevent.
+      if (p.error) {
+        toast(p.message || 'Some market pages failed to fetch. Data is incomplete.', 'error');
+        return;
+      }
+
+      if (!refreshProgress.open) return;
       refreshProgress.pages =
         p.totalPages > 1 ? { current: p.currentPage, total: p.totalPages } : null;
       renderRefreshModal();
