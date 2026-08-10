@@ -163,6 +163,26 @@
                 <span class="bpc-card-title">Manufacturing Costs &amp; Profit</span>
               </div>
               <div class="bpc-cost-body">
+                <!-- Shown only with "No Facility (No Bonuses)". The job
+                     installation fee is derived from the system's cost index,
+                     so without a facility there is no system to levy it - job
+                     cost is 0 and the profit below is therefore optimistic.
+                     Hidden via [hidden], which the view CSS forces to win. -->
+                <div class="bpc-incomplete-note" id="bpc-no-facility-note" hidden>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                       stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
+                    <line x1="12" y1="9" x2="12" y2="13"></line>
+                    <line x1="12" y1="17" x2="12.01" y2="17"></line>
+                  </svg>
+                  <span>
+                    <strong>Incomplete estimate.</strong> With no facility selected there is no
+                    system cost index, so the <strong>job installation fee cannot be calculated
+                    and is counted as 0</strong>. Material costs, taxes and sell value are
+                    accurate — but actual profit will be <em>lower</em> than shown. Pick a
+                    facility for a complete figure.
+                  </span>
+                </div>
                 <div class="bpc-section-label">Cost Breakdown</div>
                 <div id="bpc-cost-rows"></div>
                 <div class="bpc-kv bpc-kv-total">

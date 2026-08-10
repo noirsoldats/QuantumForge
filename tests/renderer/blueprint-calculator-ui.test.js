@@ -739,6 +739,66 @@ describe('pricing', () => {
     expect(document.getElementById('bpc-total-cost').textContent).toBe('—');
     expect(document.getElementById('bpc-profit-value').textContent).toBe('—');
   });
+
+  /*
+   * "No Facility (No Bonuses)" prices materials, taxes and sell value fine, but
+   * the job installation fee comes from the SYSTEM cost index - with no
+   * facility there is no system, so job cost is 0 and profit is optimistic.
+   *
+   * (Pricing used to be skipped entirely without a facility, leaving Cost/Fee/
+   * Profit blank. That is fixed; this note is what keeps the now-populated
+   * numbers honest.)
+   */
+  describe('no-facility incomplete-estimate note', () => {
+    test('is hidden when a facility is selected', async () => {
+      await selectRifter();
+
+      expect(document.getElementById('bpc-no-facility-note').hidden).toBe(true);
+    });
+
+    test('is shown when no facility is selected', async () => {
+      // No facilities configured -> nothing to default to -> facilityId null,
+      // which is the same state the "No Facility (No Bonuses)" option produces.
+      facilities = [];
+      await selectRifter();
+
+      expect(document.getElementById('bpc-no-facility-note').hidden).toBe(false);
+    });
+
+    test('says job cost is the missing piece and profit is overstated', async () => {
+      facilities = [];
+      await selectRifter();
+
+      const text = document.getElementById('bpc-no-facility-note').textContent;
+      // The specific reason, not a vague "results may be inaccurate".
+      expect(text).toMatch(/job installation fee/i);
+      expect(text).toMatch(/incomplete/i);
+      // Direction of the error matters: real profit is LOWER.
+      expect(text).toMatch(/lower/i);
+    });
+
+    test('the view CSS makes [hidden] win, so the note really is hidden', async () => {
+      // jsdom does not apply stylesheets, so `el.hidden === true` passing proves
+      // nothing about what the user sees - a stray `display` rule would leave it
+      // on screen. Assert against the stylesheet text instead (CLAUDE.md 6a).
+      const fs = require('fs');
+      const path = require('path');
+      const css = fs.readFileSync(
+        path.join(__dirname, '../../public/blueprint-calculator-view.css'), 'utf8'
+      );
+
+      expect(css).toMatch(/#bpc-view\s*\[hidden\]\s*\{[^}]*display:\s*none\s*!important/);
+    });
+
+    test('stays hidden when pricing is unavailable entirely', async () => {
+      // Nothing to qualify - the note would be noise on top of em-dashes.
+      facilities = [];
+      calcResult.pricing = null;
+      await selectRifter();
+
+      expect(document.getElementById('bpc-no-facility-note').hidden).toBe(true);
+    });
+  });
 });
 
 /* ------------------------------------------------------------- invention */

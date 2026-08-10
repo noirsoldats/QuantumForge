@@ -590,9 +590,24 @@ async function calculateBlueprintMaterials(blueprintTypeId, runs = 1, meLevel = 
         }
     }
 
-    // Calculate pricing if facility is provided (has systemId for cost calculation)
+    /*
+     * Pricing does NOT require a facility.
+     *
+     * This used to be gated on `facility && facility.systemId`, so choosing
+     * "No Facility (No Bonuses)" in the Blueprint Calculator produced correct
+     * material quantities with EMPTY Cost / Fee / Profit - the whole pricing
+     * block was skipped.
+     *
+     * Only the job-cost half needs a system: it looks up that system's cost
+     * index. Material costs, output value and taxes need nothing from a
+     * facility, and calculateManufacturingJobCost already degrades correctly
+     * without one - getCostIndices(null) returns [], so it returns a zeroed
+     * job-cost breakdown rather than failing. A facility-less estimate is
+     * therefore honest: real material cost and profit, with the installation
+     * fee shown as 0 because no system was chosen to levy it.
+     */
     let pricing = null;
-    if (facility && facility.systemId) {
+    if (marketSet) {
         try {
             // Get skill levels from default character (if available)
             const {getDefaultCharacter, getEffectiveSkillLevel} = require('./settings-manager');
@@ -611,22 +626,24 @@ async function calculateBlueprintMaterials(blueprintTypeId, runs = 1, meLevel = 
             }
 
             const {calculateBlueprintPricing} = require('./blueprint-pricing');
-            if (marketSet) {
-                pricing = await calculateBlueprintPricing(
-                    adjustedMaterials,
-                    {
-                        typeID:   product.typeID,
-                        quantity: product.quantity * runs
-                    },
-                    facility.systemId,
-                    facility,
-                    accountingSkillLevel,
-                    blueprintTypeId, // Pass blueprint type ID for EIV calculation
-                    runs, // Pass runs for EIV calculation
-                    brokerRelationsSkillLevel,
-                    marketSet
-                );
-            }
+            pricing = await calculateBlueprintPricing(
+                adjustedMaterials,
+                {
+                    typeID:   product.typeID,
+                    quantity: product.quantity * runs
+                },
+                // No facility -> no system -> no cost index -> job cost 0.
+                // Reading facility.systemId unguarded here threw a TypeError
+                // that the catch below swallowed into `pricing = null`, which
+                // is what made the empty Cost/Fee/Profit look intentional.
+                facility ? facility.systemId : null,
+                facility,
+                accountingSkillLevel,
+                blueprintTypeId, // Pass blueprint type ID for EIV calculation
+                runs, // Pass runs for EIV calculation
+                brokerRelationsSkillLevel,
+                marketSet
+            );
         } catch (error) {
             console.error('Error calculating blueprint pricing:', error);
             pricing = null;

@@ -662,6 +662,19 @@
     feeRows.textContent = '';
     priceHost.textContent = '';
 
+    /*
+     * "No Facility (No Bonuses)" still prices materials, taxes and sell value,
+     * but the job installation fee comes from the SYSTEM cost index - with no
+     * facility there is no system, so job cost is 0 and the profit shown is
+     * optimistic. Say so rather than presenting it as a complete figure.
+     *
+     * Driven by the facility selection, not by the job cost being 0: a real
+     * facility can legitimately produce 0 (no cost index cached yet), and that
+     * is a different situation from having chosen no facility at all.
+     */
+    const noFacilityNote = $('bpc-no-facility-note');
+    if (noFacilityNote) noFacilityNote.hidden = !!state.facilityId || !pricing;
+
     if (!pricing) {
       $('bpc-total-cost').textContent = '—';
       $('bpc-sell-value').textContent = '—';

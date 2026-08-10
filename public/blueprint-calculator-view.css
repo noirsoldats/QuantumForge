@@ -314,6 +314,35 @@
   justify-content: space-between;
 }
 
+/* "No facility -> job cost cannot be calculated" warning above the cost
+   breakdown. `display: flex` is safe here because the view-wide
+   `#bpc-view [hidden]` rule at the top of this file carries `!important` and
+   still wins - see the note there before changing either. */
+#bpc-view .bpc-incomplete-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-bottom: 12px;
+  padding: 9px 11px;
+  border: 1px solid var(--qf-warning);
+  border-radius: var(--qf-radius-md);
+  background: var(--qf-warning-dim);
+  color: var(--qf-text-primary);
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+
+#bpc-view .bpc-incomplete-note svg {
+  flex: 0 0 auto;
+  margin-top: 1px;
+  color: var(--qf-warning);
+}
+
+#bpc-view .bpc-incomplete-note strong {
+  color: var(--qf-warning);
+  font-weight: 700;
+}
+
 /* Numeric inputs: sunken background to match the dropdowns beside them, and an
    explicit width so they never stretch across the row (binding rule 4). */
 #bpc-view .bpc-num {
