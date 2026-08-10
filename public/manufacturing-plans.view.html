@@ -97,19 +97,31 @@
             </div>
           </div>
           <div class="mp-plan-actions">
-            <button type="button" class="btn btn-secondary" id="mp-refresh-plan" title="Refresh ESI data">
+            <!-- Replaces a dead "Refresh" button that had no handler anywhere -
+                 it claimed to refresh ESI data but did nothing when clicked.
+                 ESI matching lives on the Jobs/Transactions tabs; fetching is
+                 handled by the background cycle. -->
+            <button type="button" class="btn btn-secondary" id="mp-recalc-all"
+                    title="Re-reads your current facility settings and rebuilds every quantity in this plan from scratch. Use this if the numbers look wrong or the plan was built in an older version. Does NOT change locked prices.">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                    stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <path d="M21 2v6h-6M3 12a9 9 0 0 1 15-6.7L21 8M3 22v-6h6M21 12a9 9 0 0 1-15 6.7L3 16"></path>
+                <path d="M23 4v6h-6"></path>
+                <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
               </svg>
-              Refresh
+              <!-- Label in its own span: the busy state swaps this text, and
+                   setting textContent on the button would delete the icon. -->
+              <span id="mp-recalc-all-label">Rebuild Plan</span>
             </button>
-            <button type="button" class="btn btn-secondary" id="mp-complete-plan">
+            <button type="button" class="btn btn-secondary" id="mp-complete-plan"
+                    title="Mark this plan complete. Completed plans are hidden by the Active filter in the plan list; you can reopen it at any time.">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                    stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                 <polyline points="20 6 9 17 4 12"></polyline>
               </svg>
-              Mark Complete
+              <!-- Label in its own span: it flips to "Reopen Plan" on a
+                   completed plan, and setting textContent on the button would
+                   delete the icon. -->
+              <span id="mp-complete-plan-label">Mark Complete</span>
             </button>
             <button type="button" class="mp-icon-btn mp-icon-btn-danger" id="delete-plan-btn"
                     aria-label="Delete plan" title="Delete plan">
@@ -238,13 +250,16 @@
                 <input type="checkbox" id="mp-show-owned">
                 Show Owned
               </label>
-              <button type="button" class="btn btn-primary" id="mp-relock">
+              <button type="button" class="btn btn-primary" id="mp-relock"
+                      title="Replace this plan's frozen prices with the current market price for every material. This is the only action that changes locked prices.">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                      stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                   <rect x="3" y="11" width="18" height="11" rx="2"></rect>
                   <path d="M7 11V7a5 5 0 0 1 9.9-1"></path>
                 </svg>
-                Re-lock Prices
+                <!-- Label in its own span: the busy state swaps this text, and
+                     setting textContent on the button would delete the icon. -->
+                <span id="mp-relock-label">Re-lock Prices</span>
               </button>
             </div>
           </div>
@@ -586,6 +601,34 @@
         <div class="modal-footer">
           <button type="button" class="btn btn-secondary" data-mp-close="mp-create-modal">Cancel</button>
           <button type="button" class="btn btn-primary" id="mp-create-confirm">Create Plan</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===================== RENAME PLAN MODAL =====================
+         The pencil beside the plan title opens this. Edits name AND
+         description, since both go through the same plans.update call. -->
+    <div class="modal" id="mp-rename-modal" role="dialog" aria-modal="true"
+         aria-labelledby="mp-rename-title" hidden>
+      <div class="modal-content mp-modal">
+        <div class="mp-card-accent"></div>
+        <div class="modal-header">
+          <h2 id="mp-rename-title">Rename Plan</h2>
+          <button type="button" class="modal-close" data-mp-close="mp-rename-modal"
+                  aria-label="Close dialog">&times;</button>
+        </div>
+        <div class="modal-body">
+          <label class="mp-field-label" for="mp-rename-name">Plan Name</label>
+          <input type="text" class="qf-input" id="mp-rename-name" placeholder="Plan name">
+          <label class="mp-field-label mp-field-spaced" for="mp-rename-description">
+            Description (optional)
+          </label>
+          <textarea class="qf-input mp-textarea" id="mp-rename-description" rows="3"
+                    placeholder="Describe this manufacturing plan…"></textarea>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-mp-close="mp-rename-modal">Cancel</button>
+          <button type="button" class="btn btn-primary" id="mp-rename-confirm">Save</button>
         </div>
       </div>
     </div>

@@ -543,6 +543,19 @@ async function addBlueprintToPlan(planId, blueprintConfig) {
       facilitySnapshot = null,
     } = blueprintConfig;
 
+    // A facilityId with no snapshot means no structure/rig bonuses at all (the
+    // snapshot is what carries structureTypeId, rigs and securityStatus), so
+    // resolve it here rather than storing a facility that silently does nothing.
+    let resolvedSnapshot = facilitySnapshot;
+    if (!resolvedSnapshot && facilityId) {
+      const { getManufacturingFacilities } = require('./settings-manager');
+      const facility = (getManufacturingFacilities() || [])
+        .find(f => String(f.id) === String(facilityId));
+      if (facility) {
+        resolvedSnapshot = await enrichFacilityWithSecurityStatus({ ...facility });
+      }
+    }
+
     // Insert top-level blueprint into plan
     db.prepare(`
       INSERT INTO plan_blueprints (
@@ -559,7 +572,7 @@ async function addBlueprintToPlan(planId, blueprintConfig) {
       meLevel,
       teLevel,
       facilityId,
-      facilitySnapshot ? JSON.stringify(facilitySnapshot) : null,
+      resolvedSnapshot ? JSON.stringify(resolvedSnapshot) : null,
       now
     );
 
@@ -655,18 +668,34 @@ async function detectAndCreateIntermediates(parentBlueprintId, planId, character
     // Calculate runs per line for parent - ME floor applies per job
     const parentRunsPerLine = Math.ceil(parent.runs / parent.lines);
 
-    // Reaction parents have no ME floor / lines concept - use runs directly and
-    // pull materials via calculateReactionMaterials instead of calculateBlueprintMaterials.
-    // (Ported from the retired detectAndCreateReactions, manufacturing-plans.js:712-734.)
+    // Reaction parents have no ME floor / lines concept - use runs directly.
+    //
+    // DIRECT INPUTS ONLY. calculateReactionMaterials aggregates every
+    // sub-reaction's materials up into the parent's map (reaction-calculator.js:
+    // "Aggregate raw materials from sub-reaction"), so a deep manufactured input
+    // surfaces on the parent as though the parent consumed it. Using that map
+    // here double-counted: Fullerides reported Helium Fuel Blocks (really an
+    // input of its sub-reaction Carbon Polymers), so a child row was created
+    // under Fullerides AND under Carbon Polymers - 2 uses and twice the runs for
+    // a single real demand.
+    //
+    // getReactionMaterials returns this reaction's OWN inputs, which is exactly
+    // what a child row should represent, and is what detectAndCreateNestedReactions
+    // already uses to walk the chain.
     let materials;
     if (parent.blueprint_type === 'reaction') {
-      const reactionCalculation = await calculateReactionMaterials(
-        parent.blueprint_type_id,  // stores reactionTypeId for reaction rows
-        parent.runs,
-        characterId,
-        facilitySnapshot
-      );
-      materials = reactionCalculation.materials;
+      const reactionTypeId = parent.blueprint_type_id;  // reaction rows store reactionTypeId here
+      const reactionProduct = await getReactionProduct(reactionTypeId);
+      const directInputs = await getReactionMaterials(reactionTypeId, null);
+      materials = {};
+      for (const input of directInputs) {
+        materials[input.typeID] = calculateReactionMaterialQuantity(
+          input.quantity,
+          parent.runs,
+          facilitySnapshot,
+          reactionProduct?.typeID ?? null
+        );
+      }
     } else {
       // CRITICAL: Call calculateBlueprintMaterials with useIntermediates=FALSE
       // Calculate materials for runs PER LINE (ME floor applies per job)
@@ -807,177 +836,6 @@ async function detectAndCreateIntermediates(parentBlueprintId, planId, character
     return createdIntermediateIds;
   } catch (error) {
     console.error('Error detecting and creating intermediates:', error);
-    return [];
-  }
-}
-
-/**
- * Detect and create reaction records for a parent blueprint's materials
- * Similar to detectAndCreateIntermediates but for reactions (activityID=11)
- * @param {string} parentBlueprintId - Parent blueprint ID
- * @param {string} planId - Manufacturing plan ID
- * @param {number} characterId - Character ID
- * @param {number} depth - Recursion depth (max 10)
- * @returns {Promise<Array>} Array of created reaction blueprint IDs
- */
-async function detectAndCreateReactions(parentBlueprintId, planId, characterId, depth = 0) {
-  // Check depth limit using helper
-  if (isMaxDepthExceeded(depth, 10, `detectAndCreateReactions for ${parentBlueprintId}`)) {
-    return [];
-  }
-
-  try {
-    const db = getCharacterDatabase();
-
-    // Get parent blueprint details
-    const parent = db.prepare('SELECT * FROM plan_blueprints WHERE plan_blueprint_id = ?').get(parentBlueprintId);
-    if (!parent) {
-      return [];
-    }
-
-    // Only detect reactions if using raw_materials mode
-    const useIntermediates = parent.use_intermediates === 'raw_materials' ||
-                             parent.use_intermediates === null ||
-                             parent.use_intermediates === 1 ||
-                             parent.use_intermediates === true;
-
-    if (!useIntermediates) {
-      return [];
-    }
-
-    // Parse facility snapshot
-    const facilitySnapshot = parent.facility_snapshot ? JSON.parse(parent.facility_snapshot) : null;
-
-    // Calculate runs per line for parent - ME floor applies per job
-    const parentRunsPerLine = Math.ceil(parent.runs / parent.lines);
-
-    // Determine parent type and calculate materials accordingly
-    let materials;
-    if (parent.blueprint_type === 'reaction') {
-      // Parent is a reaction - get its inputs (reactions always have lines=1)
-      const reactionCalculation = await calculateReactionMaterials(
-        parent.blueprint_type_id,  // This is the reactionTypeId for reactions
-        parent.runs,
-        characterId,
-        facilitySnapshot
-      );
-      materials = reactionCalculation.materials;
-    } else {
-      // Parent is a manufacturing blueprint - calculate per-line materials
-      const calculation = await calculateBlueprintMaterials(
-        parent.blueprint_type_id,
-        parentRunsPerLine,  // Runs per line - ME floor applies here
-        parent.me_level,
-        characterId,
-        facilitySnapshot,
-        false  // Always false - we manually expand
-      );
-      materials = calculation.materials;
-    }
-
-    const createdReactionIds = [];
-    const now = Date.now();
-
-    // Classify materials using helper function
-    // Note: materials contain per-line quantities for manufacturing blueprints
-    const { reactions } = await classifyMaterials(materials);
-
-    // Process each reaction
-    for (const reaction of reactions) {
-      const reactionTypeId = reaction.reactionTypeId;
-      const materialTypeId = reaction.typeId;
-      // For manufacturing blueprints, multiply by lines for total; for reactions, lines=1
-      const materialQuantityPerLine = reaction.quantity;
-      const totalMaterialsNeeded = materialQuantityPerLine * parent.lines;
-      const product = reaction.product;
-
-      // Calculate runs needed using helper function with total materials needed
-      const runsNeeded = await calculateReactionRuns(totalMaterialsNeeded, reactionTypeId);
-      const productsPerRun = product ? product.quantity : 1;
-
-      console.log(`[Plans] Reaction detected: ${reactionTypeId} - need ${totalMaterialsNeeded} units @ ${productsPerRun}/run = ${runsNeeded} runs (depth ${depth})`);
-
-      // Check if this reaction already exists for this parent
-      const existing = db.prepare(`
-        SELECT plan_blueprint_id, runs FROM plan_blueprints
-        WHERE parent_blueprint_id = ?
-          AND blueprint_type_id = ?
-          AND blueprint_type = 'reaction'
-          AND intermediate_product_type_id = ?
-      `).get(parentBlueprintId, reactionTypeId, materialTypeId);
-
-      let reactionBlueprintId;
-      if (existing) {
-        // Update runs if it changed
-        if (existing.runs !== runsNeeded) {
-          db.prepare(`
-            UPDATE plan_blueprints
-            SET runs = ?
-            WHERE plan_blueprint_id = ?
-          `).run(runsNeeded, existing.plan_blueprint_id);
-          console.log(`[Plans] Updated reaction ${reactionTypeId} runs: ${existing.runs} → ${runsNeeded}`);
-        }
-        reactionBlueprintId = existing.plan_blueprint_id;
-        createdReactionIds.push(existing.plan_blueprint_id);
-      } else {
-        // Create new reaction entry
-        reactionBlueprintId = randomUUID();
-
-        // Use parent's facility by default (should be refinery for reactions)
-        const reactionFacilityId = parent.facility_id;
-
-        db.prepare(`
-          INSERT INTO plan_blueprints (
-            plan_blueprint_id, plan_id, parent_blueprint_id,
-            blueprint_type_id, runs, lines,
-            me_level, te_level, facility_id, facility_snapshot,
-            is_intermediate, is_built, intermediate_product_type_id,
-            use_intermediates, blueprint_type, reaction_type_id,
-            added_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0, ?, ?, 'reaction', ?, ?)
-        `).run(
-          reactionBlueprintId,
-          planId,
-          parentBlueprintId,
-          reactionTypeId,  // blueprint_type_id stores reactionTypeId for reactions
-          runsNeeded,
-          1,  // lines always 1 for reactions
-          0,  // me_level (not applicable for reactions)
-          0,  // te_level (not applicable for reactions)
-          reactionFacilityId,
-          facilitySnapshot ? JSON.stringify(facilitySnapshot) : null,
-          materialTypeId,
-          'raw_materials',  // Always expand reactions by default
-          reactionTypeId,  // Also store in reaction_type_id for clarity
-          now
-        );
-
-        console.log(`[Plans] Created reaction ${reactionTypeId} (${runsNeeded} runs for ${materialQuantity * parent.lines} ${product ? product.typeName : 'units'})`);
-        createdReactionIds.push(reactionBlueprintId);
-      }
-
-      // Recursively detect nested reactions (reactions that produce inputs for this reaction)
-      const nestedReactionIds = await detectAndCreateReactions(
-        reactionBlueprintId,  // This reaction becomes the parent
-        planId,
-        characterId,
-        depth + 1
-      );
-      createdReactionIds.push(...nestedReactionIds);
-
-      // CRITICAL: Also check this reaction for intermediates
-      const nestedIntermediateIds = await detectAndCreateIntermediates(
-        reactionBlueprintId,  // This reaction becomes the parent
-        planId,
-        characterId,
-        depth + 1
-      );
-      createdReactionIds.push(...nestedIntermediateIds);
-    }
-
-    return createdReactionIds;
-  } catch (error) {
-    console.error('Error detecting and creating reactions:', error);
     return [];
   }
 }
@@ -6002,6 +5860,10 @@ async function getPlanBuildItems(planId) {
         productName: productTypeId ? (typeNames[productTypeId] || `Type ${productTypeId}`) : null,
         role,
         instanceCount: instances.length,
+        // Total runs across every instance of this type. `runs` below is null
+        // for anything not directly editable (intermediates, reactions), which
+        // left the Build List's Runs column showing a bare em-dash for them -
+        // so the derived total is sent for display in that case.
         totalRuns: instances.reduce((sum, i) => sum + (i.runs || 0), 0),
         runs: runsEditable ? topLevelInstances[0].runs : null,
         lines: runsEditable ? topLevelInstances[0].lines : null,
@@ -6049,10 +5911,39 @@ async function updateBuildItemsByType(planId, itemType, blueprintTypeId, updates
     if (updates.teLevel !== undefined) { fields.push('te_level = ?'); values.push(updates.teLevel); }
     if (updates.useIntermediates !== undefined) { fields.push('use_intermediates = ?'); values.push(updates.useIntermediates); }
     if (updates.facilityId !== undefined) {
+      /*
+       * Resolve the SNAPSHOT from the id when the caller doesn't supply one.
+       *
+       * The snapshot is what carries structureTypeId, rigs and securityStatus -
+       * calculateMaterialQuantity skips the 1% structure bonus AND every rig
+       * bonus when it is null, silently falling back to ME-only numbers. The
+       * Build List's facility dropdown only ever sends facilityId (there is no
+       * snapshot in the renderer's build-row state), so writing
+       * `updates.facilitySnapshot ?? null` here NULLED the snapshot on every
+       * facility change made from that tab - the facility looked set while its
+       * bonuses had been thrown away.
+       *
+       * An explicit snapshot from the caller still wins; only the absent case
+       * is resolved here.
+       */
+      let snapshotJson = null;
+      if (updates.facilitySnapshot) {
+        snapshotJson = JSON.stringify(updates.facilitySnapshot);
+      } else if (updates.facilityId) {
+        const { getManufacturingFacilities } = require('./settings-manager');
+        const facility = (getManufacturingFacilities() || [])
+          .find(f => String(f.id) === String(updates.facilityId));
+        if (facility) {
+          snapshotJson = JSON.stringify(await enrichFacilityWithSecurityStatus({ ...facility }));
+        } else {
+          console.warn(`[Plans] Facility ${updates.facilityId} not found - storing id with no snapshot (bonuses will not apply)`);
+        }
+      }
+
       fields.push('facility_id = ?');
       values.push(updates.facilityId);
       fields.push('facility_snapshot = ?');
-      values.push(updates.facilitySnapshot ? JSON.stringify(updates.facilitySnapshot) : null);
+      values.push(snapshotJson);
     }
 
     let changed = 0;
@@ -6090,6 +5981,133 @@ async function updateBuildItemsByType(planId, itemType, blueprintTypeId, updates
   } catch (error) {
     console.error('Error updating build items by type:', error);
     return false;
+  }
+}
+
+/**
+ * Repair stale stored state on a plan, then recalculate it from scratch.
+ *
+ * recalculatePlanMaterials recalculates FROM the stored rows - it never repairs
+ * them. So a row written by an older version keeps whatever it was given: most
+ * damagingly a facility_id whose facility_snapshot is NULL (or stale), which
+ * silently drops the structure and rig bonuses from every quantity derived from
+ * it while the UI still shows a facility as configured.
+ *
+ * This is the user-facing "Recalculate Everything" path. It:
+ *   1. Re-resolves every row's facility_snapshot from its facility_id against
+ *      the CURRENT facility config (picks up edited rigs/structure/security too).
+ *   2. Clears the snapshot on rows whose facility no longer exists, so a deleted
+ *      facility stops contributing phantom bonuses.
+ *   3. Normalizes use_intermediates rows that predate the column's default.
+ *   4. Runs a full recalculation, optionally re-pricing.
+ *
+ * Deliberately does NOT reassign which facility a row uses: that is a user
+ * choice, and silently moving jobs between facilities on a "recalculate" would
+ * be far worse than a stale bonus. Only the snapshot behind the user's existing
+ * choice is refreshed.
+ *
+ * @param {string} planId
+ * @param {boolean} [refreshPrices=false] - Re-price materials/products from market.
+ *   Defaults FALSE: plan prices are locked deliberately (only an explicit
+ *   "Re-lock Prices" adopts live ones), so a quantity repair must not silently
+ *   re-price the plan as a side effect.
+ * @returns {Promise<object>} { success, facilitiesRepaired, facilitiesCleared, sourcingNormalized, missingFacilities: [] }
+ */
+async function repairAndRecalculatePlan(planId, refreshPrices = false) {
+  const result = {
+    success: false,
+    facilitiesRepaired: 0,
+    facilitiesCleared: 0,
+    sourcingNormalized: 0,
+    missingFacilities: [],
+  };
+
+  try {
+    const db = getCharacterDatabase();
+
+    const plan = db.prepare('SELECT plan_id FROM manufacturing_plans WHERE plan_id = ?').get(planId);
+    if (!plan) throw new Error('Plan not found');
+
+    const { getManufacturingFacilities } = require('./settings-manager');
+    const facilities = getManufacturingFacilities() || [];
+    const byId = new Map(facilities.map(f => [String(f.id), f]));
+
+    // --- 1 & 2: facility snapshots -----------------------------------------
+    const rows = db.prepare(`
+      SELECT plan_blueprint_id, facility_id, facility_snapshot
+      FROM plan_blueprints
+      WHERE plan_id = ?
+    `).all(planId);
+
+    const setSnapshot = db.prepare(
+      'UPDATE plan_blueprints SET facility_snapshot = ? WHERE plan_blueprint_id = ?'
+    );
+
+    // Enriching hits the SDE for securityStatus, so resolve each facility once
+    // rather than per row - a large plan has many rows per facility.
+    const enrichedCache = new Map();
+    const resolveSnapshot = async (facilityId) => {
+      const key = String(facilityId);
+      if (!enrichedCache.has(key)) {
+        const facility = byId.get(key);
+        enrichedCache.set(
+          key,
+          facility ? await enrichFacilityWithSecurityStatus({ ...facility }) : null
+        );
+      }
+      return enrichedCache.get(key);
+    };
+
+    for (const row of rows) {
+      if (!row.facility_id) continue;  // No facility chosen - nothing to repair.
+
+      const enriched = await resolveSnapshot(row.facility_id);
+
+      if (!enriched) {
+        // Facility was deleted from settings. Drop the stale snapshot so its
+        // bonuses stop being applied to a facility that no longer exists.
+        if (row.facility_snapshot) {
+          setSnapshot.run(null, row.plan_blueprint_id);
+          result.facilitiesCleared += 1;
+        }
+        if (!result.missingFacilities.includes(String(row.facility_id))) {
+          result.missingFacilities.push(String(row.facility_id));
+        }
+        continue;
+      }
+
+      const nextJson = JSON.stringify(enriched);
+      if (row.facility_snapshot !== nextJson) {
+        setSnapshot.run(nextJson, row.plan_blueprint_id);
+        result.facilitiesRepaired += 1;
+      }
+    }
+
+    // --- 3: sourcing default ------------------------------------------------
+    // use_intermediates is TEXT; pre-migration rows can hold NULL, which every
+    // reader already treats as 'raw_materials'. Writing it makes the stored
+    // value match what the UI displays, so a Build List edit compares equal.
+    const normalized = db.prepare(`
+      UPDATE plan_blueprints SET use_intermediates = 'raw_materials'
+      WHERE plan_id = ? AND use_intermediates IS NULL
+    `).run(planId);
+    result.sourcingNormalized = normalized.changes;
+
+    // --- 4: full recalculation ---------------------------------------------
+    await recalculatePlanMaterials(planId, refreshPrices);
+    db.prepare('UPDATE manufacturing_plans SET updated_at = ? WHERE plan_id = ?')
+      .run(Date.now(), planId);
+
+    result.success = true;
+    console.log(
+      `[Plans] Repair+recalculate for ${planId}: ${result.facilitiesRepaired} snapshot(s) refreshed, ` +
+      `${result.facilitiesCleared} cleared, ${result.sourcingNormalized} sourcing default(s) written`
+    );
+    return result;
+  } catch (error) {
+    console.error('[Plans] Error in repairAndRecalculatePlan:', error);
+    result.error = error.message;
+    return result;
   }
 }
 
@@ -6785,6 +6803,7 @@ module.exports = {
   getReactionTreeForPlan,
   getPlanBuildItems,
   updateBuildItemsByType,
+  repairAndRecalculatePlan,
   markIntermediateBuilt,
   deleteOrphanedIntermediates,
   recalculatePlanMaterials,

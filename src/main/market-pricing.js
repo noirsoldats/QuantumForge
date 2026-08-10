@@ -319,14 +319,32 @@ async function calculateRealisticPrice(typeId, regionId, locationId, priceType, 
 
   const historyDeferred = (skipHistory || methodIgnoresHistory) && !wantsHistoricalPrice;
 
+  /*
+   * NEITHER BRANCH FETCHES MARKET ORDERS FROM ESI, and it must stay that way.
+   *
+   * fetchMarketOrders takes `forceRefresh` as its 4th argument and DEFAULTS IT
+   * TO FALSE, returning cached orders before it reaches any ESI code. Both
+   * calls here omit it deliberately. The only sanctioned way market-order data
+   * updates is an explicit user refresh - the Market Manager refresh buttons
+   * and the Dashboard button (manualRefreshMarketData, the one caller that
+   * passes `true`). A calculation must never cause an order-book fetch as a
+   * side effect.
+   *
+   * Passing `true` here - or swapping in a helper that force-refreshes - would
+   * turn every price calculation into ESI traffic. Verified by test: with a
+   * cold cache, all five pricing methods make ZERO market-order calls.
+   *
+   * HISTORY is the exception and may be fetched: it is per-type, cheap to miss,
+   * and the fallback below depends on it being fresh.
+   */
   if (historyDeferred) {
     if (!orders || orders.length === 0) {
-      const marketOrders = await fetchMarketOrders(regionId, typeId);
+      const marketOrders = await fetchMarketOrders(regionId, typeId);  // cached-only
       orders = marketOrders || [];
     }
     history = history || [];
   } else if (!orders || orders.length === 0 || !history || history.length === 0) {
-    // If no cached data, fetch from ESI
+    // Orders come from cache (see above); only the history half can reach ESI.
     const marketData = await fetchMarketData(regionId, typeId);
     orders = marketData.orders;
     history = marketData.history;

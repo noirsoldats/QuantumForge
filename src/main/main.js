@@ -1494,6 +1494,16 @@ function setupIPCHandlers() {
     return await recalculatePlanMaterials(planId, refreshPrices, marketSet);
   });
 
+  // Repair stale stored state (facility snapshots above all) and recalculate.
+  // Separate from plans:recalculateMaterials, which recalculates FROM the stored
+  // rows without ever fixing them.
+  ipcMain.handle('plans:repairAndRecalculate', async (event, planId, refreshPrices) => {
+    const { repairAndRecalculatePlan } = require('./manufacturing-plans');
+    // Defaults to NOT re-pricing: plan prices are locked deliberately, so
+    // re-pricing has to be asked for rather than being the fallback.
+    return await repairAndRecalculatePlan(planId, refreshPrices === true);
+  });
+
   // Legacy: character-based ESI refresh
   ipcMain.handle('plans:refreshESIData', async (event, characterId) => {
     return await refreshActivePlansESIData(characterId);

@@ -248,6 +248,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getProductOwnedAssets: (planId, typeId) => ipcRenderer.invoke('plans:getProductOwnedAssets', planId, typeId),
     getSummary: (planId) => ipcRenderer.invoke('plans:getSummary', planId),
     recalculateMaterials: (planId, refreshPrices, marketSetId) => ipcRenderer.invoke('plans:recalculateMaterials', planId, refreshPrices, marketSetId),
+    repairAndRecalculate: (planId, refreshPrices) => ipcRenderer.invoke('plans:repairAndRecalculate', planId, refreshPrices),
     refreshESIData: (characterId) => ipcRenderer.invoke('plans:refreshESIData', characterId),
     refreshPlanESIData: (planId) => ipcRenderer.invoke('plans:refreshPlanESIData', planId),
     // Matching functions

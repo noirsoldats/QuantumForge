@@ -86,6 +86,12 @@ function makeApi() {
         calls.push({ fn: 'setMarketSetForTool', key, id });
         return { success: true };
       },
+      // Mirrors relockPlanMaterialPrice's real return shape: an envelope with
+      // `overridden` telling the caller a manual override still wins.
+      relockPlanMaterial: async (planId, typeId, price) => {
+        calls.push({ fn: 'market.relockPlanMaterial', planId, typeId, price });
+        return { success: true, overridden: false, nodesUpdated: 1 };
+      },
     },
     plans: {
       getAll: async (characterId) => {
@@ -150,6 +156,19 @@ function makeApi() {
       bulkUpdateBlueprints: async (planId, updates) => {
         calls.push({ fn: 'plans.bulkUpdateBlueprints', planId, updates });
         return true;
+      },
+      // Mirrors repairAndRecalculatePlan: reports failure in the ENVELOPE
+      // (`success: false` + `error`) rather than throwing, so a mock that just
+      // returned `true` would let a renderer that ignores the envelope pass.
+      repairAndRecalculate: async (planId, refreshPrices) => {
+        calls.push({ fn: 'plans.repairAndRecalculate', planId, refreshPrices });
+        return {
+          success: true,
+          facilitiesRepaired: 2,
+          facilitiesCleared: 0,
+          sourcingNormalized: 0,
+          missingFacilities: [],
+        };
       },
       getProducts: async () => planProducts,
       getPendingMatches: async () => pendingMatches,
@@ -219,6 +238,17 @@ function makeApi() {
       get: async (planId) => {
         calls.push({ fn: 'plans.get', planId });
         return plans.find((p) => String(p.planId) === String(planId)) || null;
+      },
+      // Both mirror the real functions, which report failure by returning FALSE
+      // rather than throwing - a mock hardcoded to `true` would hide a renderer
+      // that never checks.
+      update: async (planId, updates) => {
+        calls.push({ fn: 'plans.update', planId, updates });
+        return true;
+      },
+      delete: async (planId) => {
+        calls.push({ fn: 'plans.delete', planId });
+        return true;
       },
       create: async (characterId, name, description) => {
         calls.push({ fn: 'plans.create', characterId, name, description });
@@ -578,10 +608,14 @@ beforeEach(() => {
       role: 'reaction',
       instanceCount: 1,
       totalRuns: 2,
-      runs: 2,
-      lines: 1,
-      runsEditable: true,
-      topLevelPlanBlueprintId: 'pbp-2',
+      // getPlanBuildItems computes `runsEditable = !isReaction && ...`, so a
+      // reaction is NEVER editable and always carries runs/lines null. The
+      // fixture previously said `true`/2/1, which no real plan can produce -
+      // and that is why the blank Runs column on reactions went unnoticed.
+      runs: null,
+      lines: null,
+      runsEditable: false,
+      topLevelPlanBlueprintId: null,
       meLevel: null,
       teLevel: null,
       useIntermediates: 'buy',
@@ -991,6 +1025,11 @@ beforeEach(() => {
   window.electronAPI = makeApi();
   window.QFToast = { show: (message, type) => calls.push({ fn: 'toast', message, type }) };
   global.fetch = jest.fn(async () => ({ text: async () => VIEW_HTML }));
+
+  // jsdom's window.confirm throws "not implemented", and destructive actions
+  // (delete plan, re-lock prices) gate on it. Reset per test so one test's
+  // stub cannot leak into another and silently auto-confirm.
+  window.confirm = () => false;
 
   document.body.innerHTML = '';
   loadRenderer();
@@ -1807,14 +1846,52 @@ describe('build list', () => {
     expect(row.textContent).toContain('Fullerene Reaction');
   });
 
-  test('derived rows show an em dash for runs, not a number', async () => {
-    // An intermediate's runs come from its parent - showing a figure would
-    // imply it is editable.
+  /*
+   * Derived rows previously rendered "—" for Runs. That was wrong: the runs are
+   * derived, not absent, and a blank column on every intermediate and reaction
+   * read as "no runs" on exactly the rows a build is scheduled around. They now
+   * show the derived total, read-only (no input) so it still cannot be edited.
+   */
+  test('an intermediate shows its derived total runs, not a blank', async () => {
+    await openTab('build-list');
+
+    const row = document.querySelector('[data-mp-build-type="11399"]');
+    const statics = Array.from(row.querySelectorAll('.mp-build-static')).map((n) => n.textContent);
+    // totalRuns: 12 across its 3 uses.
+    expect(statics).toContain('12');
+    // Still not editable - derived, so no input is offered for runs.
+    expect(row.querySelectorAll('.mp-build-input')).toHaveLength(0);
+  });
+
+  test('a reaction shows its derived total runs', async () => {
+    // Reactions are never runsEditable, so they took the same blank path.
+    await openTab('build-list');
+
+    const row = document.querySelector('[data-mp-build-type="46186"]');
+    const statics = Array.from(row.querySelectorAll('.mp-build-static')).map((n) => n.textContent);
+    expect(statics).toContain('2');
+  });
+
+  test('Lines still shows an em dash on a derived row', async () => {
+    // Only Runs gained a derived value; lines remain genuinely not applicable.
     await openTab('build-list');
 
     const row = document.querySelector('[data-mp-build-type="11399"]');
     const statics = Array.from(row.querySelectorAll('.mp-build-static')).map((n) => n.textContent);
     expect(statics).toContain('—');
+  });
+
+  test('Uses column explains itself rather than showing a bare count', async () => {
+    // The number is what makes ME/TE/Facility read "Mixed"; unlabelled it was
+    // not interpretable.
+    await openTab('build-list');
+
+    const row = document.querySelector('[data-mp-build-type="11399"]');
+    const uses = Array.from(row.querySelectorAll('span'))
+      .find((n) => n.title && n.title.includes('Needed in'));
+    expect(uses).toBeTruthy();
+    expect(uses.textContent).toBe('3');
+    expect(uses.title).toContain('3 places');
   });
 
   test('is read-only until Edit is clicked', async () => {
@@ -2037,6 +2114,255 @@ describe('build list', () => {
 
     const row = document.querySelector('[data-mp-build-type="22546"]');
     expect(row.textContent).toContain('Build/Buy');
+  });
+});
+
+/*
+ * "Rebuild Plan" - the plan-header button that repairs stale stored state
+ * (above all facility snapshots written by older versions, which silently
+ * dropped structure/rig bonuses) and then recalculates.
+ *
+ * It REPLACED a dead "Refresh" button (`mp-refresh-plan`) that had no handler
+ * anywhere and did nothing when clicked.
+ */
+describe('rebuild plan', () => {
+  test('the dead Refresh button is gone', async () => {
+    await openTab('overview');
+    expect(document.getElementById('mp-refresh-plan')).toBeNull();
+  });
+
+  test('calls repairAndRecalculate for the open plan', async () => {
+    await openTab('overview');
+    document.getElementById('mp-recalc-all').dispatchEvent(new window.MouseEvent('click'));
+    await settle(30);
+
+    const call = calls.find((c) => c.fn === 'plans.repairAndRecalculate');
+    expect(call).toBeTruthy();
+    expect(call.planId).toBe('plan-1');
+  });
+
+  test('does NOT re-price - locked plan prices must survive a rebuild', async () => {
+    // Plan prices are frozen deliberately; only an explicit re-lock may adopt
+    // live prices. A quantity repair must not become a backdoor around that.
+    await openTab('overview');
+    document.getElementById('mp-recalc-all').dispatchEvent(new window.MouseEvent('click'));
+    await settle(30);
+
+    const call = calls.find((c) => c.fn === 'plans.repairAndRecalculate');
+    expect(call.refreshPrices).toBe(false);
+  });
+
+  test('reloads the tab the user is actually on, not just the build list', async () => {
+    // It lives in the plan header now, so it can be pressed from any tab - and
+    // a rebuild changes quantities on all of them.
+    await openTab('build-list');
+    calls.length = 0;
+    document.getElementById('mp-recalc-all').dispatchEvent(new window.MouseEvent('click'));
+    await settle(30);
+
+    expect(calls.some((c) => c.fn === 'plans.getBuildItems')).toBe(true);
+  });
+
+  test('restores its label and stays enabled after finishing', async () => {
+    await openTab('overview');
+    const btn = document.getElementById('mp-recalc-all');
+    btn.dispatchEvent(new window.MouseEvent('click'));
+    await settle(30);
+
+    expect(btn.disabled).toBe(false);
+    expect(document.getElementById('mp-recalc-all-label').textContent).toBe('Rebuild Plan');
+    // The icon must survive the busy-state swap.
+    expect(btn.querySelector('svg')).toBeTruthy();
+  });
+
+  test('says so when the rebuild fails, rather than reporting success', async () => {
+    // The renderer logs this failure deliberately; the suite fails on any
+    // console.error that was not opted into.
+    allowErrors(/rebuild plan failed/);
+
+    // The handler reports failure in the ENVELOPE rather than throwing, so a
+    // renderer that assumed success would show "done" over a plan that never
+    // rebuilt.
+    window.electronAPI.plans.repairAndRecalculate = async () => (
+      { success: false, error: 'Plan not found' }
+    );
+
+    await openTab('overview');
+    document.getElementById('mp-recalc-all').dispatchEvent(new window.MouseEvent('click'));
+    await settle(30);
+
+    const errorToast = calls.find((c) => c.fn === 'toast' && c.type === 'error');
+    expect(errorToast).toBeTruthy();
+    expect(errorToast.message).toMatch(/Plan not found/);
+  });
+});
+
+/*
+ * Plan header actions that shipped in the UI refactor with NO handler at all -
+ * present in the HTML, wired to nothing, silent on click.
+ */
+describe('plan header actions (previously unwired)', () => {
+  test('Mark Complete sets status and a completion timestamp', async () => {
+    await openTab('overview');
+    document.getElementById('mp-complete-plan').dispatchEvent(new window.MouseEvent('click'));
+    await settle(30);
+
+    const call = calls.find((c) => c.fn === 'plans.update');
+    expect(call).toBeTruthy();
+    expect(call.planId).toBe('plan-1');
+    // CAMELCASE: updateManufacturingPlan maps these itself; `completed_at`
+    // would be dropped and the call would still report success.
+    expect(call.updates.status).toBe('completed');
+    expect(typeof call.updates.completedAt).toBe('number');
+  });
+
+  test('the button reads Reopen Plan on a completed plan, and reopens it', async () => {
+    plans[0].status = 'completed';
+    await openTab('overview');
+
+    expect(document.getElementById('mp-complete-plan-label').textContent).toBe('Reopen Plan');
+
+    document.getElementById('mp-complete-plan').dispatchEvent(new window.MouseEvent('click'));
+    await settle(30);
+
+    const call = calls.find((c) => c.fn === 'plans.update');
+    expect(call.updates.status).toBe('active');
+    // Clearing the timestamp matters - otherwise a running plan stays dated.
+    expect(call.updates.completedAt).toBeNull();
+  });
+
+  test('Delete asks first, and does nothing when declined', async () => {
+    window.confirm = () => false;
+    await openTab('overview');
+    document.getElementById('delete-plan-btn').dispatchEvent(new window.MouseEvent('click'));
+    await settle(30);
+
+    expect(calls.some((c) => c.fn === 'plans.delete')).toBe(false);
+  });
+
+  test('Delete removes the plan and clears the selection once confirmed', async () => {
+    window.confirm = () => true;
+    await openTab('overview');
+    document.getElementById('delete-plan-btn').dispatchEvent(new window.MouseEvent('click'));
+    await settle(30);
+
+    const call = calls.find((c) => c.fn === 'plans.delete');
+    expect(call).toBeTruthy();
+    expect(call.planId).toBe('plan-1');
+    // The detail pane must not stay bound to a deleted plan.
+    expect(document.getElementById('plan-detail').hidden).toBe(true);
+  });
+
+  test('Rename prefills the modal from the open plan', async () => {
+    await openTab('overview');
+    document.getElementById('mp-rename-plan').dispatchEvent(new window.MouseEvent('click'));
+    await settle();
+
+    expect(document.getElementById('mp-rename-modal').hidden).toBe(false);
+    expect(document.getElementById('mp-rename-name').value).toBe(plans[0].planName);
+  });
+
+  test('Rename saves with camelCase planName', async () => {
+    await openTab('overview');
+    document.getElementById('mp-rename-plan').dispatchEvent(new window.MouseEvent('click'));
+    await settle();
+
+    document.getElementById('mp-rename-name').value = 'Renamed Plan';
+    document.getElementById('mp-rename-confirm').dispatchEvent(new window.MouseEvent('click'));
+    await settle(30);
+
+    const call = calls.find((c) => c.fn === 'plans.update');
+    expect(call.updates.planName).toBe('Renamed Plan');
+    expect(document.getElementById('mp-rename-modal').hidden).toBe(true);
+  });
+
+  test('Rename refuses an empty name rather than blanking the plan', async () => {
+    // Auto-naming only happens on CREATE, so an empty name here would stick.
+    await openTab('overview');
+    document.getElementById('mp-rename-plan').dispatchEvent(new window.MouseEvent('click'));
+    await settle();
+
+    document.getElementById('mp-rename-name').value = '   ';
+    document.getElementById('mp-rename-confirm').dispatchEvent(new window.MouseEvent('click'));
+    await settle(30);
+
+    expect(calls.some((c) => c.fn === 'plans.update')).toBe(false);
+    expect(calls.some((c) => c.fn === 'toast' && c.type === 'warning')).toBe(true);
+  });
+});
+
+/*
+ * Re-lock Prices - the ONLY sanctioned way a plan adopts live prices. Every
+ * other path (market refresh, recalculate, rebuild) leaves them frozen.
+ */
+describe('re-lock prices (previously unwired)', () => {
+  test('does nothing when declined', async () => {
+    window.confirm = () => false;
+    await openTab('materials');
+    document.getElementById('mp-relock').dispatchEvent(new window.MouseEvent('click'));
+    await settle(30);
+
+    expect(calls.some((c) => c.fn === 'market.relockPlanMaterial')).toBe(false);
+  });
+
+  test('re-locks each material at its live price', async () => {
+    window.confirm = () => true;
+    await openTab('materials');
+    document.getElementById('mp-relock').dispatchEvent(new window.MouseEvent('click'));
+    await settle(50);
+
+    const relocks = calls.filter((c) => c.fn === 'market.relockPlanMaterial');
+    expect(relocks.length).toBeGreaterThan(0);
+    // The live price, not the locked one - locking at the frozen price would
+    // be a no-op dressed up as an action.
+    for (const r of relocks) {
+      expect(r.price).toBe(drift[r.typeId].livePrice);
+    }
+  });
+
+  /*
+   * The button must NEVER be unable to re-lock because of what the user has
+   * looked at. state.drift is populated by the Materials tab, so reading it
+   * directly meant opening a plan and pressing Re-lock from another tab
+   * reported "no prices" against a perfectly warm market cache.
+   */
+  test('re-reads prices itself rather than depending on the Materials tab', async () => {
+    window.confirm = () => true;
+    // Overview never loads drift.
+    await openTab('overview');
+    calls.length = 0;
+
+    document.getElementById('mp-relock').dispatchEvent(new window.MouseEvent('click'));
+    await settle(50);
+
+    // It fetched prices on demand...
+    expect(calls.some((c) => c.fn === 'plans.getMaterialDrift')).toBe(true);
+    // ...and actually locked, instead of warning that nothing was available.
+    expect(calls.some((c) => c.fn === 'market.relockPlanMaterial')).toBe(true);
+  });
+
+  test('skips materials with no live price instead of locking them at zero', async () => {
+    window.confirm = () => true;
+    // Drop one material's live price entirely.
+    delete drift[35];
+    await openTab('materials');
+    document.getElementById('mp-relock').dispatchEvent(new window.MouseEvent('click'));
+    await settle(50);
+
+    const relocks = calls.filter((c) => c.fn === 'market.relockPlanMaterial');
+    expect(relocks.some((r) => r.typeId === 35)).toBe(false);
+    expect(relocks.every((r) => Number.isFinite(r.price) && r.price > 0)).toBe(true);
+  });
+
+  test('warns rather than calling when nothing has a live price', async () => {
+    window.confirm = () => true;
+    drift = {};
+    await openTab('materials');
+    document.getElementById('mp-relock').dispatchEvent(new window.MouseEvent('click'));
+    await settle(30);
+
+    expect(calls.some((c) => c.fn === 'market.relockPlanMaterial')).toBe(false);
+    expect(calls.some((c) => c.fn === 'toast' && c.type === 'warning')).toBe(true);
   });
 });
 

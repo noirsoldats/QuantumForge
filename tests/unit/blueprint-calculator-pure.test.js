@@ -93,6 +93,32 @@ describe('Blueprint Calculator - Pure Functions', () => {
       expect(result).toBe(90);
     });
 
+    /*
+     * A null facility silently yields ME-only numbers.
+     *
+     * This is the shape of a shipped bug: setting a facility from the Build List
+     * sent only facilityId, and updateBuildItemsByType wrote NULL over
+     * facility_snapshot. The snapshot is what carries structureTypeId/rigs/
+     * securityStatus, so every quantity quietly lost the structure AND rig
+     * bonuses while the UI still showed a facility as configured.
+     *
+     * Uses the real numbers from the report: Hail L, Fullerides at 1200/run,
+     * 10 runs, ME 2.
+     */
+    test('a null facility drops the structure bonus (regression guard)', () => {
+      const withoutFacility = calculateMaterialQuantity(1200, 2, 10, null, null);
+      const withFacility = calculateMaterialQuantity(
+        1200, 2, 10, facilitiesFixtures.raitaruNoRigs, null
+      );
+
+      // ME-only: 10 * 1200 * 0.98 = 11760 - what the bug displayed.
+      expect(withoutFacility).toBe(11760);
+      // With any Upwell structure: 11760 * 0.99 = 11642.4 -> ceil 11643.
+      expect(withFacility).toBe(11643);
+      // The gap is the whole point - a dropped snapshot is not cosmetic.
+      expect(withFacility).toBeLessThan(withoutFacility);
+    });
+
     test('applies rig material bonus', () => {
       const facility = facilitiesFixtures.raitaruT1MERig;
       const productGroupId = 88;  // Light Missile group

@@ -272,4 +272,59 @@ describe('SDE Integration Tests', () => {
       }
     });
   });
+
+  /*
+   * Build List double-counting regression.
+   *
+   * detectAndCreateIntermediates used calculateReactionMaterials to decide which
+   * child rows a reaction needs. That function aggregates every sub-reaction's
+   * materials up into the parent's map, so a deep input surfaced on the parent
+   * as though the parent consumed it directly - a child row was created under
+   * BOTH the parent and the sub-reaction that really consumes it.
+   *
+   * Concretely: Fullerides does not consume Helium Fuel Block; its sub-reaction
+   * Carbon Polymers does. The Build List showed Helium Fuel Blocks as 2 uses at
+   * double the runs. Row creation now uses getReactionMaterials (direct inputs).
+   *
+   * These type IDs are stable SDE data, verified against the live database.
+   */
+  describe('Reaction direct inputs vs deep aggregation (Build List regression)', () => {
+    const FULLERIDES = 16679;
+    const CARBON_POLYMERS = 16659;
+    const HELIUM_FUEL_BLOCK = 4247;
+
+    const {
+      getReactionForProduct, getReactionMaterials, calculateReactionMaterials,
+    } = require('../../src/main/reaction-calculator');
+
+    test('Fullerides does NOT directly consume Helium Fuel Block', async () => {
+      const reactionId = await getReactionForProduct(FULLERIDES, null);
+      const direct = await getReactionMaterials(reactionId, null);
+
+      expect(direct.some(m => m.typeID === HELIUM_FUEL_BLOCK)).toBe(false);
+      // ...but it DOES directly consume Carbon Polymers, which is what should
+      // carry the fuel-block demand.
+      expect(direct.some(m => m.typeID === CARBON_POLYMERS)).toBe(true);
+    });
+
+    test('Carbon Polymers is the reaction that really consumes Helium Fuel Block', async () => {
+      const reactionId = await getReactionForProduct(CARBON_POLYMERS, null);
+      const direct = await getReactionMaterials(reactionId, null);
+
+      expect(direct.some(m => m.typeID === HELIUM_FUEL_BLOCK)).toBe(true);
+    });
+
+    test('the deep map DOES surface Helium Fuel Block on Fullerides - why direct inputs are required', async () => {
+      // This is the trap. Using this map for row creation is what produced the
+      // duplicate row; the assertion documents the behaviour so the two sources
+      // are not casually swapped again.
+      const reactionId = await getReactionForProduct(FULLERIDES, null);
+      const deep = await calculateReactionMaterials(reactionId, 1, null, null);
+
+      expect(Object.keys(deep.materials)).toContain(String(HELIUM_FUEL_BLOCK));
+
+      const direct = await getReactionMaterials(reactionId, null);
+      expect(direct.some(m => m.typeID === HELIUM_FUEL_BLOCK)).toBe(false);
+    });
+  });
 });

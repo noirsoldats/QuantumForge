@@ -696,6 +696,129 @@
     status.setAttribute('data-status', state.plan.status);
 
     $('plan-created').textContent = `Created ${formatDate(state.plan.createdAt)}`;
+
+    // Keeps Mark Complete / Reopen in step with the status just rendered above.
+    setPlanActionChrome();
+  }
+
+  /**
+   * Mark Complete / Reopen.
+   *
+   * Status drives the plan-list filters, so a plan stuck on "active" forever is
+   * why the Completed filter looked broken. updateManufacturingPlan takes
+   * CAMELCASE keys (`status`, `completedAt`) and maps them to snake_case
+   * columns itself - sending `completed_at` writes nothing and reports success.
+   */
+  async function togglePlanComplete() {
+    if (!state.plan) return;
+
+    const completing = state.plan.status !== 'completed';
+    const updates = completing
+      ? { status: 'completed', completedAt: Date.now() }
+      // Reopening clears the timestamp; leaving it set would date a plan that
+      // is running again.
+      : { status: 'active', completedAt: null };
+
+    try {
+      const ok = await window.electronAPI.plans.update(state.planId, updates);
+      // updateManufacturingPlan returns false when nothing matched (unknown
+      // field, missing plan) rather than throwing.
+      if (!ok) throw new Error('Plan not updated');
+
+      state.plan = { ...state.plan, ...updates };
+      await loadPlans();
+      // renderPlanDetail re-syncs the button label via setPlanActionChrome.
+      renderPlanDetail();
+      toast(completing ? 'Plan marked complete.' : 'Plan reopened.', 'success');
+    } catch (error) {
+      console.error('[plans] toggle complete failed:', error);
+      toast(`Failed to update plan: ${error.message}`, 'error');
+    }
+  }
+
+  /**
+   * Delete the open plan.
+   *
+   * Irreversible and takes every blueprint/material/match with it, so it
+   * confirms first. window.confirm is what the rest of this view would use -
+   * there is no shared confirm component in the app today.
+   */
+  async function deleteCurrentPlan() {
+    if (!state.plan) return;
+
+    const name = state.plan.planName;
+    if (!window.confirm(
+      `Delete "${name}"?\n\nThis removes the plan and everything in it - blueprints, `
+      + 'materials, and job/transaction matches. This cannot be undone.'
+    )) return;
+
+    try {
+      const ok = await window.electronAPI.plans.delete(state.planId);
+      if (!ok) throw new Error('Plan not deleted');
+
+      // Clear the selection before reloading: the detail pane is bound to a
+      // plan that no longer exists.
+      state.planId = null;
+      state.plan = null;
+      await loadPlans();
+      renderPlanDetail();
+      toast(`Deleted "${name}".`, 'success');
+    } catch (error) {
+      console.error('[plans] delete plan failed:', error);
+      toast(`Failed to delete plan: ${error.message}`, 'error');
+    }
+  }
+
+  /* ---- rename ---- */
+
+  function openRenamePlan() {
+    if (!state.plan) return;
+    $('mp-rename-name').value = state.plan.planName || '';
+    $('mp-rename-description').value = state.plan.description || '';
+    openModal('mp-rename-modal');
+  }
+
+  /**
+   * Save the plan's name/description.
+   *
+   * updateManufacturingPlan takes CAMELCASE keys (`planName`, `description`) -
+   * `plan_name` is silently dropped and the call still reports success.
+   */
+  async function confirmRenamePlan() {
+    if (!state.plan) return;
+
+    const planName = $('mp-rename-name').value.trim();
+    const description = $('mp-rename-description').value.trim() || null;
+
+    // The backend auto-names only on CREATE; an empty name here would blank it.
+    if (!planName) {
+      toast('Plan name cannot be empty.', 'warning');
+      return;
+    }
+
+    try {
+      const ok = await window.electronAPI.plans.update(state.planId, { planName, description });
+      if (!ok) throw new Error('Plan not updated');
+
+      state.plan = { ...state.plan, planName, description };
+      closeModal('mp-rename-modal');
+      await loadPlans();
+      renderPlanDetail();
+      // The Overview tab prints the description, so it can be stale otherwise.
+      if (state.tab === 'overview') renderOverview();
+      toast('Plan renamed.', 'success');
+    } catch (error) {
+      console.error('[plans] rename plan failed:', error);
+      toast(`Failed to rename plan: ${error.message}`, 'error');
+    }
+  }
+
+  /** Mark Complete reads "Reopen" once the plan is completed. */
+  function setPlanActionChrome() {
+    const label = $('mp-complete-plan-label');
+    if (!label) return;
+    const completed = !!state.plan && state.plan.status === 'completed';
+    label.textContent = completed ? 'Reopen Plan' : 'Mark Complete';
   }
 
   /* ------------------------------------------------------------ plan data */
@@ -1137,6 +1260,117 @@
     input.addEventListener('blur', () => commit());
   }
 
+  /**
+   * Re-lock every material in the plan to the current market price.
+   *
+   * This is the ONE sanctioned way a plan adopts live prices - everything else
+   * (market refresh, recalculation, rebuild) deliberately leaves locked prices
+   * alone. So it confirms first: it rewrites the cost basis of the whole plan.
+   *
+   * The backend is per-material (`relockPlanMaterial`), so this iterates. Only
+   * materials with a readable live price are touched; one that failed to price
+   * is SKIPPED rather than locked at 0, which would silently zero its cost.
+   *
+   * A material carrying a price override keeps that override as its price - the
+   * re-lock only updates the market snapshot behind it. That is reported
+   * separately so the numbers not moving does not read as a failure.
+   */
+  async function relockAllPrices() {
+    if (!state.planId) return;
+
+    const materials = Array.isArray(state.materials) ? state.materials : [];
+
+    /*
+     * Prices are read FRESH here rather than from state.drift.
+     *
+     * state.drift is populated by the Materials tab, so depending on it meant
+     * re-locking could report "no live prices" purely because a tab had not been
+     * opened yet - a state this button must never be in.
+     *
+     * getMaterialDrift prices from the LOCAL market cache
+     * (calculateRealisticPrice -> getCachedMarketOrders). It does not refresh
+     * the order book: market-order data updates only via the Market Manager and
+     * Dashboard refresh buttons, never as a side effect of a calculation.
+     */
+    await loadDrift();
+    const drift = state.drift || {};
+
+    const relockable = materials
+      .map((mat) => ({ mat, live: drift[mat.typeId]?.livePrice }))
+      .filter(({ live }) => Number.isFinite(live) && live > 0);
+
+    if (relockable.length === 0) {
+      toast(
+        'No cached market prices for this plan\'s materials. Refresh market data '
+        + 'in Market Manager first.',
+        'warning'
+      );
+      return;
+    }
+
+    const skipped = materials.length - relockable.length;
+    if (!window.confirm(
+      `Re-lock ${relockable.length} material price${relockable.length === 1 ? '' : 's'} to the `
+      + 'current market?\n\nThis replaces the frozen prices this plan\'s costs are based on '
+      + 'and cannot be undone.'
+      + (skipped > 0 ? `\n\n${skipped} material(s) have no live price and will be skipped.` : '')
+    )) return;
+
+    const btn = $('mp-relock');
+    const label = $('mp-relock-label');
+    const original = label ? label.textContent : null;
+    if (btn) {
+      btn.disabled = true;
+      if (label) label.textContent = 'Re-locking…';
+    }
+
+    let locked = 0;
+    let overridden = 0;
+    let failed = 0;
+
+    try {
+      // Sequential: these all write the same plan, and a half-applied batch of
+      // price locks is worse than a slow one.
+      for (const { mat, live } of relockable) {
+        try {
+          const res = await window.electronAPI.market.relockPlanMaterial(
+            state.planId, mat.typeId, live
+          );
+          if (res && res.success) {
+            locked += 1;
+            if (res.overridden) overridden += 1;
+          } else {
+            failed += 1;
+          }
+        } catch (error) {
+          console.error(`[plans] re-lock failed for type ${mat.typeId}:`, error);
+          failed += 1;
+        }
+      }
+
+      await loadPlanData();
+
+      if (locked > 0) {
+        const notes = [];
+        if (overridden > 0) notes.push(`${overridden} kept a manual override`);
+        if (skipped > 0) notes.push(`${skipped} had no live price`);
+        if (failed > 0) notes.push(`${failed} failed`);
+        toast(
+          `Re-locked ${locked} price${locked === 1 ? '' : 's'}`
+          + (notes.length ? ` — ${notes.join(', ')}.` : '.'),
+          failed > 0 ? 'warning' : 'success'
+        );
+      } else {
+        toast('Could not re-lock any prices.', 'error');
+      }
+    } finally {
+      if (btn) {
+        btn.disabled = false;
+        if (label && original !== null) label.textContent = original;
+      }
+    }
+  }
+
   function driftCell(entry) {
     const span = el('span', 'mp-drift');
     if (!entry || !Number.isFinite(entry.driftPercent)) {
@@ -1484,11 +1718,21 @@
       const table = el('div', 'mp-section-table');
 
       const header = el('div', 'mp-build-row mp-build-header');
-      ['Item', 'Uses', 'Runs', 'Lines', 'ME', 'TE', 'Facility', 'Build Plan', 'Actions']
-        .forEach((label, i) => {
-          const cell = el('span', i === 0 || i === 6 || i === 7 ? null : 'mp-right', label);
-          header.appendChild(cell);
-        });
+      // "Uses" is the number of places in this plan that need the item - each
+      // one a separate plan_blueprints row collapsed into this single row. It
+      // is what makes ME/TE/Facility read "— Mixed —", so the header carries a
+      // tooltip rather than leaving the number unexplained.
+      [
+        ['Item', null],
+        ['Uses', 'How many places in this plan need this item. Rows with more than one use collapse their settings here — differing values show as “Mixed”.'],
+        ['Runs', 'Total runs. Derived from the parent build for intermediates and reactions.'],
+        ['Lines', null], ['ME', null], ['TE', null],
+        ['Facility', null], ['Build Plan', null], ['Actions', null],
+      ].forEach(([label, hint], i) => {
+        const cell = el('span', i === 0 || i === 6 || i === 7 ? null : 'mp-right', label);
+        if (hint) cell.title = hint;
+        header.appendChild(cell);
+      });
       table.appendChild(header);
 
       rows.forEach((item) => table.appendChild(buildRow(item)));
@@ -1518,13 +1762,26 @@
     cell.appendChild(main);
     row.appendChild(cell);
 
-    /* ---- uses ---- */
-    row.appendChild(el('span', 'mp-right mp-mono mp-faint', formatNumber(item.instanceCount)));
+    /* ---- uses ----
+       How many separate places in the plan need this item. >1 is why the
+       settings cells on this row can read "— Mixed —". */
+    const usesCell = el('span', 'mp-right mp-mono mp-faint', formatNumber(item.instanceCount));
+    usesCell.title = item.instanceCount > 1
+      ? `Needed in ${formatNumber(item.instanceCount)} places in this plan; editing a setting here applies to all of them`
+      : 'Needed in one place in this plan';
+    row.appendChild(usesCell);
 
     /* ---- runs / lines ----
-       Only a top-level instance has editable runs; an intermediate's runs are
-       derived from its parent, so they are shown read-only. */
-    row.appendChild(numericCell(item, 'runs', editable && item.runsEditable));
+       Only a top-level instance has editable runs; an intermediate's or
+       reaction's runs are derived from its parents, so they are shown
+       read-only. Those rows carry runs: null, which numericCell renders as a
+       bare "—" - the derived total is the useful number there, so pass it
+       through as the display value. */
+    if (item.runsEditable) {
+      row.appendChild(numericCell(item, 'runs', editable));
+    } else {
+      row.appendChild(derivedRunsCell(item));
+    }
     row.appendChild(numericCell(item, 'lines', editable && item.runsEditable));
 
     /* ---- ME / TE ----
@@ -1611,6 +1868,28 @@
     row.appendChild(actions);
 
     return row;
+  }
+
+  /**
+   * Runs for a row whose runs are NOT directly editable - an intermediate, or a
+   * reaction. Its run count is derived from whatever consumes it, summed across
+   * every instance in the plan, so it is displayed read-only.
+   *
+   * Without this the column was blank (`runs` is null on these rows), which read
+   * as "no runs" on exactly the rows a build plan is scheduled around.
+   */
+  function derivedRunsCell(item) {
+    const cell = el('span', 'mp-right');
+    const total = Number(item.totalRuns);
+    if (!Number.isFinite(total) || total <= 0) {
+      cell.appendChild(el('span', 'mp-build-static', '—'));
+      return cell;
+    }
+    cell.appendChild(el('span', 'mp-build-static', formatNumber(total)));
+    cell.title = item.instanceCount > 1
+      ? `${formatNumber(total)} runs derived across ${formatNumber(item.instanceCount)} uses in this plan`
+      : 'Runs derived from what consumes this item';
+    return cell;
   }
 
   function numericCell(item, field, editable) {
@@ -1769,6 +2048,78 @@
   async function reloadAfterBuildChange() {
     await loadBuildList();
     await loadPlanData();
+  }
+
+  /**
+   * "Rebuild Plan": repair stale stored state, then recalculate the plan.
+   *
+   * An ordinary recalculation reads the stored rows and recomputes from them, so
+   * anything wrong IN those rows survives it. The repair pass re-resolves each
+   * row's facility snapshot from the current facility settings first - that is
+   * what fixes plans whose bonuses were silently dropped by an older version.
+   *
+   * Does NOT re-price. Plan prices are locked deliberately and only an explicit
+   * "Re-lock Prices" action may adopt live ones - a quantity repair must not
+   * become a backdoor that silently re-prices the plan.
+   */
+  async function rebuildPlan() {
+    if (!state.planId) return;
+
+    const btn = $('mp-recalc-all');
+    // The label has its own span: setting textContent on the button itself
+    // would delete the inline SVG icon and never bring it back.
+    const label = $('mp-recalc-all-label');
+    const original = label ? label.textContent : null;
+    if (btn) {
+      btn.disabled = true;
+      if (label) label.textContent = 'Rebuilding…';
+    }
+
+    try {
+      const result = await window.electronAPI.plans.repairAndRecalculate(state.planId, false);
+
+      // The handler reports failure in the payload rather than throwing, so a
+      // bare success assumption would show "done" over a plan that never rebuilt.
+      if (!result || !result.success) {
+        throw new Error((result && result.error) || 'Rebuild failed');
+      }
+
+      // A rebuild changes quantities everywhere, and this button lives in the
+      // plan header rather than on one tab - so refresh the plan totals AND
+      // whichever tab the user is actually looking at. showTab already owns the
+      // tab -> loader mapping; re-showing the current tab reuses it rather than
+      // duplicating a switch that would drift.
+      await loadPlanData();
+      showTab(state.tab);
+
+      const repaired = result.facilitiesRepaired || 0;
+      const cleared = result.facilitiesCleared || 0;
+      const parts = [];
+      if (repaired) parts.push(`${repaired} facility snapshot${repaired === 1 ? '' : 's'} refreshed`);
+      if (cleared) parts.push(`${cleared} cleared`);
+      toast(
+        parts.length ? `Plan rebuilt — ${parts.join(', ')}.` : 'Plan rebuilt.',
+        'success'
+      );
+
+      // A facility referenced by the plan but gone from settings leaves those
+      // rows with no bonuses at all - the user has to re-pick one, so say so.
+      if (result.missingFacilities && result.missingFacilities.length > 0) {
+        toast(
+          `${result.missingFacilities.length} row group(s) reference a facility that no longer `
+          + 'exists. Re-select a facility on those rows.',
+          'warning'
+        );
+      }
+    } catch (error) {
+      console.error('[plans] rebuild plan failed:', error);
+      toast(`Rebuild failed: ${error.message}`, 'error');
+    } finally {
+      if (btn) {
+        btn.disabled = false;
+        if (label && original !== null) label.textContent = original;
+      }
+    }
   }
 
   function setBulkChrome() {
@@ -4446,6 +4797,13 @@
       });
     });
 
+    /* ---- plan header ---- */
+    ctx.on($('mp-recalc-all'), 'click', () => rebuildPlan());
+    ctx.on($('mp-complete-plan'), 'click', () => togglePlanComplete());
+    ctx.on($('delete-plan-btn'), 'click', () => deleteCurrentPlan());
+    ctx.on($('mp-rename-plan'), 'click', () => openRenamePlan());
+    ctx.on($('mp-rename-confirm'), 'click', () => confirmRenamePlan());
+
     /* ---- tabs ---- */
     document.querySelectorAll('#mp-view .tab-button').forEach((btn) => {
       ctx.on(btn, 'click', () => showTab(btn.getAttribute('data-tab')));
@@ -4458,6 +4816,7 @@
     });
 
     ctx.on($('mp-drift-review'), 'click', () => showTab('materials'));
+    ctx.on($('mp-relock'), 'click', () => relockAllPrices());
 
     /* ---- build list ---- */
     ctx.on($('mp-bulk-edit'), 'click', () => {
