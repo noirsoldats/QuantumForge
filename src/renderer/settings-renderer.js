@@ -378,29 +378,20 @@ async function loadCharacters() {
 /**
  * Describe a character's authorisation state for the card's status line.
  * Returns a label plus a semantic colour token.
+ *
+ * Deliberately says nothing about `expiresAt`. That timestamp belongs to the
+ * ACCESS token, which ESI issues with a ~20 minute life and which esi-fetch
+ * renews automatically from the refresh token before every call - so a short
+ * or already-elapsed access token is the normal steady state, not a condition
+ * the user can act on. Surfacing it as a countdown read as an impending
+ * problem when nothing was wrong. The refresh token itself carries no
+ * expiration (we persist only the token, never an expiry for it), so there is
+ * no meaningful deadline to show in its place.
+ *
  * @param {Object} character
  * @returns {{ text: string, tone: 'success'|'warning'|'error' }}
  */
 function getCharacterAuthStatus(character) {
-  const expiresAt = character.expiresAt || character.tokenExpiry;
-  if (!expiresAt) {
-    return { text: 'Authorized', tone: 'success' };
-  }
-
-  const msLeft = new Date(expiresAt).getTime() - Date.now();
-  if (Number.isNaN(msLeft)) {
-    return { text: 'Authorized', tone: 'success' };
-  }
-  if (msLeft <= 0) {
-    // Tokens refresh automatically; an expired one is not an error state.
-    return { text: 'Token expired - refreshing on next use', tone: 'warning' };
-  }
-
-  const minutes = Math.round(msLeft / 60000);
-  if (minutes <= 20) {
-    return { text: `Token expires in ${minutes}m`, tone: 'warning' };
-  }
-
   const scopeCount = Array.isArray(character.scopes) ? character.scopes.length : 0;
   return {
     text: scopeCount ? `Authorized - ${scopeCount} scopes` : 'Authorized',

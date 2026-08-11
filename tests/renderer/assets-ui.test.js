@@ -49,7 +49,8 @@ let volumes;
 let locations;
 let prices;
 let marketSets;
-let cacheStatus;
+/** (isCorporation) -> cache status. A fn, since the two caches differ. */
+let cacheStatusFor;
 let savedViews;
 let calls;
 let consoleErrors = [];
@@ -91,9 +92,12 @@ function makeApi() {
         calls.push({ fn: 'assets.fetch', id });
         return { success: true };
       },
+      // Real signature: the handler takes (characterId, isCorporation) and the
+      // two caches expire independently, so the stub must be able to answer
+      // differently per flag.
       getCacheStatus: async (id, isCorporation) => {
         calls.push({ fn: 'assets.getCacheStatus', id, isCorporation });
-        return cacheStatus;
+        return cacheStatusFor(isCorporation);
       },
     },
     sde: {
@@ -159,6 +163,21 @@ function loadRenderer() {
   });
 }
 
+/**
+ * Install the REAL shared countdown, not a stub.
+ *
+ * It is what renders #as-cache-status now, so stubbing it would leave these
+ * tests asserting against a label nothing writes. Loading the actual file also
+ * pins the contract between the two: the renderer hands over `expiresAt` and
+ * the component formats it.
+ */
+function loadCacheCountdown() {
+  delete window.QFCacheCountdown;
+  jest.isolateModules(() => {
+    require('../../public/shared/cache-countdown.js');
+  });
+}
+
 function makeCtx() {
   const tracked = [];
   const intervals = [];
@@ -203,6 +222,12 @@ function textOf(container, selector) {
 }
 
 beforeEach(() => {
+  // The real cache countdown owns a 1s interval. Fake timers keep it from
+  // ticking through the suite, and let the polling test advance the clock
+  // without waiting. `doNotFake: ['queueMicrotask']` keeps settle()'s promise
+  // draining on the real microtask queue.
+  jest.useFakeTimers({ doNotFake: ['queueMicrotask'] });
+
   consoleErrors = [];
   expectedErrorPatterns = [];
   jest.spyOn(console, 'error').mockImplementation((...args) => {
@@ -272,7 +297,14 @@ beforeEach(() => {
   marketSets = [{ id: 'set-1', name: 'Jita 4-4', isDefault: true }];
   savedViews = [];
 
-  cacheStatus = { isCached: true, remainingSeconds: 2520, expiresAt: Date.now() + 2520000 };
+  // 42m out. The countdown ticks off the absolute expiresAt, so that is the
+  // field that matters; remainingSeconds is carried because the real handler
+  // returns it.
+  cacheStatusFor = () => ({
+    isCached: true,
+    remainingSeconds: 2520,
+    expiresAt: Date.now() + 2520_000,
+  });
 
   registered = null;
   window.QFShell = {
@@ -291,6 +323,8 @@ beforeEach(() => {
     dismissAll: () => {},
   };
 
+  loadCacheCountdown();
+
   // The renderer fetches its own template.
   global.fetch = jest.fn(async () => ({ text: async () => VIEW_HTML }));
 
@@ -303,6 +337,10 @@ afterEach(() => {
     (e) => !expectedErrorPatterns.some((p) => e.includes(p))
   );
   expect(unexpected).toEqual([]);
+  // Dispose any countdown still attached before dropping fake timers, so a
+  // stray 1s interval cannot tick into the next test.
+  jest.clearAllTimers();
+  jest.useRealTimers();
   jest.restoreAllMocks();
   delete global.fetch;
 });
@@ -862,6 +900,13 @@ describe('selection', () => {
 });
 
 describe('refresh', () => {
+  // A live ESI cache now GATES the button, so a refresh that is meant to reach
+  // ESI has to start from an expired one. Mounting on the default (42m) fixture
+  // would only ever exercise the gated path.
+  beforeEach(() => {
+    cacheStatusFor = () => ({ isCached: false, expiresAt: null });
+  });
+
   test('fetches from ESI then reloads', async () => {
     const { container } = await mountView({ characterId: 91316135 });
     calls.length = 0;
@@ -898,6 +943,55 @@ describe('refresh', () => {
     await settle();
 
     expect(btn.disabled).toBe(false);
+    // The in-flight label must be cleared too, or render() - which refuses to
+    // overwrite "Refreshing…" - would freeze the button's text forever.
+    expect(btn.querySelector('#as-refresh-label').textContent).not.toBe('Refreshing…');
+  });
+});
+
+describe('cache gating', () => {
+  test('a live cache gates the button but leaves it CLICKABLE', async () => {
+    // A disabled <button> swallows the click outright: no handler, no toast,
+    // no cursor feedback. It read as a dead button.
+    const { container } = await mountView({ characterId: 91316135 });
+    const btn = container.querySelector('#as-refresh-btn');
+
+    expect(btn.classList.contains('is-gated')).toBe(true);
+    expect(btn.disabled).toBe(false);
+    expect(btn.querySelector('#as-refresh-label').textContent).toContain('Cached');
+  });
+
+  test('a gated click explains itself instead of calling ESI', async () => {
+    const { container } = await mountView({ characterId: 91316135 });
+    calls.length = 0;
+
+    container.querySelector('#as-refresh-btn').click();
+    await settle();
+
+    expect(calls.some((c) => c.fn === 'assets.fetch')).toBe(false);
+    const info = calls.find((c) => c.fn === 'toast.info');
+    expect(info).toBeDefined();
+    expect(info.m).toContain('42m');
+  });
+
+  test('an expired cache leaves the button ungated', async () => {
+    cacheStatusFor = () => ({ isCached: false, expiresAt: null });
+
+    const { container } = await mountView({ characterId: 91316135 });
+    const btn = container.querySelector('#as-refresh-btn');
+
+    expect(btn.classList.contains('is-gated')).toBe(false);
+    expect(btn.querySelector('#as-refresh-label').textContent).toBe('Refresh from API');
+  });
+
+  test('is-gated is styled as unavailable-but-clickable (jsdom applies no CSS)', () => {
+    // jsdom never applies stylesheets, so a renderer assertion cannot catch a
+    // missing rule - assert against the real CSS text.
+    const rule = VIEW_CSS.match(/\.btn\.is-gated\s*\{[^}]*\}/)[0];
+
+    expect(rule).toMatch(/opacity/);
+    expect(rule).toMatch(/cursor:\s*help/);
+    expect(rule).not.toMatch(/pointer-events:\s*none/);
   });
 });
 
@@ -908,11 +1002,52 @@ describe('cache status', () => {
     expect(textOf(container, '#as-cache-status')).toContain('42m');
   });
 
-  test('the countdown timer goes through ctx, so it is cleared on unmount', async () => {
-    // The old screen used a raw setInterval that leaked on every remount.
-    const { made } = await mountView({ characterId: 91316135 });
+  test('reports the LATER of the two cache windows', async () => {
+    // Personal and corp assets cache independently. While either is still
+    // fresh, part of the table is ESI-current, so the later expiry is the
+    // honest one - taking the earlier would say "Cache expired" over fresh
+    // corp data.
+    cacheStatusFor = (isCorporation) => ({
+      isCached: true,
+      expiresAt: Date.now() + (isCorporation ? 2520_000 : 60_000),
+    });
 
-    expect(made.intervals.length).toBeGreaterThan(0);
+    const { container } = await mountView({ characterId: 91316135 });
+
+    expect(textOf(container, '#as-cache-status')).toContain('42m');
+  });
+
+  test('expired when NEITHER window is live', async () => {
+    cacheStatusFor = () => ({ isCached: false, expiresAt: null });
+
+    const { container } = await mountView({ characterId: 91316135 });
+
+    expect(textOf(container, '#as-cache-status')).toContain('Cache expired');
+  });
+
+  test('does not poll IPC to tick the clock', async () => {
+    // The point of the conversion. The old screen re-read BOTH statuses over
+    // IPC every 30s (~240 round-trips an hour) purely to redraw a label; the
+    // handler returns an absolute expiresAt, so the clock ticks locally and
+    // re-syncs only when asset data changes.
+    await mountView({ characterId: 91316135 });
+
+    const before = calls.filter((c) => c.fn === 'assets.getCacheStatus').length;
+    jest.advanceTimersByTime(120_000);
+    await settle();
+
+    expect(calls.filter((c) => c.fn === 'assets.getCacheStatus').length).toBe(before);
+  });
+
+  test('the countdown is disposed on unmount, so it cannot leak', async () => {
+    // The old screen used a raw setInterval that leaked on every remount.
+    const { ctx, instance } = await mountView({ characterId: 91316135 });
+    const live = jest.getTimerCount();
+
+    ctx.dispose();
+    if (instance && instance.destroy) instance.destroy();
+
+    expect(jest.getTimerCount()).toBeLessThan(live);
   });
 });
 

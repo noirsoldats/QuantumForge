@@ -9,7 +9,8 @@
  *   - character + corporation tabs, corp tab only when the character has a corp
  *   - search by item name
  *   - "Refresh from API" with a spinner and a disabled button while in flight
- *   - cache-expiry countdown, refreshed on a timer
+ *   - cache-expiry countdown (now the shared QFCacheCountdown, ticking locally
+ *     off an absolute expiry rather than polling IPC every 30s)
  *   - blueprint-copy marking
  *   - full location path (station - container - container)
  *
@@ -65,6 +66,10 @@
 
   let els = {};
   let viewCtx = null;
+  /** Dispose fn from QFCacheCountdown.attach, or null when not attached. */
+  let cacheCountdown = null;
+  /** Remaining-time label while the cache is live, so a gated click can cite it. */
+  let cacheLabel = null;
 
   // --------------------------------------------------------------- columns
 
@@ -112,15 +117,6 @@
     if (abs >= 1e6) return `${(v / 1e6).toFixed(2)}M`;
     if (abs >= 1e3) return `${(v / 1e3).toFixed(2)}K`;
     return fmtNumber(v);
-  }
-
-  function fmtDuration(seconds) {
-    const s = Math.max(0, Math.floor(Number(seconds) || 0));
-    if (s < 60) return `${s}s`;
-    const minutes = Math.floor(s / 60);
-    if (minutes < 60) return `${minutes}m`;
-    const hours = Math.floor(minutes / 60);
-    return `${hours}h ${minutes % 60}m`;
   }
 
   // --------------------------------------------------------------- helpers
@@ -866,36 +862,109 @@
 
   // -------------------------------------------------------- cache status
 
-  async function updateCacheStatus() {
-    if (!state.characterId) return;
-    try {
-      const [charStatus, corpStatus] = await Promise.all([
-        window.electronAPI.assets.getCacheStatus(state.characterId, false).catch(() => null),
-        window.electronAPI.assets.getCacheStatus(state.characterId, true).catch(() => null),
-      ]);
+  /**
+   * Read BOTH cache windows and report the one that lapses last.
+   *
+   * QFCacheCountdown drives a single clock, but this screen covers two caches -
+   * personal and corporation. The later expiry is the honest one to show: while
+   * it stands, at least one half of the table is still ESI-fresh. Taking the
+   * earlier one would announce "Cache expired" with fresh corp assets on screen.
+   *
+   * Mirrors the shape the shared component expects, so a per-tab countdown later
+   * is just two attach() calls.
+   *
+   * @returns {Promise<{isCached: boolean, expiresAt: number|null}>}
+   */
+  async function readCacheStatus() {
+    if (!state.characterId) return { isCached: false, expiresAt: null };
 
-      const remaining = Math.max(
-        (charStatus && charStatus.remainingSeconds) || 0,
-        (corpStatus && corpStatus.remainingSeconds) || 0
-      );
+    const [charStatus, corpStatus] = await Promise.all([
+      window.electronAPI.assets.getCacheStatus(state.characterId, false).catch(() => null),
+      window.electronAPI.assets.getCacheStatus(state.characterId, true).catch(() => null),
+    ]);
 
-      if (remaining > 0) {
-        const label = `Cache expires in ${fmtDuration(remaining)}`;
-        els.cacheStatus.textContent = label;
-        if (els.refreshBtn) els.refreshBtn.title = label;
-      } else {
-        els.cacheStatus.textContent = 'Cache expired';
-        if (els.refreshBtn) els.refreshBtn.title = 'Fetch the latest assets from ESI';
-      }
-    } catch (error) {
-      console.error('[assets] Could not read cache status:', error);
+    const expiries = [charStatus, corpStatus]
+      .filter((s) => s && s.isCached && s.expiresAt)
+      .map((s) => s.expiresAt);
+
+    if (expiries.length === 0) return { isCached: false, expiresAt: null };
+    return { isCached: true, expiresAt: Math.max(...expiries) };
+  }
+
+  /**
+   * Attach the shared cache countdown.
+   *
+   * Replaces a 30s poll that re-read both statuses over IPC on every tick (~240
+   * round-trips an hour) purely to redraw a label. The handler returns an
+   * absolute `expiresAt`, so the clock can tick locally and re-sync only when
+   * asset data actually changes - which also makes the label count down every
+   * second instead of jumping in 30s steps.
+   */
+  function startCacheCountdown() {
+    if (cacheCountdown) {
+      cacheCountdown();
+      cacheCountdown = null;
     }
+
+    if (!window.QFCacheCountdown) return;
+
+    cacheCountdown = window.QFCacheCountdown.attach({
+      getStatus: readCacheStatus,
+      endpointTypes: ['assets', 'corporation_assets'],
+      render: ({ cached, label }) => {
+        if (els.cacheStatus) {
+          els.cacheStatus.textContent = cached ? `Cache expires in ${label}` : 'Cache expired';
+        }
+
+        // Remembered so a click during the window can name the remaining time.
+        cacheLabel = cached ? label : null;
+
+        if (!els.refreshBtn) return;
+
+        // The button stays ENABLED while the ESI cache is valid.
+        //
+        // Disabling it looked broken: a disabled <button> swallows the click
+        // outright, so no handler ran, no toast appeared, and there was no
+        // cursor feedback either - the user got nothing at all. Keeping it
+        // clickable lets handleRefresh explain WHY nothing was fetched.
+        //
+        // `is-gated` styles it as unavailable without removing the click.
+        els.refreshBtn.classList.toggle('is-gated', cached);
+        els.refreshBtn.title = cached
+          ? `ESI has no newer assets yet - cache expires in ${label}`
+          : 'Fetch the latest assets from ESI';
+
+        // Never stomp the in-flight label: render() keeps ticking once a
+        // second while a fetch is running, and would otherwise overwrite
+        // "Refreshing…" on the very next tick.
+        if (els.refreshLabel && els.refreshLabel.textContent !== 'Refreshing…') {
+          els.refreshLabel.textContent = cached ? `Cached (${label})` : 'Refresh from API';
+        }
+      },
+    });
+
+    if (viewCtx) viewCtx.track(cacheCountdown);
   }
 
   // --------------------------------------------------------------- actions
 
   async function handleRefresh() {
-    if (!els.refreshBtn || els.refreshBtn.disabled) return;
+    if (!els.refreshBtn) return;
+    // Already in flight - the label is the source of truth here, since the
+    // button is no longer disabled while merely gated.
+    if (els.refreshLabel.textContent === 'Refreshing…') return;
+
+    // Gated by the ESI cache. Say so immediately rather than round-tripping to
+    // main just to be told the same thing.
+    if (els.refreshBtn.classList.contains('is-gated')) {
+      toast(
+        cacheLabel
+          ? `Assets are already up to date. ESI has nothing newer for another ${cacheLabel}.`
+          : 'Assets are already up to date.',
+        'info'
+      );
+      return;
+    }
 
     els.refreshBtn.disabled = true;
     els.refreshLabel.textContent = 'Refreshing…';
@@ -911,7 +980,6 @@
       }
 
       await loadAssets();
-      await updateCacheStatus();
       toast('Assets refreshed', 'success');
     } catch (error) {
       console.error('[assets] Refresh failed:', error);
@@ -920,7 +988,12 @@
       toast(`Failed to refresh assets: ${error.message}`, 'error');
     } finally {
       els.refreshBtn.disabled = false;
+      // Clear the in-flight label FIRST: render() refuses to overwrite
+      // "Refreshing…", so leaving it set would freeze the button's text.
       els.refreshLabel.textContent = 'Refresh from API';
+      // Re-sync: a successful fetch opens a fresh cache window, so this
+      // immediately re-applies `is-gated` and the countdown label.
+      startCacheCountdown();
     }
   }
 
@@ -1469,11 +1542,11 @@
     await loadSavedViews();
     await initMarketSet();
     await loadAssets();
-    await updateCacheStatus();
 
-    // Replaces the old 30s setInterval. ctx.setInterval is cleared on unmount;
-    // the raw setInterval it replaces leaked on every remount.
-    ctx.setInterval(updateCacheStatus, 30000);
+    // Ticks locally off an absolute expiry and re-syncs on data change, so no
+    // timer polls IPC here. Tracked on ctx, so it is disposed on unmount - the
+    // raw setInterval this replaces leaked on every remount.
+    startCacheCountdown();
 
     // Live updates: refresh when the background cycle lands new asset data,
     // rather than polling for it.
@@ -1491,9 +1564,19 @@
   }
 
   function destroy() {
-    // Nothing to tear down beyond the ViewContext: every listener goes through
-    // ctx.on/ctx.track, and this view owns no component with a document-level
-    // listener or a popover attached to <body>.
+    // The countdown is tracked on ctx, so unmount already disposes it. Disposing
+    // here too is deliberate: startCacheCountdown can be called again after
+    // mount (handleRefresh), and only the latest dispose fn reaches ctx - so on
+    // a path where destroy runs without ctx.dispose, an earlier attach's timer
+    // would survive. attach()'s dispose is idempotent, so double-disposal is safe.
+    if (cacheCountdown) {
+      cacheCountdown();
+      cacheCountdown = null;
+    }
+
+    // Beyond that, nothing: every listener goes through ctx.on/ctx.track, and
+    // this view owns no component with a document-level listener or a popover
+    // attached to <body>.
     els = {};
     viewCtx = null;
   }

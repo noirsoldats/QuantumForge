@@ -57,6 +57,16 @@
 
 .as-header-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 
+/* Refresh while the ESI cache is still valid.
+   Looks unavailable but stays CLICKABLE: a disabled <button> swallows the
+   click, so the user got no toast, no tooltip and no cursor change - it read
+   as a dead button. Clicking now explains why nothing was fetched. */
+.btn.is-gated {
+  opacity: 0.55;
+  cursor: help;
+}
+.btn.is-gated:hover { opacity: 0.75; }
+
 .as-field-label { font-size: 12px; color: var(--qf-text-faint); white-space: nowrap; }
 
 .as-market-set { width: 180px; }

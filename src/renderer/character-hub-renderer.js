@@ -90,22 +90,18 @@
 
   /**
    * Describe a character's authorisation state.
-   * Mirrors the Settings account cards so the two never disagree.
+   * Mirrors the Settings account cards so the two never disagree - keep this in
+   * step with getCharacterAuthStatus in settings-renderer.js.
+   *
+   * Says nothing about `expiresAt`: that is the ACCESS token, renewed
+   * automatically from the refresh token before each ESI call, so its short
+   * life is normal rather than actionable. See the fuller note in
+   * settings-renderer.js.
+   *
    * @param {Object} character
    * @returns {{ text: string, tone: 'success'|'warning'|'error' }}
    */
   function authStatus(character) {
-    const expiresAt = character.expiresAt || character.tokenExpiry;
-    if (!expiresAt) return { text: 'Authorized', tone: 'success' };
-
-    const msLeft = new Date(expiresAt).getTime() - Date.now();
-    if (Number.isNaN(msLeft)) return { text: 'Authorized', tone: 'success' };
-    // Tokens refresh automatically, so an expired one is not an error state.
-    if (msLeft <= 0) return { text: 'Token expired - refreshing on next use', tone: 'warning' };
-
-    const minutes = Math.round(msLeft / 60000);
-    if (minutes <= 20) return { text: `Token expires in ${minutes}m`, tone: 'warning' };
-
     const scopes = Array.isArray(character.scopes) ? character.scopes.length : 0;
     return { text: scopes ? `Authorized - ${scopes} scopes` : 'Authorized', tone: 'success' };
   }
@@ -268,11 +264,13 @@
       || (character.corporationId ? `Corporation ${character.corporationId}` : 'Corporation unknown');
     identity.appendChild(corp);
 
-    // HIDDEN, not removed. "Token expires in 18m" is a normal state - tokens
-    // refresh automatically - so surfacing a countdown invites the reader to
-    // think something needs doing. Parked until there is something genuinely
-    // useful for this line; authStatus() and the markup stay so restoring it
-    // is a one-line change.
+    // HIDDEN, not removed. This line used to carry an access-token countdown,
+    // which read as a warning about something that needs no action; that has
+    // now been dropped from authStatus() here and in Settings alike. What is
+    // left ("Authorized - N scopes") is not worth a line on the Hub, where
+    // Settings already shows it. Parked until there is something genuinely
+    // useful for it - a real re-authorisation failure would qualify - and the
+    // markup stays so restoring it is a one-line change.
     const status = authStatus(character);
     const st = document.createElement('div');
     st.className = `ch-status is-${status.tone}`;

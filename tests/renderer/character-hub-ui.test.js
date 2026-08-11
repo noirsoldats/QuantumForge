@@ -337,10 +337,11 @@ describe('roster', () => {
   });
 
   test('the token-status line is hidden, not removed', async () => {
-    // "Token expires in 18m" is a normal state - tokens refresh
-    // automatically - so showing a countdown invites the reader to think
-    // something needs doing. Parked until there is something useful to put
-    // there; the element stays so restoring it is a one-line change.
+    // The access-token countdown this line once carried has been removed
+    // outright (it warned about automatic token refresh, which needs no
+    // action). What authStatus returns now - "Authorized - N scopes" - is
+    // already on the Settings card and does not warrant a line here. Parked;
+    // the element stays so restoring it is a one-line change.
     await mountView();
 
     const status = document.querySelector('[data-character-id="91316135"] .ch-status');
