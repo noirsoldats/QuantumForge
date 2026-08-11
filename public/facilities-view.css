@@ -55,6 +55,20 @@
   color: var(--qf-text-muted);
 }
 
+/* Buttons and the count share the header's right edge, with the count last so
+   it keeps the position it had before the buttons existed. */
+#fac-view .fac-head-right {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 18px;
+}
+
+#fac-view .fac-head-actions {
+  display: flex;
+  gap: 8px;
+}
+
 #fac-view .fac-count {
   flex-shrink: 0;
   text-align: right;
@@ -466,12 +480,19 @@
   color: var(--qf-error);
 }
 
-/* Armed state of the two-step delete. Both colour AND background are set in
-   each state so switching cannot leave a stale tint (rule 3). */
-#fac-view .btn-icon.is-armed {
-  border-color: var(--qf-error);
-  background-color: var(--qf-error-dim, rgba(255, 90, 90, 0.15));
-  color: var(--qf-error);
+/* Remove confirmation is a Cancel/Remove dialog, matching every other
+   destructive action in the app - see fac-delete-modal. */
+#fac-view .fac-confirm-text {
+  margin: 0;
+  font-size: 13.5px;
+  color: var(--qf-text-primary);
+}
+
+#fac-view .fac-confirm-note {
+  margin: 10px 0 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--qf-text-muted);
 }
 
 #fac-view .fac-facility-location {
@@ -633,3 +654,158 @@
   font-size: 12.5px;
   color: var(--qf-text-muted);
 }
+
+/* ------------------------------------------------------------ import modals */
+
+#fac-view .fac-scan-hint,
+#fac-view .fac-rav-hint {
+  margin: 0 0 12px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--qf-text-muted);
+}
+
+/* Rule 4: textareas match the select triggers beside them - sunken fill, not
+   --qf-surface, which reads as "no background" on an elevated card. */
+#fac-view .fac-scan-textarea {
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+  padding: 8px 12px;
+  background: var(--qf-surface-sunken);
+  border: 1px solid var(--qf-border);
+  border-radius: var(--qf-radius-md);
+  color: var(--qf-text-primary);
+  font-family: var(--qf-font-mono);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+#fac-view .fac-scan-summary {
+  margin-top: 12px;
+  padding: 10px 12px;
+  background: var(--qf-surface-sunken);
+  border: 1px solid var(--qf-border);
+  border-radius: var(--qf-radius-md);
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--qf-text-muted);
+}
+
+#fac-view .fac-scan-summary-line.is-warn { color: var(--qf-warning); }
+#fac-view .fac-scan-summary-line.is-ok   { color: var(--qf-success); }
+
+/* The preview needs far more room than the shared 540px cap. */
+#fac-view .fac-rav-modal {
+  max-width: 1040px;
+  width: 94%;
+}
+
+#fac-view .fac-rav-table-wrap {
+  max-height: 52vh;
+  overflow: auto;
+  border: 1px solid var(--qf-border);
+  border-radius: var(--qf-radius-md);
+}
+
+#fac-view .fac-rav-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12.5px;
+}
+
+#fac-view .fac-rav-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 9px 10px;
+  text-align: left;
+  white-space: nowrap;
+  /* Opaque, not a translucent surface: rows scroll UNDER this header, and a
+     see-through fill lets them show through it. */
+  background: var(--qf-bg-elevated);
+  border-bottom: 1px solid var(--qf-border);
+  font-size: 10.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--qf-text-faint);
+}
+
+#fac-view .fac-rav-table td {
+  padding: 9px 10px;
+  vertical-align: top;
+  border-bottom: 1px solid var(--qf-border-subtle, var(--qf-border));
+}
+
+#fac-view .fac-rav-col-check { width: 34px; }
+
+/* Rule 1: the blocked tint is a box-shadow, never a toggled background - a
+   background set on a row's first paint does not clear reliably. */
+#fac-view .fac-rav-row {
+  background-color: transparent;
+  box-shadow: none;
+}
+
+#fac-view .fac-rav-row.is-blocked {
+  box-shadow: inset 0 0 0 200px var(--qf-error-dim), inset 3px 0 0 var(--qf-error);
+}
+
+#fac-view .fac-rav-name {
+  width: 190px;
+  box-sizing: border-box;
+  padding: 6px 9px;
+  background: var(--qf-surface-sunken);
+  border: 1px solid var(--qf-border);
+  border-radius: var(--qf-radius-md);
+  color: var(--qf-text-primary);
+  font-size: 12.5px;
+}
+
+#fac-view .fac-rav-struct {
+  white-space: nowrap;
+  color: var(--qf-text-primary);
+}
+
+#fac-view .fac-rav-struct.is-missing {
+  color: var(--qf-error);
+  font-style: italic;
+}
+
+/* The two per-row comboboxes need a floor, or QFSearchSelect collapses to its
+   text width and the columns jitter as rows resolve. */
+#fac-view .fac-rav-system-host,
+#fac-view .fac-rav-usage-host {
+  min-width: 168px;
+}
+
+#fac-view .fac-rav-rigs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  max-width: 260px;
+}
+
+#fac-view .fac-rav-rig {
+  padding: 2px 7px;
+  background: var(--qf-surface-sunken);
+  border: 1px solid var(--qf-border);
+  border-radius: var(--qf-radius-sm, 3px);
+  font-size: 11px;
+  color: var(--qf-text-muted);
+}
+
+#fac-view .fac-rav-rig.is-invalid {
+  border-color: var(--qf-error);
+  color: var(--qf-error);
+  text-decoration: line-through;
+}
+
+#fac-view .fac-rav-status {
+  margin-top: 5px;
+  font-size: 11.5px;
+  line-height: 1.45;
+}
+
+#fac-view .fac-rav-status.is-error { color: var(--qf-error); }
+#fac-view .fac-rav-status.is-warn  { color: var(--qf-warning); }

@@ -589,7 +589,12 @@ function registerViews() {
     title: 'Dashboard',
     mount(container, params, ctx) {
       const view = document.getElementById('dashboard-view');
-      if (view) container.appendChild(view);
+      if (view) {
+        container.appendChild(view);
+        // Cleared here rather than in destroy(): the element is parked hidden
+        // and only becomes visible once it is back inside the view host.
+        view.hidden = false;
+      }
       refreshDashboard();
 
       // React to fresh data instead of only reading it at mount. This is what
@@ -615,8 +620,20 @@ function registerViews() {
 
       return {
         destroy() {
-          // Park the view back on <body> so it survives for the next mount.
-          if (view && view.parentNode) document.body.appendChild(view);
+          // Park the view back on <body> so it survives for the next mount -
+          // the shell removes the container it was mounted in, which would
+          // otherwise take this static markup with it permanently.
+          //
+          // HIDE it while parked. Parked, it is a sibling of #app-shell with
+          // no rule hiding it, so it renders below the footer - normally
+          // clipped by body's `overflow: hidden`, but any scrollIntoView()
+          // inside the active view scrolls every ancestor scrolling box
+          // including <body>, which drags the dashboard into view under the
+          // real one. That is how editing a Facility drew the Dashboard.
+          if (view && view.parentNode) {
+            view.hidden = true;
+            document.body.appendChild(view);
+          }
         },
       };
     },

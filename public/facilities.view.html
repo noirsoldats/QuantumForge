@@ -21,11 +21,27 @@
         feed every manufacturing calculation.
       </p>
     </div>
-    <div class="fac-count">
-      <span class="fac-count-value" id="fac-count">0</span>
-      <span class="fac-count-label">Facilities</span>
+    <div class="fac-head-right">
+      <div class="fac-head-actions">
+        <button type="button" class="btn btn-secondary" id="fac-import-rav"
+                title="Create facilities from a Ravworks config export">
+          Import from Ravworks
+        </button>
+        <button type="button" class="btn btn-secondary" id="fac-import-scan"
+                title="Fill the rig slots from an in-game Ship Scanner result">
+          Paste Ship Scanner
+        </button>
+      </div>
+      <div class="fac-count">
+        <span class="fac-count-value" id="fac-count">0</span>
+        <span class="fac-count-label">Facilities</span>
+      </div>
     </div>
   </div>
+
+  <!-- Kept outside the modal so a re-render of the preview cannot detach the
+       input mid-read. Never visible; the header button clicks it. -->
+  <input type="file" id="fac-rav-file" accept=".json,application/json" hidden>
 
   <div class="fac-scroll qf-scroll">
 
@@ -154,5 +170,94 @@
     </section>
 
   </div>
+
+  <!-- ========================= REMOVE FACILITY ======================== -->
+  <div id="fac-delete-modal" class="modal" role="dialog" aria-modal="true"
+       aria-labelledby="fac-delete-title" hidden>
+    <div class="modal-content fac-confirm-modal">
+      <div class="modal-header">
+        <h2 id="fac-delete-title">Remove Facility</h2>
+        <button type="button" class="modal-close" id="fac-delete-close"
+                aria-label="Close dialog">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p id="fac-delete-text" class="fac-confirm-text"></p>
+        <p class="fac-confirm-note">
+          Manufacturing plans that already reference this facility keep the
+          copy of its bonuses they were built with.
+        </p>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary btn-sm" id="fac-delete-cancel">Cancel</button>
+        <button type="button" class="btn btn-danger btn-sm" id="fac-delete-ok">Remove</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ====================== SHIP SCANNER IMPORT ====================== -->
+  <div id="fac-scan-modal" class="modal" role="dialog" aria-modal="true"
+       aria-labelledby="fac-scan-title" hidden>
+    <div class="modal-content fac-scan-modal">
+      <div class="modal-header">
+        <h2 id="fac-scan-title">Paste Ship Scanner Result</h2>
+        <button type="button" class="modal-close" id="fac-scan-close"
+                aria-label="Close dialog">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p class="fac-scan-hint">
+          Fills the rig slots on the form above. The scan does not carry a name,
+          system or structure type &mdash; set those yourself before saving.
+        </p>
+        <textarea id="fac-scan-input" class="qf-input fac-scan-textarea" rows="12"
+                  placeholder="High Power Slots&#10;...&#10;Rig Slots&#10;Standup M-Set ..."
+                  autocomplete="off" spellcheck="false"></textarea>
+        <div id="fac-scan-summary" class="fac-scan-summary" hidden></div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" id="fac-scan-cancel">Cancel</button>
+        <button type="button" class="btn btn-primary" id="fac-scan-apply">Apply Rigs</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ======================== RAVWORKS IMPORT ======================== -->
+  <div id="fac-rav-modal" class="modal" role="dialog" aria-modal="true"
+       aria-labelledby="fac-rav-title" hidden>
+    <div class="modal-content fac-rav-modal">
+      <div class="modal-header">
+        <h2 id="fac-rav-title">Import from Ravworks</h2>
+        <button type="button" class="modal-close" id="fac-rav-close"
+                aria-label="Close dialog">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p class="fac-rav-hint">
+          Ravworks does not record what each structure is used for, so pick a
+          usage per row. Rows with a problem cannot be selected until it is fixed.
+        </p>
+        <div class="fac-rav-table-wrap qf-scroll">
+          <table class="fac-rav-table">
+            <thead>
+              <tr>
+                <th class="fac-rav-col-check">
+                  <input type="checkbox" id="fac-rav-all" aria-label="Select all importable rows">
+                </th>
+                <th>Name</th>
+                <th>Structure</th>
+                <th>Solar System</th>
+                <th>Usage</th>
+                <th>Rigs</th>
+              </tr>
+            </thead>
+            <tbody id="fac-rav-rows"></tbody>
+          </table>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" id="fac-rav-cancel">Cancel</button>
+        <button type="button" class="btn btn-primary" id="fac-rav-confirm">Import</button>
+      </div>
+    </div>
+  </div>
+
 </div>
 </template>

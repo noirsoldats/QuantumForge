@@ -63,6 +63,10 @@
      */
     bonusCache: {},
     editingId: null,
+    /** Rows staged by the Ravworks preview; empty whenever it is closed. */
+    ravRows: [],
+    /** The facility the remove dialog is asking about, or null. */
+    pendingDelete: null,
     /** Form selections that live in QFSearchSelect rather than the DOM. */
     form: {
       usage: '',
@@ -76,10 +80,20 @@
 
   let templateCache = null;
   let searchSelects = [];
-  /* Pending two-step delete: the arm timer must be cancellable on unmount. */
-  let armedTimer = null;
-  let armedButton = null;
-  let armedLabel = null;
+  /**
+   * Selects owned by the Ravworks preview, tracked apart from the form's.
+   *
+   * Closing the modal must destroy these WITHOUT tearing down the main form's
+   * dropdowns, so they cannot share one array.
+   */
+  let ravSelects = [];
+  /**
+   * Lowercased name -> entry maps for import resolution, keyed by list.
+   *
+   * Invalidated by identity: each entry remembers the array it was built
+   * from, so a reload that replaces state.allRigs rebuilds automatically.
+   */
+  let nameIndexCache = {};
 
   /* --------------------------------------------------------------- helpers */
 
@@ -116,6 +130,84 @@
   function toast(message, type) {
     if (window.QFToast) window.QFToast.show(message, type);
     else console.log(`[facilities] ${type}: ${message}`);
+  }
+
+  /* ------------------------------------------------- import: name resolution
+   *
+   * Imports arrive as NAMES; everything downstream needs typeIDs. These
+   * resolve against the lists already in `state`, never against a fresh SDE
+   * query, for two reasons:
+   *
+   *   - `SELECT ... WHERE typeName = 'Azbel'` returns TWO rows - 35826, the
+   *     published Engineering Complex, and 58735, an unpublished type in
+   *     group 226. state.structureTypes is already filtered to published
+   *     groups 1404/1406, so a name matches at most one entry.
+   *   - No new IPC surface is needed for either importer.
+   *
+   * Matching is case-insensitive: a hand-edited file or a name pasted from a
+   * forum post will not preserve case, and none of these lists contain two
+   * entries differing only by case.
+   */
+
+  /** Build (and memoise) a lowercased name -> entry index over a state list. */
+  function nameIndex(cacheKey, list, nameField) {
+    const cached = nameIndexCache[cacheKey];
+    if (cached && cached.source === list) return cached.map;
+
+    const map = new Map();
+    (list || []).forEach((entry) => {
+      const key = String(entry[nameField] || '').trim().toLowerCase();
+      // First wins: the lists are pre-filtered, so a collision would mean
+      // genuinely duplicate data. Keeping the first keeps this deterministic.
+      if (key && !map.has(key)) map.set(key, entry);
+    });
+
+    nameIndexCache[cacheKey] = { source: list, map };
+    return map;
+  }
+
+  function lookupByName(cacheKey, list, nameField, name) {
+    const key = String(name || '').trim().toLowerCase();
+    if (!key) return null;
+    return nameIndex(cacheKey, list, nameField).get(key) || null;
+  }
+
+  function resolveStructureByName(name) {
+    return lookupByName('structures', state.structureTypes, 'name', name);
+  }
+
+  function resolveRigByName(name) {
+    return lookupByName('rigs', state.allRigs, 'name', name);
+  }
+
+  function resolveSystemByName(name) {
+    // state.allSystems is the RE-KEYED list built in loadInitialData;
+    // sde.getAllSystems() returns raw solarSystemName/solarSystemID casing.
+    return lookupByName('systems', state.allSystems, 'systemName', name);
+  }
+
+  /**
+   * Is this rig physically fittable on this structure?
+   *
+   * The form enforces both stages when a user picks rigs by hand
+   * (mountRigSelects), but settings-manager validates neither - it persists
+   * whatever `rigs` array it is handed. An importer that skips this check
+   * will happily save a Raitaru carrying an L-Set rig.
+   *
+   * @param {object} rig - an entry from state.allRigs
+   * @param {object} structureType - an entry from state.structureTypes
+   * @param {number|null} rigSize - the structure's dogma rigSize (attr 1547)
+   * @returns {string|null} a reason it does not fit, or null when it does
+   */
+  function rigFitProblem(rig, structureType, rigSize) {
+    if (!rig) return 'not found';
+    if (structureType && rig.rigCategory !== structureType.structureType) {
+      return `${rig.rigCategory} rig on a ${structureType.structureType} structure`;
+    }
+    if (rigSize && rig.rigSize !== rigSize) {
+      return `${rig.sizeLabel}-Set rig does not fit this structure`;
+    }
+    return null;
   }
 
   /** Run a loader, log and swallow its failure, and return null. */
@@ -401,6 +493,23 @@
     }
   }
 
+  /**
+   * Narrow the loaded system list to one region.
+   *
+   * Filtered from state.allSystems rather than refetched: every system is
+   * already loaded and re-keyed, and the SDE call is not cheap. Crucially,
+   * `sde.getAllSystems()` takes NO argument and returns RAW SDE columns
+   * (solarSystemID/solarSystemName), so calling it here and assigning the
+   * result to state.systems yields options whose systemId is undefined.
+   * Both the region-change and edit paths must come through here.
+   */
+  function systemsInRegion(regionId) {
+    if (!regionId) return [];
+    return state.allSystems
+      .filter((s) => String(s.regionId) === String(regionId))
+      .sort((a, b) => a.systemName.localeCompare(b.systemName));
+  }
+
   function handleRegionChange(regionId) {
     state.form.regionId = regionId;
     // A region change invalidates the chosen system and its cost indices.
@@ -408,13 +517,7 @@
     $('fac-cost-panel').hidden = true;
     updateInfoVisibility();
 
-    // Filtered from the full list rather than refetched - every system is
-    // already loaded, and the SDE call is not cheap.
-    state.systems = regionId
-      ? state.allSystems
-        .filter((s) => String(s.regionId) === String(regionId))
-        .sort((a, b) => a.systemName.localeCompare(b.systemName))
-      : [];
+    state.systems = systemsInRegion(regionId);
 
     renderSafely('system select', mountSystemSelect);
   }
@@ -714,9 +817,8 @@
     remove.title = 'Remove facility';
     remove.setAttribute('aria-label', `Remove ${facility.name}`);
     remove.setAttribute('data-fac-remove', String(facility.id));
-    remove.dataset.armed = 'false';
     remove.appendChild(iconTrash());
-    remove.addEventListener('click', () => armRemove(remove, facility));
+    remove.addEventListener('click', () => openDeleteModal(facility));
     actions.appendChild(remove);
     head.appendChild(actions);
 
@@ -906,14 +1008,10 @@
     mountUsageSelect();
     mountRegionSelect();
 
-    // Systems belong to the region, so they have to be fetched before the
-    // system select can show the saved value.
-    if (state.form.regionId) {
-      const systems = await loadSafely('systems', () =>
-        window.electronAPI.sde.getAllSystems(parseInt(state.form.regionId, 10))
-      );
-      state.systems = systems || [];
-    }
+    // Systems belong to the region, so the list has to be narrowed before the
+    // system select can show the saved value. Filtered in memory rather than
+    // refetched - see systemsInRegion for why the IPC call cannot be used.
+    state.systems = systemsInRegion(state.form.regionId);
     mountSystemSelect();
 
     if (state.form.systemId) {
@@ -935,11 +1033,26 @@
       await handleRigChange();
     }
 
-    // Guarded: scrollIntoView is not implemented in every environment the
-    // renderer is exercised in, and failing to scroll must not abort the edit.
-    const card = $('fac-form-card');
-    if (card && typeof card.scrollIntoView === 'function') {
-      card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    scrollFormIntoView();
+  }
+
+  /**
+   * Bring the form card to the top of the view's OWN scroller.
+   *
+   * Deliberately not element.scrollIntoView(): that walks every ancestor
+   * scrolling box up to the document and scrolls each one, including <body>.
+   * The shell parks inactive static views (the Dashboard) as body-level
+   * siblings, so scrolling <body> drags them into sight beneath the footer.
+   * Driving .fac-scroll directly cannot escape this view.
+   */
+  function scrollFormIntoView() {
+    const scroller = document.querySelector('#fac-view .fac-scroll');
+    if (!scroller) return;
+    if (typeof scroller.scrollTo === 'function') {
+      scroller.scrollTo({ top: 0, behavior: 'smooth' });
+    } else {
+      // jsdom implements neither scrollTo nor smooth behaviour.
+      scroller.scrollTop = 0;
     }
   }
 
@@ -1048,52 +1161,36 @@
   }
 
   /**
-   * Two-step delete.
+   * Confirm-before-remove, as a modal.
    *
-   * The button becomes "Confirm?" for a few seconds rather than opening a
-   * native confirm(): a modal dialog blocks the whole renderer, and under the
-   * shell that freezes every view in the window, not just this one.
+   * This replaced a two-step "click again to confirm" arm on the button
+   * itself. That gave no affordance saying a second click was needed, so the
+   * button read as dead - and it matched nothing else in the app. Every other
+   * destructive action here is a Cancel/Remove dialog; Blueprints
+   * (`bp-delete-modal`) is the reference.
+   *
+   * Still not a native confirm(): that blocks the whole renderer, which under
+   * the shell freezes every view in the window rather than just this one.
    */
-  function armRemove(button, facility) {
-    if (button.dataset.armed === 'true') {
-      disarmRemove();
-      removeFacility(facility);
-      return;
-    }
-
-    // Only one button can be armed at a time, and its timer is tracked so
-    // unmount can cancel it. An uncancelled 4s timer outlives the view - it
-    // keeps the process alive in tests and fires against a detached button
-    // in the app.
-    disarmRemove();
-
-    button.dataset.armed = 'true';
-    button.classList.add('is-armed');
-    button.title = 'Click again to remove';
-    const original = button.getAttribute('aria-label');
-    button.setAttribute('aria-label', `Confirm removal of ${facility.name}`);
-
-    armedButton = button;
-    armedLabel = original;
-    armedTimer = setTimeout(disarmRemove, 4000);
+  function openDeleteModal(facility) {
+    state.pendingDelete = facility;
+    $('fac-delete-text').textContent = `Remove "${facility.name}"?`;
+    $('fac-delete-modal').hidden = false;
+    // Focus the confirm so Enter completes the action a click started.
+    $('fac-delete-ok').focus();
   }
 
-  /** Cancel any pending arm and restore its button. Safe to call spuriously. */
-  function disarmRemove() {
-    if (armedTimer) {
-      clearTimeout(armedTimer);
-      armedTimer = null;
-    }
-    if (armedButton) {
-      if (armedButton.isConnected) {
-        armedButton.dataset.armed = 'false';
-        armedButton.classList.remove('is-armed');
-        armedButton.title = 'Remove facility';
-        if (armedLabel) armedButton.setAttribute('aria-label', armedLabel);
-      }
-      armedButton = null;
-      armedLabel = null;
-    }
+  function closeDeleteModal() {
+    state.pendingDelete = null;
+    const modal = $('fac-delete-modal');
+    if (modal) modal.hidden = true;
+  }
+
+  async function confirmDelete() {
+    const facility = state.pendingDelete;
+    closeDeleteModal();
+    if (!facility) return;
+    await removeFacility(facility);
   }
 
   async function removeFacility(facility) {
@@ -1109,6 +1206,595 @@
       console.error('[facilities] remove failed:', error);
       toast(error.message || 'Failed to remove facility.', 'error');
     }
+  }
+
+  /* --------------------------------------------------- import: ship scanner */
+
+  function openScanModal() {
+    const modal = $('fac-scan-modal');
+    if (!modal) return;
+    $('fac-scan-input').value = '';
+    const summary = $('fac-scan-summary');
+    summary.textContent = '';
+    summary.hidden = true;
+    modal.hidden = false;
+    $('fac-scan-input').focus();
+  }
+
+  function closeScanModal() {
+    const modal = $('fac-scan-modal');
+    if (modal) modal.hidden = true;
+  }
+
+  /** Write the parse result into the modal's own summary block. */
+  function renderScanSummary(lines) {
+    const summary = $('fac-scan-summary');
+    if (!summary) return;
+    summary.textContent = '';
+    lines.forEach(({ text: line, kind }) => {
+      summary.appendChild(el('div', `fac-scan-summary-line is-${kind || 'info'}`, line));
+    });
+    summary.hidden = lines.length === 0;
+  }
+
+  /**
+   * Infer the structure when the form has none selected.
+   *
+   * Only safe when every parsed rig agrees on one size AND one category -
+   * then exactly one hull class can carry them. Anything ambiguous returns
+   * null and the user is asked to choose, rather than guessing a hull and
+   * silently attaching bonuses they did not pick.
+   */
+  function inferStructureFromRigs(rigs) {
+    const sizes = new Set(rigs.map((r) => r.rigSize));
+    const categories = new Set(rigs.map((r) => r.rigCategory));
+    if (sizes.size !== 1 || categories.size !== 1) return null;
+
+    const size = [...sizes][0];
+    const category = [...categories][0];
+    // getStructureBonuses' rigSize (dogma attr 1547) uses the same 2/3/4
+    // scale as the rig's own rigSize, and structureTypes' `size` is the
+    // letter form of it.
+    const sizeLabel = size === 2 ? 'M' : size === 3 ? 'L' : size === 4 ? 'XL' : null;
+    if (!sizeLabel) return null;
+
+    const matches = state.structureTypes.filter(
+      (s) => s.structureType === category && s.size === sizeLabel
+    );
+    return matches.length === 1 ? matches[0] : null;
+  }
+
+  async function applyScannerPaste() {
+    const parser = window.QFFacilityImport;
+    if (!parser) {
+      toast('Import parsers failed to load.', 'error');
+      return;
+    }
+
+    const parsed = parser.parseShipScannerPaste($('fac-scan-input').value);
+
+    if (!parsed.sawHeader) {
+      renderScanSummary([{
+        text: 'No slot headings found. Paste the whole Ship Scanner result, '
+          + 'including the "Rig Slots" heading.',
+        kind: 'warn',
+      }]);
+      return;
+    }
+    if (parsed.rigNames.length === 0) {
+      renderScanSummary([{ text: 'That scan lists no rigs.', kind: 'warn' }]);
+      return;
+    }
+
+    // The rig pool depends on the structure, so one must be settled before
+    // rigs can be validated or the dropdowns populated.
+    let structure = state.form.structureTypeId
+      ? state.structureTypes.find(
+        (s) => String(s.typeId) === String(state.form.structureTypeId)
+      )
+      : null;
+
+    if (!structure) {
+      const resolvedRigs = parsed.rigNames.map(resolveRigByName).filter(Boolean);
+      structure = resolvedRigs.length > 0 ? inferStructureFromRigs(resolvedRigs) : null;
+
+      if (!structure) {
+        renderScanSummary([{
+          text: 'Select a structure type on the form first, then apply the scan '
+            + '— the rigs that fit depend on it.',
+          kind: 'warn',
+        }]);
+        return;
+      }
+
+      // Switch the form to Player Structure and select the inferred hull, so
+      // the rig pool below is the right one.
+      $('fac-type').value = 'structure';
+      handleTypeChange('structure');
+      $('fac-structure').value = String(structure.typeId);
+      await handleStructureChange(String(structure.typeId));
+    }
+
+    const rigSize = state.rigSize;
+    const applied = [];
+    const problems = [];
+
+    parsed.rigNames.forEach((name) => {
+      const rig = resolveRigByName(name);
+      const problem = rigFitProblem(rig, structure, rigSize);
+      if (problem) {
+        problems.push(`${name} — ${problem}`);
+        return;
+      }
+      if (applied.length >= 3) {
+        problems.push(`${name} — more than three rigs listed`);
+        return;
+      }
+      applied.push(rig);
+    });
+
+    if (applied.length === 0) {
+      renderScanSummary(
+        [{ text: 'No fittable rigs in that scan.', kind: 'warn' }]
+          .concat(problems.map((p) => ({ text: p, kind: 'warn' })))
+      );
+      return;
+    }
+
+    state.form.rigs = ['', '', ''];
+    applied.forEach((rig, i) => { state.form.rigs[i] = String(rig.typeId); });
+    mountRigSelects(rigSize);
+    await handleRigChange();
+
+    closeScanModal();
+
+    const summary = [`Applied ${applied.length} rig${applied.length === 1 ? '' : 's'}.`];
+    problems.forEach((p) => summary.push(p));
+    // Service modules carry no ME/TE/cost in this app and the facility model
+    // has no field for them, so say they were seen and move on.
+    if (parsed.serviceNames.length > 0) {
+      summary.push(`Service module not stored: ${parsed.serviceNames.join(', ')}.`);
+    }
+    if (parsed.ignoredCount > 0) {
+      summary.push(`${parsed.ignoredCount} non-rig module${
+        parsed.ignoredCount === 1 ? '' : 's'} ignored.`);
+    }
+    toast(summary.join(' '), problems.length > 0 ? 'warning' : 'success');
+  }
+
+  /* ------------------------------------------------------ import: ravworks */
+
+  /** Mount a preview-row select, tracked separately from the form's. */
+  function mountRavSelect(host, opts) {
+    if (!host || !window.QFSearchSelect) return null;
+    const sel = new window.QFSearchSelect(host, opts);
+    ravSelects.push(sel);
+    return sel;
+  }
+
+  function destroyRavSelects() {
+    ravSelects.forEach((sel) => {
+      try {
+        sel.destroy();
+      } catch (error) {
+        console.error('[facilities] select destroy failed:', error);
+      }
+    });
+    ravSelects = [];
+  }
+
+  /**
+   * Fetch rigSize for every hull in the batch, so rig fit can be checked.
+   *
+   * Reuses the same bonusCache the facility cards fill, keyed by type - ten
+   * Raitarus cost one lookup.
+   */
+  async function ensureBonusesForTypes(typeIds) {
+    const missing = [...new Set(typeIds.map(String))]
+      .filter((typeId) => !(typeId in state.bonusCache));
+    if (missing.length === 0) return;
+
+    const results = await Promise.all(missing.map((typeId) =>
+      loadSafely('structure bonuses', () =>
+        window.electronAPI.facilities.getStructureBonuses(typeId)
+      )
+    ));
+    missing.forEach((typeId, i) => { state.bonusCache[typeId] = results[i] || null; });
+  }
+
+  /**
+   * Turn parsed Ravworks rows into preview rows with everything resolved.
+   *
+   * Ravworks records no system per structure - only three global ones
+   * (manu/react/inv) - so each row's default comes from what its hull is FOR:
+   * a refinery reacts, an engineering complex manufactures. All three are
+   * usually the same system, but they need not be, so this is per row rather
+   * than one system for the file.
+   */
+  async function buildRavRows(parsed) {
+    const rows = parsed.rows.map((row) => {
+      const structure = resolveStructureByName(row.structureName);
+      const defaultSystemName = structure && structure.structureType === 'refinery'
+        ? (parsed.systems.react || parsed.systems.manu)
+        : (parsed.systems.manu || parsed.systems.react);
+      const system = resolveSystemByName(defaultSystemName);
+
+      return {
+        sourceId: row.sourceId,
+        name: row.name,
+        structureName: row.structureName,
+        structure,
+        systemId: system ? String(system.systemId) : '',
+        usage: '',
+        /** What the user asked for - survives a row being temporarily blocked. */
+        wanted: true,
+        /** What is actually importable: `wanted` AND problem-free. */
+        include: false,
+        rigNames: row.rigNames,
+        // Filled by refreshRavRow once bonuses (and therefore rigSize) are in.
+        rigs: [],
+        problems: [],
+        warnings: [],
+      };
+    });
+
+    await ensureBonusesForTypes(
+      rows.filter((r) => r.structure).map((r) => r.structure.typeId)
+    );
+
+    rows.forEach(resolveRavRigs);
+    return rows;
+  }
+
+  /** Resolve a row's rig names against its hull, splitting valid from not. */
+  function resolveRavRigs(row) {
+    const bonuses = row.structure ? state.bonusCache[String(row.structure.typeId)] : null;
+    const rigSize = bonuses && bonuses.rigSize ? bonuses.rigSize : null;
+
+    row.rigs = [];
+    row.warnings = [];
+
+    row.rigNames.forEach((name) => {
+      const rig = resolveRigByName(name);
+      const problem = rigFitProblem(rig, row.structure, rigSize);
+      if (problem) {
+        row.rigs.push({ name, valid: false, reason: problem });
+        row.warnings.push(`${name} — ${problem}`);
+        return;
+      }
+      if (row.rigs.filter((r) => r.valid).length >= 3) {
+        row.rigs.push({ name, valid: false, reason: 'more than three rigs' });
+        row.warnings.push(`${name} — more than three rigs listed`);
+        return;
+      }
+      row.rigs.push({ name, valid: true, typeId: rig.typeId });
+    });
+  }
+
+  /**
+   * Re-derive every row's blocking problems.
+   *
+   * Must run on EVERY change, not once at build: the duplicate-name and
+   * single-default rules are conflicts BETWEEN rows, so editing one row can
+   * clear or create a problem in another.
+   */
+  function validateRavRows() {
+    const existingNames = new Set(
+      state.facilities.map((f) => String(f.name || '').trim().toLowerCase())
+    );
+    const hasExistingDefault = state.facilities.some((f) => f.usage === 'default');
+
+    const seenNames = new Map();
+    let defaultClaimedBy = null;
+
+    state.ravRows.forEach((row) => {
+      const problems = [];
+      const name = String(row.name || '').trim();
+      const key = name.toLowerCase();
+
+      if (!row.structure) problems.push(`Unknown structure "${row.structureName}".`);
+      if (!name) problems.push('Name is required.');
+      if (!row.systemId) problems.push('Select a solar system.');
+      if (!row.usage) problems.push('Select a usage.');
+
+      if (name && existingNames.has(key)) {
+        problems.push('A facility with this name already exists.');
+      }
+
+      // Cross-row conflicts apply to rows the user WANTS imported, which is
+      // `wanted` and not `include`: include is forced off while a row is
+      // blocked, so gating on it would make these checks vanish the moment
+      // any other problem appeared - and never come back once it was fixed.
+      if (row.wanted) {
+        if (name && seenNames.has(key)) {
+          problems.push('Duplicate name in this import.');
+        } else if (name) {
+          seenNames.set(key, row.sourceId);
+        }
+
+        if (row.usage === 'default') {
+          if (hasExistingDefault) {
+            problems.push('A Default facility already exists.');
+          } else if (defaultClaimedBy && defaultClaimedBy !== row.sourceId) {
+            problems.push('Another row is already the Default.');
+          } else {
+            defaultClaimedBy = row.sourceId;
+          }
+        }
+      }
+
+      row.problems = problems;
+      // A blocked row can never be imported, whatever the user asked for.
+      row.include = row.wanted && problems.length === 0;
+    });
+  }
+
+  /**
+   * Refresh only the parts that validation changes.
+   *
+   * Deliberately NOT a table rebuild: the rows hold live QFSearchSelect
+   * instances, and destroying them mid-interaction drops the click the user
+   * is making (binding rule 2a).
+   */
+  function refreshRavStatuses() {
+    validateRavRows();
+
+    state.ravRows.forEach((row) => {
+      const tr = document.querySelector(`[data-rav-row="${cssEscape(row.sourceId)}"]`);
+      if (!tr) return;
+
+      const blocked = row.problems.length > 0;
+      tr.classList.toggle('is-blocked', blocked);
+
+      const check = tr.querySelector('[data-rav-check]');
+      if (check) {
+        check.checked = row.include;
+        check.disabled = blocked;
+      }
+
+      const status = tr.querySelector('[data-rav-status]');
+      if (status) {
+        const messages = row.problems.concat(row.warnings);
+        status.textContent = messages.join(' ');
+        status.className = `fac-rav-status ${blocked ? 'is-error' : 'is-warn'}`;
+        status.hidden = messages.length === 0;
+      }
+    });
+
+    const count = state.ravRows.filter((r) => r.include).length;
+    const confirm = $('fac-rav-confirm');
+    if (confirm) {
+      confirm.textContent = count === 0
+        ? 'Import'
+        : `Import ${count} Facilit${count === 1 ? 'y' : 'ies'}`;
+      confirm.disabled = count === 0;
+    }
+
+    const all = $('fac-rav-all');
+    if (all) {
+      const selectable = state.ravRows.filter((r) => r.problems.length === 0);
+      all.checked = selectable.length > 0 && selectable.every((r) => r.include);
+      all.disabled = selectable.length === 0;
+    }
+  }
+
+  /** Minimal attribute-selector escape; sourceIds are "Structure 1"-shaped. */
+  function cssEscape(value) {
+    return String(value).replace(/["\\]/g, '\\$&');
+  }
+
+  function renderRavRows() {
+    const tbody = $('fac-rav-rows');
+    if (!tbody) return;
+
+    destroyRavSelects();
+    tbody.textContent = '';
+
+    const usageOptions = USAGES.map(([value, label]) => ({ value, label }));
+    const systemOptions = state.allSystems.map((s) => ({
+      value: String(s.systemId),
+      label: `${s.systemName} (${Number(s.security).toFixed(1)})`,
+    }));
+
+    state.ravRows.forEach((row) => {
+      const tr = el('tr', 'fac-rav-row');
+      tr.setAttribute('data-rav-row', row.sourceId);
+
+      /* include */
+      const checkCell = el('td', 'fac-rav-col-check');
+      const check = document.createElement('input');
+      check.type = 'checkbox';
+      // refreshRavStatuses() below settles this against the row's problems;
+      // seeding from `wanted` just avoids a visible flip on first paint.
+      check.checked = row.wanted;
+      check.setAttribute('data-rav-check', '');
+      check.setAttribute('aria-label', `Import ${row.name || row.structureName}`);
+      check.addEventListener('change', () => {
+        row.wanted = check.checked;
+        refreshRavStatuses();
+      });
+      checkCell.appendChild(check);
+      tr.appendChild(checkCell);
+
+      /* name - editable, so a duplicate can be resolved without re-importing */
+      const nameCell = el('td');
+      const nameInput = document.createElement('input');
+      nameInput.type = 'text';
+      nameInput.className = 'fac-rav-name';
+      nameInput.value = row.name;
+      nameInput.setAttribute('aria-label', 'Facility name');
+      nameInput.addEventListener('input', () => {
+        row.name = nameInput.value;
+        refreshRavStatuses();
+      });
+      nameCell.appendChild(nameInput);
+      const status = el('div', 'fac-rav-status');
+      status.setAttribute('data-rav-status', '');
+      status.hidden = true;
+      nameCell.appendChild(status);
+      tr.appendChild(nameCell);
+
+      /* structure */
+      const structCell = el('td');
+      const structLabel = row.structure
+        ? `${row.structure.name} (${row.structure.size}-Set)`
+        : `${row.structureName || '—'}`;
+      const structNode = el(
+        'span',
+        `fac-rav-struct${row.structure ? '' : ' is-missing'}`,
+        structLabel
+      );
+      if (!row.structure) structNode.title = 'No published structure of that name in the SDE';
+      structCell.appendChild(structNode);
+      tr.appendChild(structCell);
+
+      /* system */
+      const systemCell = el('td');
+      const systemHost = el('div', 'fac-rav-system-host');
+      systemCell.appendChild(systemHost);
+      tr.appendChild(systemCell);
+
+      /* usage - never defaulted: Ravworks records nothing that maps to it */
+      const usageCell = el('td');
+      const usageHost = el('div', 'fac-rav-usage-host');
+      usageCell.appendChild(usageHost);
+      tr.appendChild(usageCell);
+
+      /* rigs */
+      const rigCell = el('td');
+      const rigWrap = el('div', 'fac-rav-rigs');
+      if (row.rigs.length === 0) {
+        rigWrap.appendChild(el('span', 'fac-rav-rig', 'No rigs'));
+      }
+      row.rigs.forEach((rig) => {
+        const chip = el('span', `fac-rav-rig${rig.valid ? '' : ' is-invalid'}`, rig.name);
+        chip.title = rig.valid ? rig.name : `${rig.name} — ${rig.reason}`;
+        rigWrap.appendChild(chip);
+      });
+      rigCell.appendChild(rigWrap);
+      tr.appendChild(rigCell);
+
+      tbody.appendChild(tr);
+
+      // Mounted after the row is in the DOM so the popover can measure it.
+      mountRavSelect(systemHost, {
+        options: systemOptions,
+        value: row.systemId || null,
+        placeholder: 'Select system',
+        onChange: (e) => {
+          row.systemId = e.target.value;
+          refreshRavStatuses();
+        },
+      });
+      mountRavSelect(usageHost, {
+        options: usageOptions,
+        value: row.usage || null,
+        placeholder: 'Select usage',
+        onChange: (e) => {
+          row.usage = e.target.value;
+          refreshRavStatuses();
+        },
+      });
+    });
+
+    refreshRavStatuses();
+  }
+
+  function closeRavModal() {
+    const modal = $('fac-rav-modal');
+    if (modal) modal.hidden = true;
+    // Each instance owns a document listener and a body popover, so removing
+    // the rows is not enough - every close path must land here.
+    destroyRavSelects();
+    const tbody = $('fac-rav-rows');
+    if (tbody) tbody.textContent = '';
+    state.ravRows = [];
+    // Clear the input, or picking the same file twice fires no change event.
+    const file = $('fac-rav-file');
+    if (file) file.value = '';
+  }
+
+  async function handleRavFile(file) {
+    const parser = window.QFFacilityImport;
+    if (!parser) {
+      toast('Import parsers failed to load.', 'error');
+      return;
+    }
+
+    let text;
+    try {
+      text = await file.text();
+    } catch (error) {
+      console.error('[facilities] ravworks read failed:', error);
+      toast('Could not read that file.', 'error');
+      return;
+    }
+
+    const parsed = parser.parseRavworksExport(text);
+    if (!parsed.ok) {
+      toast(parsed.error, 'error');
+      return;
+    }
+
+    state.ravRows = await buildRavRows(parsed);
+    renderSafely('ravworks preview', renderRavRows);
+    const modal = $('fac-rav-modal');
+    if (modal) modal.hidden = false;
+  }
+
+  async function confirmRavImport() {
+    const rows = state.ravRows.filter((r) => r.include && r.problems.length === 0);
+    if (rows.length === 0) {
+      toast('Nothing selected to import.', 'warning');
+      return;
+    }
+
+    const failures = [];
+    let imported = 0;
+
+    // One call per row, each in its own try/catch: settings-manager THROWS on
+    // a duplicate name or a second Default, and one bad row must not abort
+    // the rest of the batch.
+    for (const row of rows) {
+      const system = state.allSystems.find(
+        (s) => String(s.systemId) === String(row.systemId)
+      );
+      if (!system) {
+        failures.push(`${row.name}: solar system could not be resolved.`);
+        continue;
+      }
+
+      const payload = {
+        usage: row.usage,
+        name: String(row.name).trim(),
+        facilityType: 'structure',
+        regionId: String(system.regionId),
+        systemId: String(system.systemId),
+        // From the SDE, not Ravworks' coarse "Null / Wormhole" band: the rig
+        // security multiplier reads this number.
+        securityStatus: system.security,
+        structureTypeId: String(row.structure.typeId),
+        rigs: row.rigs.filter((r) => r.valid).map((r) => String(r.typeId)),
+      };
+
+      try {
+        await window.electronAPI.facilities.addFacility(payload);
+        imported += 1;
+      } catch (error) {
+        console.error('[facilities] ravworks import row failed:', error);
+        // main's message names the conflicting facility, so keep it verbatim.
+        failures.push(`${payload.name}: ${error.message || 'failed to save.'}`);
+      }
+    }
+
+    if (imported > 0) {
+      closeRavModal();
+      await loadFacilities();
+    }
+
+    const summary = [`Imported ${imported} facilit${imported === 1 ? 'y' : 'ies'}.`]
+      .concat(failures);
+    toast(summary.join(' '), failures.length > 0 ? 'warning' : 'success');
   }
 
   /* ------------------------------------------------------------------ mount */
@@ -1151,6 +1837,52 @@
       submitForm();
     });
 
+    /* ---- Remove facility ---- */
+    ctx.on($('fac-delete-close'), 'click', () => closeDeleteModal());
+    ctx.on($('fac-delete-cancel'), 'click', () => closeDeleteModal());
+    ctx.on($('fac-delete-ok'), 'click', () => confirmDelete());
+    ctx.on($('fac-delete-modal'), 'click', (e) => {
+      if (e.target === $('fac-delete-modal')) closeDeleteModal();
+    });
+
+    /* ---- Ship Scanner import ---- */
+    ctx.on($('fac-import-scan'), 'click', () => openScanModal());
+    ctx.on($('fac-scan-close'), 'click', () => closeScanModal());
+    ctx.on($('fac-scan-cancel'), 'click', () => closeScanModal());
+    ctx.on($('fac-scan-apply'), 'click', () => applyScannerPaste());
+    // Backdrop click: only when the press lands on the overlay itself, not on
+    // a child that happens to bubble up.
+    ctx.on($('fac-scan-modal'), 'click', (e) => {
+      if (e.target === $('fac-scan-modal')) closeScanModal();
+    });
+
+    /* ---- Ravworks import ---- */
+    ctx.on($('fac-import-rav'), 'click', () => $('fac-rav-file').click());
+    ctx.on($('fac-rav-file'), 'change', (e) => {
+      const file = e.target.files && e.target.files[0];
+      if (file) handleRavFile(file);
+    });
+    ctx.on($('fac-rav-close'), 'click', () => closeRavModal());
+    ctx.on($('fac-rav-cancel'), 'click', () => closeRavModal());
+    ctx.on($('fac-rav-confirm'), 'click', () => confirmRavImport());
+    ctx.on($('fac-rav-modal'), 'click', (e) => {
+      if (e.target === $('fac-rav-modal')) closeRavModal();
+    });
+    ctx.on($('fac-rav-all'), 'change', (e) => {
+      const on = e.target.checked;
+      state.ravRows.forEach((row) => { row.wanted = on; });
+      refreshRavStatuses();
+    });
+
+    // Escape closes whichever modal is open. Scoped to this view's own
+    // dialogs so it cannot swallow the key from another tool in the shell.
+    ctx.on(document, 'keydown', (e) => {
+      if (e.key !== 'Escape') return;
+      if (!$('fac-delete-modal').hidden) closeDeleteModal();
+      else if (!$('fac-scan-modal').hidden) closeScanModal();
+      else if (!$('fac-rav-modal').hidden) closeRavModal();
+    });
+
     await loadInitialData();
     await loadFacilities();
 
@@ -1159,8 +1891,12 @@
     return {
       destroy() {
         destroySelects();
-        // A pending arm timer would otherwise outlive the view.
-        disarmRemove();
+        // The preview's selects are tracked apart from the form's, so they
+        // need their own teardown even if the modal was left open.
+        destroyRavSelects();
+        state.ravRows = [];
+        state.pendingDelete = null;
+        nameIndexCache = {};
       },
     };
   }

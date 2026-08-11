@@ -27,6 +27,9 @@ const VIEW_HTML = fs.readFileSync(
 );
 
 require('../../public/shared/qf-search-select.js');
+// Sets window.QFFacilityImport, the same way index.html loads it before the
+// view renderer. Without it both import buttons no-op.
+require('../../src/renderer/facility-import-parsers.js');
 
 /* --------------------------------------------------------------- fixtures */
 
@@ -47,8 +50,11 @@ let registered;
 /** Timer ids the view scheduled, so teardown can cancel them. */
 let pendingTimers = [];
 
-// Record every timer the renderer sets. Without this, the two-step delete's
-// 4s arm timer keeps the Jest worker alive after the suite finishes.
+// Record every timer the renderer sets, so teardown can cancel it: an
+// uncancelled timer keeps the Jest worker alive after the suite finishes,
+// which reads as a hang rather than a failure. The renderer schedules none
+// today (the two-step delete's 4s arm timer is gone), but QFSearchSelect and
+// any future timer still land here.
 const realSetTimeout = global.setTimeout;
 global.setTimeout = function trackedSetTimeout(fn, ms, ...rest) {
   const id = realSetTimeout(fn, ms, ...rest);
@@ -270,6 +276,10 @@ beforeEach(() => {
     costReduction: 5.0,
   };
 
+  // Any type NOT listed here falls through to `structureBonuses` above - the
+  // Sotiyo, which is engineering/rigSize 3. A refinery left unlisted would
+  // therefore be described as an engineering complex, and its own rigs would
+  // read as unfittable, so every structureType in the fixture needs an entry.
   bonusesByType = {
     35825: {
       structureName: 'Raitaru',
@@ -277,6 +287,14 @@ beforeEach(() => {
       rigSize: 2,
       materialEfficiency: 1.0,
       timeEfficiency: 15.0,
+      costReduction: 3.0,
+    },
+    35835: {
+      structureName: 'Athanor',
+      structureType: 'refinery',
+      rigSize: 2,
+      materialEfficiency: 2.0,
+      timeEfficiency: 20.0,
       costReduction: 3.0,
     },
   };
@@ -338,9 +356,8 @@ afterEach(() => {
   );
   expectedErrorPatterns = [];
   console.error.mockRestore();
-  // Most tests never unmount, so any timer the view scheduled (the two-step
-  // delete arms one for 4s) would otherwise keep the worker alive after the
-  // suite finishes - which reads as a hang, not a failure.
+  // Most tests never unmount, so any timer the view scheduled would otherwise
+  // keep the worker alive after the suite finishes - a hang, not a failure.
   pendingTimers.forEach((id) => clearTimeout(id));
   pendingTimers = [];
   document.body.innerHTML = '';
@@ -622,10 +639,11 @@ describe('facility cards', () => {
 
       // Removing the STATION reloads the list, which still contains the
       // Sotiyo facility - so a cacheless implementation would refetch it.
-      const btn = document.querySelector('[data-fac-remove="f2"]');
-      btn.dispatchEvent(new window.MouseEvent('click'));
+      document.querySelector('[data-fac-remove="f2"]')
+        .dispatchEvent(new window.MouseEvent('click'));
       await settle(20);
-      btn.dispatchEvent(new window.MouseEvent('click'));
+      document.getElementById('fac-delete-ok')
+        .dispatchEvent(new window.MouseEvent('click'));
       await settle(40);
 
       expect(calls.some((c) => c.fn === 'getFacilities')).toBe(true);
@@ -1073,6 +1091,29 @@ describe('saving', () => {
 });
 
 describe('editing', () => {
+  test('Edit scrolls the view, never the document', async () => {
+    // element.scrollIntoView() walks EVERY ancestor scrolling box up to the
+    // document. The shell parks inactive static views (the Dashboard) as
+    // body-level siblings, so scrolling <body> drags them into sight below
+    // the footer - which is exactly what editing a facility used to do.
+    await mountView();
+
+    // Spied AFTER mounting: mount() clones the template into a fresh
+    // container, so anything stubbed on the pre-mount DOM is discarded.
+    const scrollSpy = jest.fn();
+    document.querySelector('#fac-view .fac-scroll').scrollTo = scrollSpy;
+    // Fails the test if anything reaches for the ancestor-walking API.
+    document.getElementById('fac-form-card').scrollIntoView = () => {
+      throw new Error('scrollIntoView must not be used: it scrolls <body> too');
+    };
+
+    document.querySelector('[data-fac-edit="f1"]').dispatchEvent(new window.MouseEvent('click'));
+    await settle(40);
+
+    expect(scrollSpy).toHaveBeenCalledWith({ top: 0, behavior: 'smooth' });
+    expect(document.getElementById('fac-name').value).toBe('Forge Prime Assembly');
+  });
+
   test('Edit loads the facility into the form', async () => {
     await mountView();
     document.querySelector('[data-fac-edit="f1"]').dispatchEvent(new window.MouseEvent('click'));
@@ -1081,6 +1122,66 @@ describe('editing', () => {
     expect(document.getElementById('fac-name').value).toBe('Forge Prime Assembly');
     expect(document.getElementById('fac-type').value).toBe('structure');
     expect(document.getElementById('fac-tax').value).toBe('2.50');
+  });
+
+  test('Edit restores the saved region and system', async () => {
+    await mountView();
+    document.querySelector('[data-fac-edit="f1"]').dispatchEvent(new window.MouseEvent('click'));
+    await settle(40);
+
+    // f1 is in Jita (30000142), The Forge (10000002).
+    expect(document.querySelector('#fac-region-host .qf-ss-trigger').textContent)
+      .toContain('The Forge');
+    expect(document.querySelector('#fac-system-host .qf-ss-trigger').textContent)
+      .toContain('Jita');
+  });
+
+  test('Edit narrows the system list to the saved region', async () => {
+    await mountView();
+    document.querySelector('[data-fac-edit="f1"]').dispatchEvent(new window.MouseEvent('click'));
+    await settle(40);
+
+    document.querySelector('#fac-system-host .qf-ss-trigger')
+      .dispatchEvent(new window.MouseEvent('click'));
+    await settle();
+
+    const labels = Array.from(document.querySelectorAll('.qf-ss-row'))
+      .map((r) => r.textContent);
+    // The Forge holds Jita and Perimeter; Amarr and 1DQ1-A are elsewhere.
+    expect(labels.some((l) => l.includes('Jita'))).toBe(true);
+    expect(labels.some((l) => l.includes('Perimeter'))).toBe(true);
+    expect(labels.some((l) => l.includes('Amarr'))).toBe(false);
+    // A raw sde.getAllSystems() result would render every option as
+    // "undefined (NaN)" because it carries solarSystemName, not systemName.
+    expect(labels.some((l) => l.includes('undefined'))).toBe(false);
+  });
+
+  test('Edit builds the system list without a further SDE fetch', async () => {
+    await mountView();
+    const before = calls.filter((c) => c.fn === 'getAllSystems').length;
+
+    document.querySelector('[data-fac-edit="f1"]').dispatchEvent(new window.MouseEvent('click'));
+    await settle(40);
+
+    // state.allSystems already holds every system, re-keyed. Refetching also
+    // reintroduces the raw-casing bug, since the IPC ignores its argument.
+    expect(calls.filter((c) => c.fn === 'getAllSystems').length).toBe(before);
+  });
+
+  test('an edit saves the same system it restored', async () => {
+    await mountView();
+    document.querySelector('[data-fac-edit="f1"]').dispatchEvent(new window.MouseEvent('click'));
+    await settle(40);
+
+    document.getElementById('fac-form').dispatchEvent(new window.Event('submit'));
+    await settle(40);
+
+    const [update] = calls.filter((c) => c.fn === 'updateFacility');
+    expect(update.payload).toMatchObject({
+      regionId: '10000002',
+      systemId: '30000142',
+      securityStatus: 0.946,
+    });
   });
 
   test('editing is visually distinct from adding', async () => {
@@ -1133,29 +1234,81 @@ describe('editing', () => {
 });
 
 describe('removing', () => {
-  test('the first click arms rather than deletes', async () => {
-    // A native confirm() blocks the whole renderer, which under the shell
-    // freezes every view in the window.
-    await mountView();
-    const btn = document.querySelector('[data-fac-remove="f1"]');
-
-    btn.dispatchEvent(new window.MouseEvent('click'));
+  /** Click a card's trash button. */
+  async function clickRemove(id) {
+    document.querySelector(`[data-fac-remove="${id}"]`)
+      .dispatchEvent(new window.MouseEvent('click'));
     await settle(20);
+  }
 
+  const confirmRemove = async () => {
+    document.getElementById('fac-delete-ok').dispatchEvent(new window.MouseEvent('click'));
+    await settle(40);
+  };
+
+  test('the trash button opens a confirmation dialog', async () => {
+    // The button used to arm itself for a second click, which gave no hint
+    // that a second click was needed and so read as a dead button. Every
+    // other destructive action in the app is a Cancel/Remove dialog.
+    await mountView();
+
+    await clickRemove('f1');
+
+    expect(document.getElementById('fac-delete-modal').hidden).toBe(false);
+    expect(document.getElementById('fac-delete-text').textContent)
+      .toContain('Forge Prime Assembly');
+    // Nothing is deleted just by asking.
     expect(calls.some((c) => c.fn === 'removeFacility')).toBe(false);
-    expect(btn.classList.contains('is-armed')).toBe(true);
   });
 
-  test('a second click removes', async () => {
+  test('confirming removes the facility', async () => {
     await mountView();
-    const btn = document.querySelector('[data-fac-remove="f1"]');
 
-    btn.dispatchEvent(new window.MouseEvent('click'));
-    await settle(20);
-    btn.dispatchEvent(new window.MouseEvent('click'));
-    await settle(30);
+    await clickRemove('f1');
+    await confirmRemove();
 
     expect(calls.find((c) => c.fn === 'removeFacility').id).toBe('f1');
+    expect(document.getElementById('fac-delete-modal').hidden).toBe(true);
+  });
+
+  test('cancelling removes nothing', async () => {
+    await mountView();
+
+    await clickRemove('f1');
+    document.getElementById('fac-delete-cancel')
+      .dispatchEvent(new window.MouseEvent('click'));
+    await settle(30);
+
+    expect(calls.some((c) => c.fn === 'removeFacility')).toBe(false);
+    expect(document.getElementById('fac-delete-modal').hidden).toBe(true);
+  });
+
+  test('Escape closes the dialog without removing', async () => {
+    await mountView();
+
+    await clickRemove('f1');
+    document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape' }));
+    await settle(30);
+
+    expect(calls.some((c) => c.fn === 'removeFacility')).toBe(false);
+    expect(document.getElementById('fac-delete-modal').hidden).toBe(true);
+  });
+
+  test('a cancelled dialog does not leave the facility pending', async () => {
+    // Reopening for a DIFFERENT card must not delete the earlier one.
+    await mountView();
+
+    await clickRemove('f1');
+    document.getElementById('fac-delete-cancel')
+      .dispatchEvent(new window.MouseEvent('click'));
+    await settle(20);
+
+    await clickRemove('f2');
+    await confirmRemove();
+
+    const removed = calls.filter((c) => c.fn === 'removeFacility');
+    expect(removed).toHaveLength(1);
+    expect(removed[0].id).toBe('f2');
   });
 
   test('removing the facility being edited clears the form', async () => {
@@ -1164,11 +1317,8 @@ describe('removing', () => {
     document.querySelector('[data-fac-edit="f1"]').dispatchEvent(new window.MouseEvent('click'));
     await settle(40);
 
-    const btn = document.querySelector('[data-fac-remove="f1"]');
-    btn.dispatchEvent(new window.MouseEvent('click'));
-    await settle(20);
-    btn.dispatchEvent(new window.MouseEvent('click'));
-    await settle(40);
+    await clickRemove('f1');
+    await confirmRemove();
 
     expect(document.getElementById('fac-name').value).toBe('');
     expect(document.getElementById('fac-editing-badge').hidden).toBe(true);
@@ -1214,5 +1364,569 @@ describe('resilience', () => {
     await mountView();
 
     expect(document.querySelectorAll('#fac-list .fac-facility')).toHaveLength(2);
+  });
+});
+
+/* ======================================================= import: scanner */
+
+/** Paste a scan and click Apply. */
+async function applyScan(text) {
+  document.getElementById('fac-import-scan')
+    .dispatchEvent(new window.MouseEvent('click'));
+  await settle();
+  document.getElementById('fac-scan-input').value = text;
+  document.getElementById('fac-scan-apply')
+    .dispatchEvent(new window.MouseEvent('click'));
+  await settle(40);
+}
+
+function scanSummaryText() {
+  return document.getElementById('fac-scan-summary').textContent;
+}
+
+/** The label each rig combobox is currently showing. */
+function rigTriggerLabels() {
+  return [1, 2, 3].map((i) =>
+    document.querySelector(`#fac-rig${i}-host .qf-ss-trigger`).textContent.trim()
+  );
+}
+
+describe('import: ship scanner', () => {
+  const M_RIG = 'Standup M-Set Basic Material Efficiency I';
+  const L_RIG = 'Standup L-Set Advanced Material Efficiency II';
+
+  test('applies the scanned rigs to the form', async () => {
+    await mountView();
+    await pickStructure('Raitaru');            // M-Set, engineering
+
+    await applyScan(`Rig Slots\n${M_RIG}`);
+
+    expect(document.getElementById('fac-scan-modal').hidden).toBe(true);
+    expect(rigTriggerLabels()[0]).toBe(M_RIG);
+  });
+
+  test('reports the modules it could not use', async () => {
+    await mountView();
+    await pickStructure('Raitaru');
+
+    await applyScan([
+      'High Power Slots',
+      'Standup Multirole Missile Launcher I',
+      'Rig Slots',
+      M_RIG,
+      'Service Slots',
+      'Standup Manufacturing Plant I',
+    ].join('\n'));
+
+    const [message] = window.QFToast.show.mock.calls.at(-1);
+    expect(message).toMatch(/Applied 1 rig/);
+    // Services are parsed and named, but the model has nowhere to put them.
+    expect(message).toMatch(/Standup Manufacturing Plant I/);
+    expect(message).toMatch(/2 non-rig modules ignored/);
+  });
+
+  test('drops a rig that does not fit the chosen structure', async () => {
+    await mountView();
+    await pickStructure('Raitaru');            // rigSize 2, so an L-Set cannot fit
+
+    await applyScan(`Rig Slots\n${L_RIG}\n${M_RIG}`);
+
+    expect(rigTriggerLabels()[0]).toBe(M_RIG);
+    expect(rigTriggerLabels()).not.toContain(L_RIG);
+    expect(window.QFToast.show.mock.calls.at(-1)[0]).toMatch(/does not fit/);
+  });
+
+  test('never sends more than three rigs to the form', async () => {
+    await mountView();
+    await pickStructure('Raitaru');
+
+    // Four M-Set lines: the fourth has no slot to go in.
+    await applyScan(`Rig Slots\n${M_RIG}\n${M_RIG}\n${M_RIG}\n${M_RIG}`);
+
+    expect(window.QFToast.show.mock.calls.at(-1)[0]).toMatch(/more than three rigs/);
+    expect(rigTriggerLabels().filter((l) => l === M_RIG)).toHaveLength(3);
+  });
+
+  test('infers an unambiguous structure when the form has none', async () => {
+    await mountView();
+
+    // A refinery M-Set rig can only be an Athanor in this fixture.
+    await applyScan('Rig Slots\nStandup M-Set Basic Reprocessing I');
+
+    expect(document.getElementById('fac-type').value).toBe('structure');
+    expect(document.getElementById('fac-structure').value).toBe('35835');
+    expect(rigTriggerLabels()[0]).toBe('Standup M-Set Basic Reprocessing I');
+    // Selecting the hull but dropping its rig is a silent half-success, so
+    // assert the modal actually closed rather than warning behind the scenes.
+    expect(document.getElementById('fac-scan-modal').hidden).toBe(true);
+  });
+
+  test('asks for a structure when the rigs do not identify one', async () => {
+    await mountView();
+
+    // M-Set and L-Set engineering together match no single hull.
+    await applyScan(`Rig Slots\n${M_RIG}\n${L_RIG}`);
+
+    expect(document.getElementById('fac-scan-modal').hidden).toBe(false);
+    expect(scanSummaryText()).toMatch(/Select a structure type/i);
+  });
+
+  test('rejects text that is not a scan', async () => {
+    await mountView();
+    await pickStructure('Raitaru');
+
+    await applyScan('just some text I copied');
+
+    expect(document.getElementById('fac-scan-modal').hidden).toBe(false);
+    expect(scanSummaryText()).toMatch(/No slot headings/i);
+  });
+
+  test('reports a rig name the SDE does not know', async () => {
+    await mountView();
+    await pickStructure('Raitaru');
+
+    await applyScan('Rig Slots\nStandup M-Set Nonexistent Rig X');
+
+    expect(document.getElementById('fac-scan-modal').hidden).toBe(false);
+    expect(scanSummaryText()).toMatch(/not found/i);
+  });
+
+  test('Escape closes the scanner modal', async () => {
+    await mountView();
+    document.getElementById('fac-import-scan')
+      .dispatchEvent(new window.MouseEvent('click'));
+    await settle();
+
+    document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape' }));
+    await settle();
+
+    expect(document.getElementById('fac-scan-modal').hidden).toBe(true);
+  });
+});
+
+/* ====================================================== import: ravworks */
+
+/** A Ravworks export shaped like the real one, over the fixture's SDE data. */
+function ravExport(structures, systems) {
+  return JSON.stringify({
+    manu_system: (systems && systems.manu) || 'Jita',
+    react_system: (systems && systems.react) || 'Amarr',
+    inv_system: (systems && systems.inv) || 'Jita',
+    hidden_my_structures: structures.map((s, i) => ({
+      id: s.id || `Structure ${i + 1}`,
+      name: s.name,
+      structure: s.structure,
+      security: 'Null / Wormhole',
+      Rig1: s.rigs && s.rigs[0] ? s.rigs[0] : 'No Rig',
+      Rig2: s.rigs && s.rigs[1] ? s.rigs[1] : 'No Rig',
+      Rig3: s.rigs && s.rigs[2] ? s.rigs[2] : 'No Rig',
+    })),
+  });
+}
+
+/** Drive the hidden file input the way a file picker would. */
+async function importRav(json) {
+  const input = document.getElementById('fac-rav-file');
+  Object.defineProperty(input, 'files', {
+    configurable: true,
+    value: [{ text: async () => json }],
+  });
+  input.dispatchEvent(new window.Event('change'));
+  await settle(60);
+}
+
+function ravRowEls() {
+  return Array.from(document.querySelectorAll('#fac-rav-rows .fac-rav-row'));
+}
+
+function rowStatusText(tr) {
+  return tr.querySelector('[data-rav-status]').textContent;
+}
+
+/** Pick from a preview row's own combobox, which has no stable id. */
+async function pickRowOption(tr, hostClass, label) {
+  tr.querySelector(`.${hostClass} .qf-ss-trigger`)
+    .dispatchEvent(new window.MouseEvent('click'));
+  await settle();
+  const row = Array.from(document.querySelectorAll('.qf-ss-row'))
+    .find((r) => r.textContent.includes(label));
+  if (!row) throw new Error(`No option matching "${label}"`);
+  row.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+  await settle(30);
+}
+
+const setUsage = (tr, label) => pickRowOption(tr, 'fac-rav-usage-host', label);
+
+describe('import: ravworks', () => {
+  test('lists a preview row per structure', async () => {
+    await mountView();
+
+    await importRav(ravExport([
+      { name: 'Alpha', structure: 'Raitaru' },
+      { name: 'Beta', structure: 'Athanor' },
+    ]));
+
+    expect(document.getElementById('fac-rav-modal').hidden).toBe(false);
+    expect(ravRowEls()).toHaveLength(2);
+  });
+
+  test('defaults the system from what the hull is for', async () => {
+    await mountView();
+
+    await importRav(ravExport(
+      [{ name: 'Alpha', structure: 'Raitaru' }, { name: 'Beta', structure: 'Athanor' }],
+      { manu: 'Jita', react: 'Amarr', inv: 'Jita' }
+    ));
+
+    const [engineering, refinery] = ravRowEls();
+    // An engineering complex manufactures; a refinery reacts.
+    expect(engineering.querySelector('.fac-rav-system-host').textContent).toMatch(/Jita/);
+    expect(refinery.querySelector('.fac-rav-system-host').textContent).toMatch(/Amarr/);
+  });
+
+  test('blocks a row whose hull is not in the SDE', async () => {
+    await mountView();
+
+    await importRav(ravExport([{ name: 'Alpha', structure: 'Fortizar' }]));
+
+    const [tr] = ravRowEls();
+    expect(tr.querySelector('[data-rav-check]').disabled).toBe(true);
+    expect(rowStatusText(tr)).toMatch(/Unknown structure "Fortizar"/);
+  });
+
+  test('blocks a row until a usage is chosen', async () => {
+    await mountView();
+
+    await importRav(ravExport([{ name: 'Alpha', structure: 'Raitaru' }]));
+    const [tr] = ravRowEls();
+    expect(rowStatusText(tr)).toMatch(/Select a usage/);
+
+    await setUsage(tr, 'Components');
+
+    expect(tr.querySelector('[data-rav-check]').disabled).toBe(false);
+    expect(document.getElementById('fac-rav-confirm').textContent)
+      .toMatch(/Import 1 Facility/);
+  });
+
+  test('blocks a name that collides with an existing facility', async () => {
+    await mountView();
+
+    // Differs from the saved 'Forge Prime Assembly' only by case.
+    await importRav(ravExport([{ name: 'forge prime assembly', structure: 'Raitaru' }]));
+    const [tr] = ravRowEls();
+    await setUsage(tr, 'Components');
+
+    expect(rowStatusText(tr)).toMatch(/already exists/);
+    expect(tr.querySelector('[data-rav-check]').disabled).toBe(true);
+  });
+
+  test('clears the collision when the name is edited', async () => {
+    await mountView();
+
+    await importRav(ravExport([{ name: 'Forge Prime Assembly', structure: 'Raitaru' }]));
+    const [tr] = ravRowEls();
+    await setUsage(tr, 'Components');
+
+    const input = tr.querySelector('.fac-rav-name');
+    input.value = 'Forge Prime Assembly II';
+    input.dispatchEvent(new window.Event('input'));
+    await settle();
+
+    expect(tr.querySelector('[data-rav-check]').disabled).toBe(false);
+  });
+
+  test('blocks two rows claiming the same name', async () => {
+    await mountView();
+
+    await importRav(ravExport([
+      { name: 'Twin', structure: 'Raitaru' },
+      { name: 'Twin', structure: 'Athanor' },
+    ]));
+    const rows = ravRowEls();
+    await setUsage(rows[0], 'Components');
+    await setUsage(rows[1], 'Reactions');
+
+    expect(rowStatusText(rows[1])).toMatch(/Duplicate name in this import/);
+    expect(rows[1].querySelector('[data-rav-check]').disabled).toBe(true);
+  });
+
+  test('still catches a duplicate after an unrelated problem is fixed', async () => {
+    await mountView();
+
+    // Both rows start blocked on "no usage". Fixing that must not also
+    // clear the duplicate-name conflict between them: a row's blocked state
+    // and the user's intent to import it are different things, and gating
+    // the cross-row checks on the former made this pair import cleanly.
+    await importRav(ravExport([
+      { name: 'Twin', structure: 'Raitaru' },
+      { name: 'Twin', structure: 'Athanor' },
+    ]));
+    const rows = ravRowEls();
+    expect(rowStatusText(rows[1])).toMatch(/Select a usage/);
+
+    await setUsage(rows[0], 'Components');
+    await setUsage(rows[1], 'Reactions');
+
+    expect(rowStatusText(rows[1])).toMatch(/Duplicate name in this import/);
+    expect(rows[1].querySelector('[data-rav-check]').disabled).toBe(true);
+  });
+
+  test('re-blocks a row when a fixed conflict is reintroduced', async () => {
+    await mountView();
+
+    await importRav(ravExport([
+      { name: 'Alpha', structure: 'Raitaru' },
+      { name: 'Beta', structure: 'Athanor' },
+    ]));
+    const rows = ravRowEls();
+    await setUsage(rows[0], 'Components');
+    await setUsage(rows[1], 'Reactions');
+    expect(rows[1].querySelector('[data-rav-check]').disabled).toBe(false);
+
+    const input = rows[1].querySelector('.fac-rav-name');
+    input.value = 'Alpha';
+    input.dispatchEvent(new window.Event('input'));
+    await settle();
+
+    expect(rowStatusText(rows[1])).toMatch(/Duplicate name in this import/);
+    expect(rows[1].querySelector('[data-rav-check]').disabled).toBe(true);
+  });
+
+  test('blocks a second Default when one already exists', async () => {
+    await mountView();
+
+    // The fixture's 'Forge Prime Assembly' is already usage: 'default'.
+    await importRav(ravExport([{ name: 'Alpha', structure: 'Raitaru' }]));
+    const [tr] = ravRowEls();
+    await setUsage(tr, 'Default');
+
+    expect(rowStatusText(tr)).toMatch(/Default facility already exists/);
+  });
+
+  test('blocks two rows both claiming Default', async () => {
+    facilities = facilities.filter((f) => f.usage !== 'default');
+    await mountView();
+
+    await importRav(ravExport([
+      { name: 'Alpha', structure: 'Raitaru' },
+      { name: 'Beta', structure: 'Athanor' },
+    ]));
+    const rows = ravRowEls();
+    await setUsage(rows[0], 'Default');
+    await setUsage(rows[1], 'Default');
+
+    expect(rowStatusText(rows[1])).toMatch(/Another row is already the Default/);
+    expect(rows[0].querySelector('[data-rav-check]').disabled).toBe(false);
+  });
+
+  test('marks a rig that cannot fit the hull without blocking the row', async () => {
+    await mountView();
+
+    await importRav(ravExport([{
+      name: 'Alpha',
+      structure: 'Raitaru',                                    // rigSize 2
+      rigs: ['Standup L-Set Advanced Material Efficiency II'], // rigSize 3
+    }]));
+    const [tr] = ravRowEls();
+    await setUsage(tr, 'Components');
+
+    expect(tr.querySelector('.fac-rav-rig.is-invalid')).not.toBeNull();
+    // A bad rig costs the rig, not the facility.
+    expect(tr.querySelector('[data-rav-check]').disabled).toBe(false);
+    expect(rowStatusText(tr)).toMatch(/does not fit/);
+  });
+
+  test('saves one facility per checked row, with the resolved ids', async () => {
+    await mountView();
+
+    await importRav(ravExport(
+      [{
+        name: 'Alpha',
+        structure: 'Raitaru',
+        rigs: ['Standup M-Set Basic Material Efficiency I'],
+      }],
+      { manu: 'Jita' }
+    ));
+    const [tr] = ravRowEls();
+    await setUsage(tr, 'Components');
+
+    document.getElementById('fac-rav-confirm')
+      .dispatchEvent(new window.MouseEvent('click'));
+    await settle(60);
+
+    const added = calls.filter((c) => c.fn === 'addFacility');
+    expect(added).toHaveLength(1);
+    expect(added[0].payload).toEqual({
+      usage: 'components',
+      name: 'Alpha',
+      facilityType: 'structure',
+      regionId: '10000002',
+      systemId: '30000142',
+      // From the SDE system, not Ravworks' coarse "Null / Wormhole" band.
+      securityStatus: 0.946,
+      structureTypeId: '35825',
+      rigs: ['43920'],
+    });
+    expect(document.getElementById('fac-rav-modal').hidden).toBe(true);
+  });
+
+  test('omits an unchecked row', async () => {
+    await mountView();
+
+    await importRav(ravExport([
+      { name: 'Alpha', structure: 'Raitaru' },
+      { name: 'Beta', structure: 'Athanor' },
+    ]));
+    const rows = ravRowEls();
+    await setUsage(rows[0], 'Components');
+    await setUsage(rows[1], 'Reactions');
+
+    const check = rows[1].querySelector('[data-rav-check]');
+    check.checked = false;
+    check.dispatchEvent(new window.Event('change'));
+    await settle();
+
+    document.getElementById('fac-rav-confirm')
+      .dispatchEvent(new window.MouseEvent('click'));
+    await settle(60);
+
+    const added = calls.filter((c) => c.fn === 'addFacility');
+    expect(added).toHaveLength(1);
+    expect(added[0].payload.name).toBe('Alpha');
+  });
+
+  test('one rejected row does not abort the rest of the batch', async () => {
+    await mountView();
+    window.electronAPI.facilities.addFacility = async (payload) => {
+      calls.push({ fn: 'addFacility', payload });
+      if (payload.name === 'Alpha') throw new Error('A facility named "Alpha" exists.');
+      return { id: 'new' };
+    };
+    allowErrors(/ravworks import row failed/);
+
+    await importRav(ravExport([
+      { name: 'Alpha', structure: 'Raitaru' },
+      { name: 'Beta', structure: 'Athanor' },
+    ]));
+    const rows = ravRowEls();
+    await setUsage(rows[0], 'Components');
+    await setUsage(rows[1], 'Reactions');
+
+    document.getElementById('fac-rav-confirm')
+      .dispatchEvent(new window.MouseEvent('click'));
+    await settle(60);
+
+    expect(calls.filter((c) => c.fn === 'addFacility')).toHaveLength(2);
+    const [message] = window.QFToast.show.mock.calls.at(-1);
+    expect(message).toMatch(/Imported 1 facility/);
+    // settings-manager's message names the conflict, so it is kept verbatim.
+    expect(message).toMatch(/A facility named "Alpha" exists\./);
+  });
+
+  test('reloads the facility list after importing', async () => {
+    await mountView();
+    const before = calls.filter((c) => c.fn === 'getFacilities').length;
+
+    await importRav(ravExport([{ name: 'Alpha', structure: 'Raitaru' }]));
+    await setUsage(ravRowEls()[0], 'Components');
+    document.getElementById('fac-rav-confirm')
+      .dispatchEvent(new window.MouseEvent('click'));
+    await settle(60);
+
+    expect(calls.filter((c) => c.fn === 'getFacilities').length).toBeGreaterThan(before);
+  });
+
+  test('rejects a file that is not a Ravworks export', async () => {
+    await mountView();
+
+    await importRav(JSON.stringify({ something: 'else' }));
+
+    expect(document.getElementById('fac-rav-modal').hidden).toBe(true);
+    expect(window.QFToast.show.mock.calls.at(-1)[0]).toMatch(/not a Ravworks export/i);
+  });
+
+  test('select-all skips rows that are blocked', async () => {
+    await mountView();
+
+    await importRav(ravExport([
+      { name: 'Alpha', structure: 'Raitaru' },
+      { name: 'Bad', structure: 'Fortizar' },
+    ]));
+    const rows = ravRowEls();
+    await setUsage(rows[0], 'Components');
+
+    const all = document.getElementById('fac-rav-all');
+    all.checked = true;
+    all.dispatchEvent(new window.Event('change'));
+    await settle();
+
+    expect(rows[0].querySelector('[data-rav-check]').checked).toBe(true);
+    expect(rows[1].querySelector('[data-rav-check]').checked).toBe(false);
+  });
+
+  test('reuses one bonus lookup for repeated hulls', async () => {
+    await mountView();
+    const before = calls.filter((c) => c.fn === 'getStructureBonuses').length;
+
+    await importRav(ravExport([
+      { name: 'A', structure: 'Raitaru' },
+      { name: 'B', structure: 'Raitaru' },
+      { name: 'C', structure: 'Raitaru' },
+    ]));
+
+    const added = calls.filter((c) => c.fn === 'getStructureBonuses').length - before;
+    expect(added).toBeLessThanOrEqual(1);
+  });
+
+  describe('lifecycle', () => {
+    test('closing the modal destroys only the preview selects', async () => {
+      await mountView();
+      await importRav(ravExport([{ name: 'Alpha', structure: 'Raitaru' }]));
+      expect(document.querySelectorAll('#fac-rav-rows .qf-ss-trigger').length)
+        .toBeGreaterThan(0);
+
+      document.getElementById('fac-rav-cancel')
+        .dispatchEvent(new window.MouseEvent('click'));
+      await settle();
+
+      expect(document.querySelectorAll('#fac-rav-rows .qf-ss-trigger')).toHaveLength(0);
+      // The form's own dropdowns must survive.
+      expect(document.querySelectorAll('#fac-usage-host .qf-ss-trigger')).toHaveLength(1);
+    });
+
+    test('Escape closes the preview', async () => {
+      await mountView();
+      await importRav(ravExport([{ name: 'Alpha', structure: 'Raitaru' }]));
+
+      document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape' }));
+      await settle();
+
+      expect(document.getElementById('fac-rav-modal').hidden).toBe(true);
+    });
+
+    test('the same file can be picked twice in a row', async () => {
+      await mountView();
+      const json = ravExport([{ name: 'Alpha', structure: 'Raitaru' }]);
+
+      await importRav(json);
+      document.getElementById('fac-rav-cancel')
+        .dispatchEvent(new window.MouseEvent('click'));
+      await settle();
+      // A file input that keeps its value fires no change event next time.
+      expect(document.getElementById('fac-rav-file').value).toBe('');
+
+      await importRav(json);
+      expect(ravRowEls()).toHaveLength(1);
+    });
+
+    test('unmounting with the preview open leaves no live selects', async () => {
+      const { instance, container } = await mountView();
+      await importRav(ravExport([{ name: 'Alpha', structure: 'Raitaru' }]));
+
+      instance.destroy();
+      container.remove();
+
+      expect(document.querySelectorAll('.qf-ss-popover')).toHaveLength(0);
+    });
   });
 });
