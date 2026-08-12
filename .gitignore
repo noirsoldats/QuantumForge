@@ -30,6 +30,17 @@ Thumbs.db
 # Testing
 coverage/
 
+# Profiling / benchmarking (see docs/PROFILING.md)
+# Captured profiles and traces - machine-specific, often multi-MB.
+profiles/
+# The built benchmark dataset. Contains real character data and live ESI
+# tokens; rebuilt with `npm run bench:build`. The committed part of the
+# benchmark is tests/fixtures/bench/recipe.json, which has neither.
+.bench-data/
+.bench-data.previous/
+.bench-data.lock
+.bench-sandbox/
+
 # Cached native build artifacts (better-sqlite3 ABI swap cache)
 .native-cache/
 

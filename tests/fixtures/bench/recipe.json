@@ -1,0 +1,119 @@
+{
+  "$comment": [
+    "Benchmark dataset RECIPE - the committed description of what to build.",
+    "",
+    "This file contains NO character data, NO market data, and NO databases. It",
+    "names blueprints by SDE typeID, which is stable across every install, so any",
+    "developer can check out the repo, run `npm run bench:build`, log in their own",
+    "characters, and get a benchmark environment exercising the same code paths.",
+    "",
+    "PORTABILITY: a developer who owns none of these blueprints still gets a valid",
+    "run. resolveOwnedBlueprint() (blueprint-calculator.js:357) returns null for an",
+    "unowned blueprint and the app falls back to ME 0 + built. The numbers differ",
+    "between developers; the code paths exercised do not. That is the accepted",
+    "tradeoff - see docs/PROFILING.md on comparability scope.",
+    "",
+    "SIZE LADDER: plans are sized to span roughly 8 to 735 material nodes, modelled",
+    "on real plans. The spread is itself a measurement: timings that scale linearly",
+    "with node count indicate a constant-factor problem, while super-linear scaling",
+    "indicates an algorithmic one (the reverse linear scans at",
+    "manufacturing-plans.js:3495,3682 are a live O(n^2) suspect). Those two",
+    "diagnoses call for completely different fixes.",
+    "",
+    "Only TOP-LEVEL blueprints are listed. Intermediates are detected and created by",
+    "the app itself during recalculation, which is deliberate - the seeder must not",
+    "hand-build the tree, or it would stop reflecting how the app actually works.",
+    "",
+    "NOTE on useIntermediates: this is NOT part of addBlueprintToPlan's parameter",
+    "object - that call silently drops unknown keys. It defaults to 'raw_materials'",
+    "and the builder applies any other value through updatePlanBlueprint, whose",
+    "allowedFields list is snake_case (use_intermediates).",
+    "",
+    "TO CHANGE THE DATASET: edit this file, then re-run `npm run bench:build`.",
+    "`npm run bench` hashes this file and refuses to run against a stale dataset."
+  ],
+
+  "version": 1,
+
+  "plans": [
+    {
+      "name": "bench-xs-caracal",
+      "description": "Smallest case: a single T1 cruiser, shallow tree (~8 nodes).",
+      "blueprints": [
+        { "typeId": 687, "name": "Caracal Blueprint", "runs": 1, "lines": 1, "me": 7, "te": 0, "useIntermediates": "raw_materials" }
+      ]
+    },
+    {
+      "name": "bench-s-ammo",
+      "description": "High run count, multiple lines - exercises per-run ME rounding (~28 nodes).",
+      "blueprints": [
+        { "typeId": 12780, "name": "Hail L Blueprint", "runs": 100, "lines": 10, "me": 2, "te": 4, "useIntermediates": "raw_materials" }
+      ]
+    },
+    {
+      "name": "bench-s-t2components",
+      "description": "T2 component builds - exercises the 'components' build plan path (~10 nodes).",
+      "blueprints": [
+        { "typeId": 26441, "name": "Large Kinetic Shield Reinforcer II Blueprint", "runs": 30, "lines": 1, "me": 0, "te": 6, "useIntermediates": "components" },
+        { "typeId": 26375, "name": "Large Capacitor Control Circuit II Blueprint", "runs": 30, "lines": 1, "me": 5, "te": 10, "useIntermediates": "components" }
+      ]
+    },
+    {
+      "name": "bench-m-capparts",
+      "description": "Capital construction parts, 5 runs - mid-size tree (~48 nodes).",
+      "blueprints": [
+        { "typeId": 21038, "name": "Capital Construction Parts Blueprint", "runs": 5, "lines": 1, "me": 10, "te": 16, "useIntermediates": "raw_materials" }
+      ]
+    },
+    {
+      "name": "bench-l-charon",
+      "description": "Freighter - deep capital tree (~131 nodes).",
+      "blueprints": [
+        { "typeId": 20186, "name": "Charon Blueprint", "runs": 1, "lines": 1, "me": 0, "te": 0, "useIntermediates": "raw_materials" }
+      ]
+    },
+    {
+      "name": "bench-l-carrier",
+      "description": "Carrier - deep capital tree with researched ME/TE (~205 nodes).",
+      "blueprints": [
+        { "typeId": 23912, "name": "Thanatos Blueprint", "runs": 1, "lines": 1, "me": 9, "te": 19, "useIntermediates": "raw_materials" }
+      ]
+    },
+    {
+      "name": "bench-l-dread",
+      "description": "Dreadnought - deep capital tree (~214 nodes).",
+      "blueprints": [
+        { "typeId": 19721, "name": "Revelation Blueprint", "runs": 1, "lines": 1, "me": 8, "te": 12, "useIntermediates": "raw_materials" }
+      ]
+    },
+    {
+      "name": "bench-xl-jumpfreighter",
+      "description": "Jump freighter - the heaviest case, deepest tree (~735 nodes). This is the plan the pricing loop and recalculation scenarios stress hardest.",
+      "blueprints": [
+        { "typeId": 28845, "name": "Rhea Blueprint", "runs": 1, "lines": 1, "me": 0, "te": 0, "useIntermediates": "raw_materials" }
+      ]
+    }
+  ],
+
+  "invention": {
+    "$comment": "findBestDecryptor evaluates 9 options x 2 cost calls x ~11 materials, which market-read-cache.js documents as ~198 calculateRealisticPrice calls for ~11 distinct items. A T2 cruiser blueprint is the canonical case.",
+    "blueprintTypeId": 687,
+    "blueprintName": "Caracal Blueprint"
+  },
+
+  "market": {
+    "$comment": [
+      "Market data is FETCHED into the sandbox during bench:build, not committed -",
+      "the live market database is ~329MB. Real order books matter because",
+      "calculateVWAP, calculatePercentilePrice, removeOutliers and",
+      "getBestPriceWithMinVolume all branch on book shape, so synthetic books risk",
+      "exercising the wrong branches.",
+      "",
+      "The type list is derived from the plans above after they are built, so it",
+      "needs no maintenance here. The region is The Forge (Jita), the default",
+      "reference market."
+    ],
+    "regionId": 10000002,
+    "regionName": "The Forge"
+  }
+}
