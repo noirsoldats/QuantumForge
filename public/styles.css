@@ -473,6 +473,32 @@ main {
   outline-offset: 2px;
 }
 
+/* Busy / disabled state for the legacy button family.
+
+   These are NOT `.btn`, so they inherit nothing from components.css - the
+   Market screen uses this family throughout, and had no disabled styling at
+   all. Mirrors `.btn:disabled` / `.btn.is-busy:disabled` so a busy button
+   looks the same wherever it lives. */
+.primary-button:disabled,
+.secondary-button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* Full opacity while busy: at 45% the spinner is close to invisible. */
+.primary-button.is-busy:disabled,
+.secondary-button.is-busy:disabled {
+  opacity: 1;
+  cursor: progress;
+  color: var(--color-text-muted);
+}
+
+/* The spinner replaces the icon rather than sitting beside it. */
+.primary-button.is-busy > svg,
+.secondary-button.is-busy > svg {
+  display: none;
+}
+
 /* ---- Responsive ---- */
 
 @media (max-width: 768px) {

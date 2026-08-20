@@ -1145,35 +1145,37 @@
 
   /** Re-lock one material in one plan, reporting what actually changed. */
   async function relockPlan(plan, row, marketPrice, button) {
-    button.disabled = true;
-    QFUI.setButtonLabel(button, 'Re-locking…');
-
-    try {
-      const res = await window.electronAPI.market.relockPlanMaterial(
-        plan.planId,
-        row.typeId,
-        marketPrice
-      );
-
-      if (res && res.success && res.overridden) {
-        // The override still wins for the plan's price - say so, rather than
-        // implying the plan's cost changed.
-        toast(
-          `Market re-locked at ${isk(marketPrice)}. ${plan.planName} still uses ` +
-          `your override of ${isk(res.overridePrice)}.`,
-          'info'
+    // withButtonBusy restores in a `finally`, and no-ops if the reload below
+    // has already replaced this button - the hand-rolled version had no
+    // restore at all and relied on that re-render to clear the disabled state.
+    await QFUI.withButtonBusy(button, 'Re-locking…', async () => {
+      try {
+        const res = await window.electronAPI.market.relockPlanMaterial(
+          plan.planId,
+          row.typeId,
+          marketPrice
         );
-      } else if (res && res.success) {
-        toast(`${plan.planName}: ${row.name} re-locked at ${isk(marketPrice)}.`, 'success');
-      } else {
+
+        if (res && res.success && res.overridden) {
+          // The override still wins for the plan's price - say so, rather than
+          // implying the plan's cost changed.
+          toast(
+            `Market re-locked at ${isk(marketPrice)}. ${plan.planName} still uses ` +
+            `your override of ${isk(res.overridePrice)}.`,
+            'info'
+          );
+        } else if (res && res.success) {
+          toast(`${plan.planName}: ${row.name} re-locked at ${isk(marketPrice)}.`, 'success');
+        } else {
+          toast(`Could not re-lock ${row.name} in ${plan.planName}.`, 'error');
+        }
+      } catch (error) {
+        console.error('[market] re-lock failed:', error);
         toast(`Could not re-lock ${row.name} in ${plan.planName}.`, 'error');
       }
-    } catch (error) {
-      console.error('[market] re-lock failed:', error);
-      toast(`Could not re-lock ${row.name} in ${plan.planName}.`, 'error');
-    }
 
-    await loadInspectorPlans(row, { force: true });
+      await loadInspectorPlans(row, { force: true });
+    });
   }
 
   /* ----------------------------------------------------------- overview */
@@ -3977,38 +3979,37 @@
     // Dashboard, so here we just disable while running.
     const refreshOne = document.getElementById('mk-refresh-market');
     const refreshAll = document.getElementById('mk-refresh-all');
-    const doRefresh = async (btn, label) => {
+    // withButtonBusy remembers and restores the button's own label, so callers
+    // no longer have to pass the caption back in to put it right.
+    const doRefresh = async (btn) => {
       if (!btn) return;
-      btn.disabled = true;
-      QFUI.setButtonLabel(btn, 'Refreshing…');
+      await QFUI.withButtonBusy(btn, 'Refreshing…', async () => {
+        // A refresh spans regions AND structures across five phases, and neither
+        // maps cleanly onto a market set - a set can span several regions, and a
+        // region can belong to several sets. So the progress goes in one dialog
+        // for the whole operation rather than being smeared across set cards.
+        openRefreshModal();
+        state.sets.forEach((s) => state.refreshingSets.add(s.id));
+        renderOverview();
 
-      // A refresh spans regions AND structures across five phases, and neither
-      // maps cleanly onto a market set - a set can span several regions, and a
-      // region can belong to several sets. So the progress goes in one dialog
-      // for the whole operation rather than being smeared across set cards.
-      openRefreshModal();
-      state.sets.forEach((s) => state.refreshingSets.add(s.id));
-      renderOverview();
-
-      try {
-        const result = await window.electronAPI.market.updateAllMarketData();
-        reportRefreshOutcome(result);
-      } catch (error) {
-        console.error('[market] refresh failed:', error);
-        toast(`Market refresh failed: ${error.message}`, 'error');
-      } finally {
-        // Closed here as well as on the `done` stage: if the IPC itself
-        // rejects, no stage ever arrives and the dialog would stay up.
-        closeRefreshModal();
-        state.refreshingSets.clear();
-        state.fetchProgress.clear();
-        await loadAll();
-        QFUI.setButtonLabel(btn, label);
-        btn.disabled = false;
-      }
+        try {
+          const result = await window.electronAPI.market.updateAllMarketData();
+          reportRefreshOutcome(result);
+        } catch (error) {
+          console.error('[market] refresh failed:', error);
+          toast(`Market refresh failed: ${error.message}`, 'error');
+        } finally {
+          // Closed here as well as on the `done` stage: if the IPC itself
+          // rejects, no stage ever arrives and the dialog would stay up.
+          closeRefreshModal();
+          state.refreshingSets.clear();
+          state.fetchProgress.clear();
+          await loadAll();
+        }
+      });
     };
-    if (refreshOne) refreshOne.addEventListener('click', () => doRefresh(refreshOne, 'Refresh Market Data'));
-    if (refreshAll) refreshAll.addEventListener('click', () => doRefresh(refreshAll, 'Refresh All'));
+    if (refreshOne) refreshOne.addEventListener('click', () => doRefresh(refreshOne));
+    if (refreshAll) refreshAll.addEventListener('click', () => doRefresh(refreshAll));
 
     // Market set / override creation route to the legacy editors until their
     // modals are ported.

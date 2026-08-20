@@ -176,6 +176,13 @@
     else console[type === 'error' ? 'error' : 'log']('[plans]', message);
   }
 
+  /** Busy labels for the job/transaction match row actions. */
+  const DECIDE_LABELS = {
+    confirm: 'Confirming…',
+    reject: 'Rejecting…',
+    unlink: 'Unlinking…',
+  };
+
   function formatISK(value) {
     if (value === null || value === undefined || !Number.isFinite(value)) return '—';
     return value.toLocaleString('en-US', {
@@ -719,21 +726,32 @@
       // is running again.
       : { status: 'active', completedAt: null };
 
-    try {
-      const ok = await window.electronAPI.plans.update(state.planId, updates);
-      // updateManufacturingPlan returns false when nothing matched (unknown
-      // field, missing plan) rather than throwing.
-      if (!ok) throw new Error('Plan not updated');
+    await QFUI.withButtonBusy(
+      $('mp-complete-plan'),
+      completing ? 'Completing…' : 'Reopening…',
+      async () => {
+        try {
+          const ok = await window.electronAPI.plans.update(state.planId, updates);
+          // updateManufacturingPlan returns false when nothing matched (unknown
+          // field, missing plan) rather than throwing.
+          if (!ok) throw new Error('Plan not updated');
 
-      state.plan = { ...state.plan, ...updates };
-      await loadPlans();
-      // renderPlanDetail re-syncs the button label via setPlanActionChrome.
-      renderPlanDetail();
-      toast(completing ? 'Plan marked complete.' : 'Plan reopened.', 'success');
-    } catch (error) {
-      console.error('[plans] toggle complete failed:', error);
-      toast(`Failed to update plan: ${error.message}`, 'error');
-    }
+          state.plan = { ...state.plan, ...updates };
+          await loadPlans();
+          renderPlanDetail();
+          toast(completing ? 'Plan marked complete.' : 'Plan reopened.', 'success');
+        } catch (error) {
+          console.error('[plans] toggle complete failed:', error);
+          toast(`Failed to update plan: ${error.message}`, 'error');
+        }
+      }
+    );
+
+    // This button's label is STATE, not a caption: it reads "Reopen Plan" once
+    // the plan is complete. renderPlanDetail set it correctly inside the busy
+    // window, but withButtonBusy then restored the pre-click label on the way
+    // out - so re-sync it here, after the restore.
+    setPlanActionChrome();
   }
 
   /**
@@ -752,21 +770,25 @@
       + 'materials, and job/transaction matches. This cannot be undone.'
     )) return;
 
-    try {
-      const ok = await window.electronAPI.plans.delete(state.planId);
-      if (!ok) throw new Error('Plan not deleted');
+    // Icon-only button, so no busy label - the spinner replaces the icon and
+    // the guard still blocks a second delete.
+    await QFUI.withButtonBusy($('delete-plan-btn'), null, async () => {
+      try {
+        const ok = await window.electronAPI.plans.delete(state.planId);
+        if (!ok) throw new Error('Plan not deleted');
 
-      // Clear the selection before reloading: the detail pane is bound to a
-      // plan that no longer exists.
-      state.planId = null;
-      state.plan = null;
-      await loadPlans();
-      renderPlanDetail();
-      toast(`Deleted "${name}".`, 'success');
-    } catch (error) {
-      console.error('[plans] delete plan failed:', error);
-      toast(`Failed to delete plan: ${error.message}`, 'error');
-    }
+        // Clear the selection before reloading: the detail pane is bound to a
+        // plan that no longer exists.
+        state.planId = null;
+        state.plan = null;
+        await loadPlans();
+        renderPlanDetail();
+        toast(`Deleted "${name}".`, 'success');
+      } catch (error) {
+        console.error('[plans] delete plan failed:', error);
+        toast(`Failed to delete plan: ${error.message}`, 'error');
+      }
+    });
   }
 
   /* ---- rename ---- */
@@ -796,21 +818,23 @@
       return;
     }
 
-    try {
-      const ok = await window.electronAPI.plans.update(state.planId, { planName, description });
-      if (!ok) throw new Error('Plan not updated');
+    await QFUI.withButtonBusy($('mp-rename-confirm'), 'Saving…', async () => {
+      try {
+        const ok = await window.electronAPI.plans.update(state.planId, { planName, description });
+        if (!ok) throw new Error('Plan not updated');
 
-      state.plan = { ...state.plan, planName, description };
-      closeModal('mp-rename-modal');
-      await loadPlans();
-      renderPlanDetail();
-      // The Overview tab prints the description, so it can be stale otherwise.
-      if (state.tab === 'overview') renderOverview();
-      toast('Plan renamed.', 'success');
-    } catch (error) {
-      console.error('[plans] rename plan failed:', error);
-      toast(`Failed to rename plan: ${error.message}`, 'error');
-    }
+        state.plan = { ...state.plan, planName, description };
+        closeModal('mp-rename-modal');
+        await loadPlans();
+        renderPlanDetail();
+        // The Overview tab prints the description, so it can be stale otherwise.
+        if (state.tab === 'overview') renderOverview();
+        toast('Plan renamed.', 'success');
+      } catch (error) {
+        console.error('[plans] rename plan failed:', error);
+        toast(`Failed to rename plan: ${error.message}`, 'error');
+      }
+    });
   }
 
   /** Mark Complete reads "Reopen" once the plan is completed. */
@@ -1318,20 +1342,21 @@
 
     const btn = $('mp-relock');
     const label = $('mp-relock-label');
-    const original = label ? label.textContent : null;
-    if (btn) {
-      btn.disabled = true;
-      if (label) label.textContent = 'Re-locking…';
-    }
 
     let locked = 0;
     let overridden = 0;
     let failed = 0;
 
-    try {
+    await QFUI.withButtonBusy(btn, 'Re-locking…', async () => {
       // Sequential: these all write the same plan, and a half-applied batch of
-      // price locks is worse than a slow one.
+      // price locks is worse than a slow one. That makes this the one action
+      // slow enough to be worth counting down rather than just spinning.
+      let done = 0;
       for (const { mat, live } of relockable) {
+        if (label) {
+          QFUI.setButtonLabel(btn, `Re-locking ${done + 1}/${relockable.length}…`);
+        }
+        done += 1;
         try {
           const res = await window.electronAPI.market.relockPlanMaterial(
             state.planId, mat.typeId, live
@@ -1363,12 +1388,7 @@
       } else {
         toast('Could not re-lock any prices.', 'error');
       }
-    } finally {
-      if (btn) {
-        btn.disabled = false;
-        if (label && original !== null) label.textContent = original;
-      }
-    }
+    });
   }
 
   function driftCell(entry) {
@@ -1846,7 +1866,9 @@
     } else if (state.editingRow === item.blueprintTypeId) {
       const save = el('button', 'mp-link-action', 'Save');
       save.type = 'button';
-      save.addEventListener('click', () => saveRow(item));
+      // saveRow re-renders this list, so `save` is detached before the busy
+      // state is cleared - withButtonBusy no-ops on a detached node.
+      save.addEventListener('click', () => saveRow(item, save));
       const cancel = el('button', 'mp-link-action mp-link-muted', 'Cancel');
       cancel.type = 'button';
       cancel.addEventListener('click', () => {
@@ -1994,7 +2016,7 @@
     return state.buildItems.filter((item) => state.buildEdits[item.blueprintTypeId]);
   }
 
-  async function saveRow(item) {
+  async function saveRow(item, button) {
     const updates = state.buildEdits[item.blueprintTypeId];
     if (!updates) {
       state.editingRow = null;
@@ -2002,16 +2024,18 @@
       return;
     }
 
-    try {
-      await saveBuildItem(item);
-      delete state.buildEdits[item.blueprintTypeId];
-      state.editingRow = null;
-      toast('Build settings saved.', 'success');
-      await reloadAfterBuildChange();
-    } catch (error) {
-      console.error('[plans] save build row failed:', error);
-      toast(`Failed to save: ${error.message}`, 'error');
-    }
+    await QFUI.withButtonBusy(button, 'Saving…', async () => {
+      try {
+        await saveBuildItem(item);
+        delete state.buildEdits[item.blueprintTypeId];
+        state.editingRow = null;
+        toast('Build settings saved.', 'success');
+        await reloadAfterBuildChange();
+      } catch (error) {
+        console.error('[plans] save build row failed:', error);
+        toast(`Failed to save: ${error.message}`, 'error');
+      }
+    });
   }
 
   async function saveBulkEdits() {
@@ -2023,21 +2047,29 @@
       return;
     }
 
-    try {
-      // Sequential, not Promise.all: these all write the same rows, and a
-      // half-applied batch is worse than a slow one.
-      for (const item of items) {
-        await saveBuildItem(item);
+    const btn = $('mp-bulk-save');
+
+    await QFUI.withButtonBusy(btn, 'Saving…', async () => {
+      try {
+        // Sequential, not Promise.all: these all write the same rows, and a
+        // half-applied batch is worse than a slow one. Count up as we go - with
+        // many edited rows this is the longest wait on the screen.
+        let done = 0;
+        for (const item of items) {
+          QFUI.setButtonLabel(btn, `Saving ${done + 1}/${items.length}…`);
+          done += 1;
+          await saveBuildItem(item);
+        }
+        state.buildEdits = {};
+        state.bulkEdit = false;
+        setBulkChrome();
+        toast(`Saved ${items.length} change${items.length === 1 ? '' : 's'}.`, 'success');
+        await reloadAfterBuildChange();
+      } catch (error) {
+        console.error('[plans] bulk save failed:', error);
+        toast(`Failed to save changes: ${error.message}`, 'error');
       }
-      state.buildEdits = {};
-      state.bulkEdit = false;
-      setBulkChrome();
-      toast(`Saved ${items.length} change${items.length === 1 ? '' : 's'}.`, 'success');
-      await reloadAfterBuildChange();
-    } catch (error) {
-      console.error('[plans] bulk save failed:', error);
-      toast(`Failed to save changes: ${error.message}`, 'error');
-    }
+    });
   }
 
   /**
@@ -2065,61 +2097,53 @@
   async function rebuildPlan() {
     if (!state.planId) return;
 
-    const btn = $('mp-recalc-all');
     // The label has its own span: setting textContent on the button itself
-    // would delete the inline SVG icon and never bring it back.
-    const label = $('mp-recalc-all-label');
-    const original = label ? label.textContent : null;
-    if (btn) {
-      btn.disabled = true;
-      if (label) label.textContent = 'Rebuilding…';
-    }
+    // would delete the inline SVG icon and never bring it back. withButtonBusy
+    // goes through setButtonLabel, which respects that.
+    const btn = $('mp-recalc-all');
 
-    try {
-      const result = await window.electronAPI.plans.repairAndRecalculate(state.planId, false);
+    await QFUI.withButtonBusy(btn, 'Rebuilding…', async () => {
+      try {
+        const result = await window.electronAPI.plans.repairAndRecalculate(state.planId, false);
 
-      // The handler reports failure in the payload rather than throwing, so a
-      // bare success assumption would show "done" over a plan that never rebuilt.
-      if (!result || !result.success) {
-        throw new Error((result && result.error) || 'Rebuild failed');
-      }
+        // The handler reports failure in the payload rather than throwing, so a
+        // bare success assumption would show "done" over a plan that never rebuilt.
+        if (!result || !result.success) {
+          throw new Error((result && result.error) || 'Rebuild failed');
+        }
 
-      // A rebuild changes quantities everywhere, and this button lives in the
-      // plan header rather than on one tab - so refresh the plan totals AND
-      // whichever tab the user is actually looking at. showTab already owns the
-      // tab -> loader mapping; re-showing the current tab reuses it rather than
-      // duplicating a switch that would drift.
-      await loadPlanData();
-      showTab(state.tab);
+        // A rebuild changes quantities everywhere, and this button lives in the
+        // plan header rather than on one tab - so refresh the plan totals AND
+        // whichever tab the user is actually looking at. showTab already owns the
+        // tab -> loader mapping; re-showing the current tab reuses it rather than
+        // duplicating a switch that would drift.
+        await loadPlanData();
+        showTab(state.tab);
 
-      const repaired = result.facilitiesRepaired || 0;
-      const cleared = result.facilitiesCleared || 0;
-      const parts = [];
-      if (repaired) parts.push(`${repaired} facility snapshot${repaired === 1 ? '' : 's'} refreshed`);
-      if (cleared) parts.push(`${cleared} cleared`);
-      toast(
-        parts.length ? `Plan rebuilt — ${parts.join(', ')}.` : 'Plan rebuilt.',
-        'success'
-      );
-
-      // A facility referenced by the plan but gone from settings leaves those
-      // rows with no bonuses at all - the user has to re-pick one, so say so.
-      if (result.missingFacilities && result.missingFacilities.length > 0) {
+        const repaired = result.facilitiesRepaired || 0;
+        const cleared = result.facilitiesCleared || 0;
+        const parts = [];
+        if (repaired) parts.push(`${repaired} facility snapshot${repaired === 1 ? '' : 's'} refreshed`);
+        if (cleared) parts.push(`${cleared} cleared`);
         toast(
-          `${result.missingFacilities.length} row group(s) reference a facility that no longer `
-          + 'exists. Re-select a facility on those rows.',
-          'warning'
+          parts.length ? `Plan rebuilt — ${parts.join(', ')}.` : 'Plan rebuilt.',
+          'success'
         );
+
+        // A facility referenced by the plan but gone from settings leaves those
+        // rows with no bonuses at all - the user has to re-pick one, so say so.
+        if (result.missingFacilities && result.missingFacilities.length > 0) {
+          toast(
+            `${result.missingFacilities.length} row group(s) reference a facility that no longer `
+            + 'exists. Re-select a facility on those rows.',
+            'warning'
+          );
+        }
+      } catch (error) {
+        console.error('[plans] rebuild plan failed:', error);
+        toast(`Rebuild failed: ${error.message}`, 'error');
       }
-    } catch (error) {
-      console.error('[plans] rebuild plan failed:', error);
-      toast(`Rebuild failed: ${error.message}`, 'error');
-    } finally {
-      if (btn) {
-        btn.disabled = false;
-        if (label && original !== null) label.textContent = original;
-      }
-    }
+    });
   }
 
   function setBulkChrome() {
@@ -2393,7 +2417,7 @@
       } else {
         const remove = el('button', 'mp-link-action mp-link-danger', 'Remove');
         remove.type = 'button';
-        remove.addEventListener('click', () => removeBlueprint(bp));
+        remove.addEventListener('click', () => removeBlueprint(bp, remove));
         actions.appendChild(remove);
       }
 
@@ -2591,17 +2615,19 @@
     });
   }
 
-  async function removeBlueprint(bp) {
-    try {
-      await window.electronAPI.plans.removeBlueprint(bp.planBlueprintId);
-      await loadBlueprintsTab();
-      // Removing a blueprint changes what the plan needs.
-      await loadPlanData();
-      toast('Blueprint removed.', 'success');
-    } catch (error) {
-      console.error('[plans] remove blueprint failed:', error);
-      toast(`Failed to remove blueprint: ${error.message}`, 'error');
-    }
+  async function removeBlueprint(bp, button) {
+    await QFUI.withButtonBusy(button, 'Removing…', async () => {
+      try {
+        await window.electronAPI.plans.removeBlueprint(bp.planBlueprintId);
+        await loadBlueprintsTab();
+        // Removing a blueprint changes what the plan needs.
+        await loadPlanData();
+        toast('Blueprint removed.', 'success');
+      } catch (error) {
+        console.error('[plans] remove blueprint failed:', error);
+        toast(`Failed to remove blueprint: ${error.message}`, 'error');
+      }
+    });
   }
 
   /* --------------------------------------------------------- material tree */
@@ -3224,15 +3250,15 @@
       if (linked) {
         const unlink = el('button', 'mp-link-action mp-link-danger', 'Unlink');
         unlink.type = 'button';
-        unlink.addEventListener('click', () => decideJob(match, 'unlink'));
+        unlink.addEventListener('click', () => decideJob(match, 'unlink', unlink));
         actions.appendChild(unlink);
       } else {
         const confirm = el('button', 'mp-link-action', 'Confirm');
         confirm.type = 'button';
-        confirm.addEventListener('click', () => decideJob(match, 'confirm'));
+        confirm.addEventListener('click', () => decideJob(match, 'confirm', confirm));
         const reject = el('button', 'mp-link-action mp-link-danger', 'Reject');
         reject.type = 'button';
-        reject.addEventListener('click', () => decideJob(match, 'reject'));
+        reject.addEventListener('click', () => decideJob(match, 'reject', reject));
         actions.appendChild(confirm);
         actions.appendChild(reject);
       }
@@ -3324,15 +3350,15 @@
       if (linked) {
         const unlink = el('button', 'mp-link-action mp-link-danger', 'Unlink');
         unlink.type = 'button';
-        unlink.addEventListener('click', () => decideTransaction(match, 'unlink'));
+        unlink.addEventListener('click', () => decideTransaction(match, 'unlink', unlink));
         actions.appendChild(unlink);
       } else {
         const confirm = el('button', 'mp-link-action', 'Confirm');
         confirm.type = 'button';
-        confirm.addEventListener('click', () => decideTransaction(match, 'confirm'));
+        confirm.addEventListener('click', () => decideTransaction(match, 'confirm', confirm));
         const reject = el('button', 'mp-link-action mp-link-danger', 'Reject');
         reject.type = 'button';
-        reject.addEventListener('click', () => decideTransaction(match, 'reject'));
+        reject.addEventListener('click', () => decideTransaction(match, 'reject', reject));
         actions.appendChild(confirm);
         actions.appendChild(reject);
       }
@@ -3363,74 +3389,82 @@
     }
   }
 
-  async function decideJob(match, action) {
+  async function decideJob(match, action, button) {
     const api = window.electronAPI.plans;
     const fn = action === 'confirm' ? api.confirmJobMatch
       : action === 'reject' ? api.rejectJobMatch
         : api.unlinkJobMatch;
-    try {
-      await fn(match.matchId);
-      // Confirming a job changes what the plan has ACTUALLY done, so analytics
-      // and the ledger-backed actuals are stale. Locked prices are not touched.
-      await loadJobs();
-      if (state.tab === 'analytics') await loadAnalytics();
-    } catch (error) {
-      console.error(`[plans] ${action} job match failed:`, error);
-      toast(`Failed to ${action} match: ${error.message}`, 'error');
-    }
+    await QFUI.withButtonBusy(button, DECIDE_LABELS[action], async () => {
+      try {
+        await fn(match.matchId);
+        // Confirming a job changes what the plan has ACTUALLY done, so analytics
+        // and the ledger-backed actuals are stale. Locked prices are not touched.
+        await loadJobs();
+        if (state.tab === 'analytics') await loadAnalytics();
+      } catch (error) {
+        console.error(`[plans] ${action} job match failed:`, error);
+        toast(`Failed to ${action} match: ${error.message}`, 'error');
+      }
+    });
   }
 
-  async function decideTransaction(match, action) {
+  async function decideTransaction(match, action, button) {
     const api = window.electronAPI.plans;
     const fn = action === 'confirm' ? api.confirmTransactionMatch
       : action === 'reject' ? api.rejectTransactionMatch
         : api.unlinkTransactionMatch;
-    try {
-      await fn(match.matchId);
-      await loadTransactions();
-      if (state.tab === 'analytics') await loadAnalytics();
-    } catch (error) {
-      console.error(`[plans] ${action} transaction match failed:`, error);
-      toast(`Failed to ${action} match: ${error.message}`, 'error');
-    }
+    await QFUI.withButtonBusy(button, DECIDE_LABELS[action], async () => {
+      try {
+        await fn(match.matchId);
+        await loadTransactions();
+        if (state.tab === 'analytics') await loadAnalytics();
+      } catch (error) {
+        console.error(`[plans] ${action} transaction match failed:`, error);
+        toast(`Failed to ${action} match: ${error.message}`, 'error');
+      }
+    });
   }
 
   async function runMatchJobs() {
-    try {
-      const matches = await window.electronAPI.plans.matchJobs(state.planId, {});
-      if (matches && matches.length > 0) {
-        await window.electronAPI.plans.saveJobMatches(matches);
+    await QFUI.withButtonBusy($('mp-match-jobs'), 'Matching…', async () => {
+      try {
+        const matches = await window.electronAPI.plans.matchJobs(state.planId, {});
+        if (matches && matches.length > 0) {
+          await window.electronAPI.plans.saveJobMatches(matches);
+        }
+        await loadJobs();
+        toast(
+          matches && matches.length
+            ? `Found ${matches.length} job match${matches.length === 1 ? '' : 'es'}.`
+            : 'No new job matches found.',
+          matches && matches.length ? 'success' : 'info'
+        );
+      } catch (error) {
+        console.error('[plans] match jobs failed:', error);
+        toast(`Failed to match jobs: ${error.message}`, 'error');
       }
-      await loadJobs();
-      toast(
-        matches && matches.length
-          ? `Found ${matches.length} job match${matches.length === 1 ? '' : 'es'}.`
-          : 'No new job matches found.',
-        matches && matches.length ? 'success' : 'info'
-      );
-    } catch (error) {
-      console.error('[plans] match jobs failed:', error);
-      toast(`Failed to match jobs: ${error.message}`, 'error');
-    }
+    });
   }
 
   async function runMatchTransactions() {
-    try {
-      const matches = await window.electronAPI.plans.matchTransactions(state.planId, {});
-      if (matches && matches.length > 0) {
-        await window.electronAPI.plans.saveTransactionMatches(matches);
+    await QFUI.withButtonBusy($('mp-match-transactions'), 'Matching…', async () => {
+      try {
+        const matches = await window.electronAPI.plans.matchTransactions(state.planId, {});
+        if (matches && matches.length > 0) {
+          await window.electronAPI.plans.saveTransactionMatches(matches);
+        }
+        await loadTransactions();
+        toast(
+          matches && matches.length
+            ? `Found ${matches.length} transaction match${matches.length === 1 ? '' : 'es'}.`
+            : 'No new transaction matches found.',
+          matches && matches.length ? 'success' : 'info'
+        );
+      } catch (error) {
+        console.error('[plans] match transactions failed:', error);
+        toast(`Failed to match transactions: ${error.message}`, 'error');
       }
-      await loadTransactions();
-      toast(
-        matches && matches.length
-          ? `Found ${matches.length} transaction match${matches.length === 1 ? '' : 'es'}.`
-          : 'No new transaction matches found.',
-        matches && matches.length ? 'success' : 'info'
-      );
-    } catch (error) {
-      console.error('[plans] match transactions failed:', error);
-      toast(`Failed to match transactions: ${error.message}`, 'error');
-    }
+    });
   }
 
   /* -------------------------------------------------------------- analytics */
@@ -3854,14 +3888,14 @@
         } else if (entry.editable) {
           const remove = el('button', 'mp-link-action mp-link-danger', 'Remove');
           remove.type = 'button';
-          remove.addEventListener('click', () => unlinkLedgerEntry(entry));
+          remove.addEventListener('click', () => unlinkLedgerEntry(entry, remove));
           actions.appendChild(remove);
         } else {
           // An ESI-sourced row records something that happened; it is unlinked
           // from the plan rather than deleted.
           const unlink = el('button', 'mp-link-action mp-link-muted', 'Unlink');
           unlink.type = 'button';
-          unlink.addEventListener('click', () => unlinkLedgerEntry(entry));
+          unlink.addEventListener('click', () => unlinkLedgerEntry(entry, unlink));
           actions.appendChild(unlink);
         }
         row.appendChild(actions);
@@ -3873,17 +3907,19 @@
     });
   }
 
-  async function unlinkLedgerEntry(entry) {
-    try {
-      await window.electronAPI.plans.unlinkLedgerEntry(entry.ledgerId);
-      await loadLedger();
-      // The ledger IS the actuals, so analytics is stale.
-      if (state.tab === 'analytics') await loadAnalytics();
-      toast('Ledger entry removed.', 'success');
-    } catch (error) {
-      console.error('[plans] unlink ledger entry failed:', error);
-      toast(`Failed to remove entry: ${error.message}`, 'error');
-    }
+  async function unlinkLedgerEntry(entry, button) {
+    await QFUI.withButtonBusy(button, 'Removing…', async () => {
+      try {
+        await window.electronAPI.plans.unlinkLedgerEntry(entry.ledgerId);
+        await loadLedger();
+        // The ledger IS the actuals, so analytics is stale.
+        if (state.tab === 'analytics') await loadAnalytics();
+        toast('Ledger entry removed.', 'success');
+      } catch (error) {
+        console.error('[plans] unlink ledger entry failed:', error);
+        toast(`Failed to remove entry: ${error.message}`, 'error');
+      }
+    });
   }
 
   /* --------------------------------------------------------------- settings */
@@ -4255,7 +4291,7 @@
       remove.setAttribute('aria-label', `Remove override for ${typeName(override.typeId)}`);
       remove.title = 'Remove override';
       remove.appendChild(trashIcon());
-      remove.addEventListener('click', () => removeOverride(override));
+      remove.addEventListener('click', () => removeOverride(override, remove));
       actions.appendChild(remove);
       row.appendChild(actions);
 
@@ -4263,18 +4299,21 @@
     });
   }
 
-  async function removeOverride(override) {
-    try {
-      await window.electronAPI.plans.removePriceOverride(state.planId, override.typeId);
-      await loadSettings();
-      // Removing an override restores the locked market snapshot, so the
-      // materials figures change.
-      await loadPlanData();
-      toast('Price override removed.', 'success');
-    } catch (error) {
-      console.error('[plans] remove override failed:', error);
-      toast(`Failed to remove override: ${error.message}`, 'error');
-    }
+  async function removeOverride(override, button) {
+    // Icon-only: the spinner stands in for the trash icon.
+    await QFUI.withButtonBusy(button, null, async () => {
+      try {
+        await window.electronAPI.plans.removePriceOverride(state.planId, override.typeId);
+        await loadSettings();
+        // Removing an override restores the locked market snapshot, so the
+        // materials figures change.
+        await loadPlanData();
+        toast('Price override removed.', 'success');
+      } catch (error) {
+        console.error('[plans] remove override failed:', error);
+        toast(`Failed to remove override: ${error.message}`, 'error');
+      }
+    });
   }
 
   /* ----------------------------------------------------------------- modals */
@@ -4341,16 +4380,21 @@
     const name = $('mp-create-name').value.trim() || null;
     const description = $('mp-create-description').value.trim() || null;
 
-    try {
-      const created = await window.electronAPI.plans.create(state.characterId, name, description);
-      closeModal('mp-create-modal');
-      await loadPlans();
-      if (created && created.planId) await selectPlan(created.planId);
-      toast('Plan created.', 'success');
-    } catch (error) {
-      console.error('[plans] create plan failed:', error);
-      toast(`Failed to create plan: ${error.message}`, 'error');
-    }
+    // Busy-wrapped for the guard as much as the spinner: this awaits three
+    // round trips with the modal still open, and a second click used to create
+    // a second plan.
+    await QFUI.withButtonBusy($('mp-create-confirm'), 'Creating…', async () => {
+      try {
+        const created = await window.electronAPI.plans.create(state.characterId, name, description);
+        closeModal('mp-create-modal');
+        await loadPlans();
+        if (created && created.planId) await selectPlan(created.planId);
+        toast('Plan created.', 'success');
+      } catch (error) {
+        console.error('[plans] create plan failed:', error);
+        toast(`Failed to create plan: ${error.message}`, 'error');
+      }
+    });
   }
 
   /* ---- add cost ---- */
@@ -4369,21 +4413,23 @@
       return;
     }
 
-    try {
-      await window.electronAPI.plans.addLedgerCost(state.planId, {
-        category: $('mp-cost-category').value,
-        amount,
-        note: $('mp-cost-note').value.trim() || null,
-      });
-      closeModal('mp-cost-modal');
-      await loadLedger();
-      // The ledger IS the actuals behind Analytics.
-      if (state.tab === 'analytics') await loadAnalytics();
-      toast('Cost recorded.', 'success');
-    } catch (error) {
-      console.error('[plans] add cost failed:', error);
-      toast(`Failed to add cost: ${error.message}`, 'error');
-    }
+    await QFUI.withButtonBusy($('mp-cost-confirm'), 'Adding…', async () => {
+      try {
+        await window.electronAPI.plans.addLedgerCost(state.planId, {
+          category: $('mp-cost-category').value,
+          amount,
+          note: $('mp-cost-note').value.trim() || null,
+        });
+        closeModal('mp-cost-modal');
+        await loadLedger();
+        // The ledger IS the actuals behind Analytics.
+        if (state.tab === 'analytics') await loadAnalytics();
+        toast('Cost recorded.', 'success');
+      } catch (error) {
+        console.error('[plans] add cost failed:', error);
+        toast(`Failed to add cost: ${error.message}`, 'error');
+      }
+    });
   }
 
   /* ---- mark built ---- */
@@ -4529,27 +4575,29 @@
       return;
     }
 
-    try {
-      // markIntermediateBuilt and markReactionBuilt each reject the other's
-      // type outright, so the blueprint's own type decides which one applies.
-      if (bp.blueprintType === 'reaction') {
-        await window.electronAPI.plans.markReactionBuilt(bp.planBlueprintId, runs);
-      } else {
-        await window.electronAPI.plans.markIntermediateBuilt(bp.planBlueprintId, runs);
+    await QFUI.withButtonBusy($('mp-built-confirm'), 'Saving…', async () => {
+      try {
+        // markIntermediateBuilt and markReactionBuilt each reject the other's
+        // type outright, so the blueprint's own type decides which one applies.
+        if (bp.blueprintType === 'reaction') {
+          await window.electronAPI.plans.markReactionBuilt(bp.planBlueprintId, runs);
+        } else {
+          await window.electronAPI.plans.markIntermediateBuilt(bp.planBlueprintId, runs);
+        }
+
+        closeModal('mp-built-modal');
+
+        // Marking runs built credits the materials they consumed, so the
+        // materials and summary are stale the moment this succeeds.
+        // loadPlanData refreshes both, and the reactions tab with them.
+        await loadBlueprintsTab();
+        await loadPlanData();
+        toast('Built quantity updated.', 'success');
+      } catch (error) {
+        console.error('[plans] mark built failed:', error);
+        toast(`Failed to update built quantity: ${error.message}`, 'error');
       }
-
-      closeModal('mp-built-modal');
-
-      // Marking runs built credits the materials they consumed, so the
-      // materials and summary are stale the moment this succeeds.
-      // loadPlanData refreshes both, and the reactions tab with them.
-      await loadBlueprintsTab();
-      await loadPlanData();
-      toast('Built quantity updated.', 'success');
-    } catch (error) {
-      console.error('[plans] mark built failed:', error);
-      toast(`Failed to update built quantity: ${error.message}`, 'error');
-    }
+    });
   }
 
   /* ---- acquire item ---- */
@@ -4593,23 +4641,25 @@
     const priceInput = $('mp-acquire-price').value.trim();
     const unitPrice = priceInput === '' ? null : parseFloat(priceInput);
 
-    try {
-      await window.electronAPI.plans.addItemAcquisition(state.planId, state.acquireTypeId, {
-        quantity,
-        unitPrice: Number.isFinite(unitPrice) ? unitPrice : null,
-        note: $('mp-acquire-note').value.trim() || null,
-      });
-      closeModal('mp-acquire-modal');
-      await loadLedger();
-      // Acquiring changes what is still needed on the shopping list.
-      await loadPlanData();
-      toast('Acquisition recorded.', 'success');
-    } catch (error) {
-      // The backend rejects over-acquiring, and that message is worth showing
-      // verbatim rather than replacing with something generic.
-      console.error('[plans] acquire failed:', error);
-      toast(`Failed to record: ${error.message}`, 'error');
-    }
+    await QFUI.withButtonBusy($('mp-acquire-confirm'), 'Recording…', async () => {
+      try {
+        await window.electronAPI.plans.addItemAcquisition(state.planId, state.acquireTypeId, {
+          quantity,
+          unitPrice: Number.isFinite(unitPrice) ? unitPrice : null,
+          note: $('mp-acquire-note').value.trim() || null,
+        });
+        closeModal('mp-acquire-modal');
+        await loadLedger();
+        // Acquiring changes what is still needed on the shopping list.
+        await loadPlanData();
+        toast('Acquisition recorded.', 'success');
+      } catch (error) {
+        // The backend rejects over-acquiring, and that message is worth showing
+        // verbatim rather than replacing with something generic.
+        console.error('[plans] acquire failed:', error);
+        toast(`Failed to record: ${error.message}`, 'error');
+      }
+    });
   }
 
   /* ---- add blueprint ---- */
@@ -4713,25 +4763,27 @@
       return;
     }
 
-    try {
-      await window.electronAPI.plans.addBlueprint(state.planId, {
-        blueprintTypeId: state.blueprintTypeId,
-        runs: parseInt($('mp-blueprint-runs').value, 10) || 1,
-        // The handler destructures `lines`. Sent as `productionLines` this
-        // was never read, so the Production Lines input silently did nothing
-        // and every blueprint went in on a single line.
-        lines: parseInt($('mp-blueprint-lines').value, 10) || 1,
-        meLevel: parseInt($('mp-blueprint-me').value, 10) || 0,
-        teLevel: parseInt($('mp-blueprint-te').value, 10) || 0,
-      });
-      closeModal('mp-blueprint-modal');
-      await loadPlanData();
-      await loadBlueprintsTab();
-      toast('Blueprint added.', 'success');
-    } catch (error) {
-      console.error('[plans] add blueprint failed:', error);
-      toast(`Failed to add blueprint: ${error.message}`, 'error');
-    }
+    await QFUI.withButtonBusy($('mp-blueprint-confirm'), 'Adding…', async () => {
+      try {
+        await window.electronAPI.plans.addBlueprint(state.planId, {
+          blueprintTypeId: state.blueprintTypeId,
+          runs: parseInt($('mp-blueprint-runs').value, 10) || 1,
+          // The handler destructures `lines`. Sent as `productionLines` this
+          // was never read, so the Production Lines input silently did nothing
+          // and every blueprint went in on a single line.
+          lines: parseInt($('mp-blueprint-lines').value, 10) || 1,
+          meLevel: parseInt($('mp-blueprint-me').value, 10) || 0,
+          teLevel: parseInt($('mp-blueprint-te').value, 10) || 0,
+        });
+        closeModal('mp-blueprint-modal');
+        await loadPlanData();
+        await loadBlueprintsTab();
+        toast('Blueprint added.', 'success');
+      } catch (error) {
+        console.error('[plans] add blueprint failed:', error);
+        toast(`Failed to add blueprint: ${error.message}`, 'error');
+      }
+    });
   }
 
   /* ------------------------------------------------------------------ tabs */

@@ -553,9 +553,9 @@
 
   async function handleRefresh() {
     if (!els.refreshBtn) return;
-    // Already in flight - the label is the source of truth here, since the
-    // button is no longer disabled while merely gated.
-    if (els.refreshLabel.textContent === 'Refreshing…') return;
+    // Already in flight. withButtonBusy guards this too; returning here keeps
+    // the gated check below from firing on a second click.
+    if (QFUI.isBusy(els.refreshBtn)) return;
 
     // Gated by the ESI cache. Say so immediately rather than round-tripping to
     // main just to be told the same thing.
@@ -569,36 +569,34 @@
       return;
     }
 
-    els.refreshBtn.disabled = true;
-    els.refreshLabel.textContent = 'Refreshing…';
+    await QFUI.withButtonBusy(els.refreshBtn, 'Refreshing…', async () => {
+      try {
+        const result = await window.electronAPI.skills.fetch(state.characterId);
+        if (!result || !result.success) {
+          throw new Error((result && result.error) || 'Unknown error');
+        }
 
-    try {
-      const result = await window.electronAPI.skills.fetch(state.characterId);
-      if (!result || !result.success) {
-        throw new Error((result && result.error) || 'Unknown error');
+        // Gated: ESI was never asked, so the stored skills are unchanged and
+        // still correct. Reloading would be harmless but claiming a refresh
+        // would not be.
+        if (result.skipped) {
+          toast(result.reason || 'Skills are already up to date', 'info');
+          return;
+        }
+
+        state.character = await window.electronAPI.esi.getCharacter(state.characterId);
+        await loadSkills();
+        toast('Skills refreshed', 'success');
+      } catch (error) {
+        console.error('[skills] Refresh failed:', error);
+        toast(`Failed to refresh skills: ${error.message}`, 'error');
       }
+    });
 
-      // Gated: ESI was never asked, so the stored skills are unchanged and
-      // still correct. Reloading would be harmless but claiming a refresh
-      // would not be.
-      if (result.skipped) {
-        toast(result.reason || 'Skills are already up to date', 'info');
-        return;
-      }
-
-      state.character = await window.electronAPI.esi.getCharacter(state.characterId);
-      await loadSkills();
-      toast('Skills refreshed', 'success');
-    } catch (error) {
-      console.error('[skills] Refresh failed:', error);
-      toast(`Failed to refresh skills: ${error.message}`, 'error');
-    } finally {
-      els.refreshBtn.disabled = false;
-      els.refreshLabel.textContent = 'Refresh from API';
-      // Re-sync: a successful fetch starts a fresh cache window, so this
-      // immediately re-applies `is-gated` and the countdown label.
-      startCacheCountdown();
-    }
+    // Re-sync AFTER the busy restore: a successful fetch starts a fresh cache
+    // window, and this re-applies `is-gated` and the countdown label. Run
+    // inside the busy window it would be overwritten by the restore.
+    startCacheCountdown();
   }
 
   // --------------------------------------------------------- cache display
@@ -633,7 +631,10 @@
         //
         // `is-gated` styles it as unavailable without removing the click.
         els.refreshBtn.classList.toggle('is-gated', cached);
-        els.refreshLabel.textContent = cached ? `Cached (${label})` : 'Refresh from API';
+        // Ticks once a second, so it must not stomp the in-flight label.
+        if (!QFUI.isBusy(els.refreshBtn)) {
+          els.refreshLabel.textContent = cached ? `Cached (${label})` : 'Refresh from API';
+        }
         els.refreshBtn.title = cached
           ? `ESI has no newer skills yet - cache expires in ${label}`
           : 'Fetch the latest skills from ESI';

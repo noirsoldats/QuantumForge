@@ -934,10 +934,11 @@
           ? `ESI has no newer assets yet - cache expires in ${label}`
           : 'Fetch the latest assets from ESI';
 
-        // Never stomp the in-flight label: render() keeps ticking once a
-        // second while a fetch is running, and would otherwise overwrite
-        // "Refreshing…" on the very next tick.
-        if (els.refreshLabel && els.refreshLabel.textContent !== 'Refreshing…') {
+        // Never stomp the in-flight label: this ticks once a second while a
+        // fetch is running, and would otherwise overwrite "Refreshing…" on the
+        // very next tick. Ask the busy flag rather than comparing the caption -
+        // matching on text broke silently whenever the wording changed.
+        if (els.refreshLabel && !QFUI.isBusy(els.refreshBtn)) {
           els.refreshLabel.textContent = cached ? `Cached (${label})` : 'Refresh from API';
         }
       },
@@ -950,9 +951,9 @@
 
   async function handleRefresh() {
     if (!els.refreshBtn) return;
-    // Already in flight - the label is the source of truth here, since the
-    // button is no longer disabled while merely gated.
-    if (els.refreshLabel.textContent === 'Refreshing…') return;
+    // Already in flight. withButtonBusy also guards this internally; the early
+    // return keeps the gated check below from firing on a second click.
+    if (QFUI.isBusy(els.refreshBtn)) return;
 
     // Gated by the ESI cache. Say so immediately rather than round-tripping to
     // main just to be told the same thing.
@@ -966,35 +967,31 @@
       return;
     }
 
-    els.refreshBtn.disabled = true;
-    els.refreshLabel.textContent = 'Refreshing…';
+    await QFUI.withButtonBusy(els.refreshBtn, 'Refreshing…', async () => {
+      try {
+        const result = await window.electronAPI.assets.fetch(state.characterId);
 
-    try {
-      const result = await window.electronAPI.assets.fetch(state.characterId);
+        // Gated: ESI was never asked, so the stored assets are unchanged and
+        // still correct. Claiming a refresh would be a lie.
+        if (result && result.skipped) {
+          toast(result.reason || 'Assets are already up to date', 'info');
+          return;
+        }
 
-      // Gated: ESI was never asked, so the stored assets are unchanged and
-      // still correct. Claiming a refresh would be a lie.
-      if (result && result.skipped) {
-        toast(result.reason || 'Assets are already up to date', 'info');
-        return;
+        await loadAssets();
+        toast('Assets refreshed', 'success');
+      } catch (error) {
+        console.error('[assets] Refresh failed:', error);
+        // The old screen used alert(), which under the shell freezes the whole
+        // window behind a modal dialog.
+        toast(`Failed to refresh assets: ${error.message}`, 'error');
       }
+    });
 
-      await loadAssets();
-      toast('Assets refreshed', 'success');
-    } catch (error) {
-      console.error('[assets] Refresh failed:', error);
-      // The old screen used alert(), which under the shell freezes the whole
-      // window behind a modal dialog.
-      toast(`Failed to refresh assets: ${error.message}`, 'error');
-    } finally {
-      els.refreshBtn.disabled = false;
-      // Clear the in-flight label FIRST: render() refuses to overwrite
-      // "Refreshing…", so leaving it set would freeze the button's text.
-      els.refreshLabel.textContent = 'Refresh from API';
-      // Re-sync: a successful fetch opens a fresh cache window, so this
-      // immediately re-applies `is-gated` and the countdown label.
-      startCacheCountdown();
-    }
+    // After the restore, not inside it: startCacheCountdown rewrites the label
+    // to the countdown, and withButtonBusy would otherwise put the old caption
+    // back over the top of it.
+    startCacheCountdown();
   }
 
   function exportCsv() {

@@ -500,6 +500,75 @@
 }
 
 
+/* ---- Spinner (the canonical one) ----
+
+   Nine near-identical copies of this recipe exist across the view stylesheets
+   (as-spin, bp-spin, sk-spin, rx-spin, bpc-spin, la-spin, settingsSpin, plus
+   two bare `spin`). This is the shared version; prefer it in new work.
+
+   The keyframe name is PREFIXED deliberately: splash.css and wizard.css each
+   define a global `@keyframes spin`, and those documents would collide with an
+   unprefixed name if they ever load this file.
+
+   Duration is a literal, not a token: --qf-transition-* bake in their easing
+   ("0.15s ease") and so cannot be used in an `animation` shorthand. */
+
+@keyframes qf-spin {
+  to { transform: rotate(360deg); }
+}
+
+.qf-spinner {
+  display: inline-block;
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--qf-border);
+  border-top-color: var(--qf-accent);
+  border-radius: 50%;
+  animation: qf-spin 0.7s linear infinite;
+}
+
+.qf-spinner-sm {
+  width: 12px;
+  height: 12px;
+  border-width: 1.5px;
+}
+
+/* ---- Busy button ----
+
+   Set by QFUI.withButtonBusy()/setBusy() while an action is in flight. The
+   button is also `disabled` to block double-submits, so this has to undo the
+   dimming from `.btn:disabled` above - at 45% opacity the spinner is close to
+   invisible, which defeats the point. The muted look comes from the cursor and
+   the label colour instead. */
+
+.btn.is-busy:disabled {
+  opacity: 1;
+  cursor: progress;
+  /* `.btn:disabled` sets pointer-events: none, which would also kill the
+     `progress` cursor. Put it back - the button is guarded in JS, not by CSS. */
+  pointer-events: auto;
+  color: var(--qf-text-muted);
+}
+
+/* The spinner keeps full contrast even though the button is muted. */
+.btn.is-busy .qf-spinner {
+  border-top-color: var(--qf-accent);
+}
+
+/* Icons hide while busy so the spinner reads as the button's one status glyph
+   rather than competing with a second icon. */
+.btn.is-busy > svg {
+  display: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .qf-spinner {
+    animation-duration: 2.4s;
+  }
+}
+
+
 /* ---- Loading Skeleton ---- */
 
 .skeleton {

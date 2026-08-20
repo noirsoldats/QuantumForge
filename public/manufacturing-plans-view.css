@@ -330,6 +330,23 @@
   color: var(--qf-error);
 }
 
+/* Icon buttons are not `.btn`, so they inherit neither the disabled dimming
+   nor the busy state from components.css. */
+#mp-view .mp-icon-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+#mp-view .mp-icon-btn.is-busy:disabled {
+  opacity: 1;
+  cursor: progress;
+}
+
+/* The spinner stands in for the icon, which is hidden while busy. */
+#mp-view .mp-icon-btn.is-busy > svg {
+  display: none;
+}
+
 /* ---------------------------------------------------------- tab strip */
 
 #mp-view .mp-tabstrip {
@@ -1185,6 +1202,23 @@
 
 #mp-view .mp-link-action.mp-link-danger {
   color: var(--qf-error);
+}
+
+/* Row Save/Edit links are inline text buttons, so the spinner has to sit on
+   the text baseline rather than fill a square. */
+#mp-view .mp-link-action.is-busy {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--qf-text-muted);
+  cursor: progress;
+  opacity: 1;
+}
+
+#mp-view .mp-link-action.is-busy .qf-spinner {
+  width: 10px;
+  height: 10px;
+  border-width: 1.5px;
 }
 
 /* Build-plan badge (raw materials / components / buy). */

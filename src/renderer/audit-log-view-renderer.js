@@ -572,17 +572,19 @@
     });
 
     ctx.on(els.clearBtn, 'click', async () => {
-      try {
-        await window.electronAPI.audit.clearRecords();
-      } catch (error) {
-        console.error('[Audit Log] Error clearing records:', error);
-        return;
-      }
-      state.records = [];
-      state.selectedId = null;
-      renderTable();
-      renderDetail();
-      updateSummary();
+      await QFUI.withButtonBusy(els.clearBtn, 'Clearing…', async () => {
+        try {
+          await window.electronAPI.audit.clearRecords();
+        } catch (error) {
+          console.error('[Audit Log] Error clearing records:', error);
+          return;
+        }
+        state.records = [];
+        state.selectedId = null;
+        renderTable();
+        renderDetail();
+        updateSummary();
+      });
     });
 
     ctx.on(els.settingsBtn, 'click', () => window.electronAPI.openSettings());

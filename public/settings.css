@@ -412,6 +412,22 @@
   cursor: not-allowed;
 }
 
+/* Busy state. These selectors are scoped to #settings-app, so they match
+   neither `.btn.is-busy` in components.css nor the unscoped copy in
+   styles.css - the rule has to be repeated here. Full opacity keeps the
+   spinner legible; at 45% it is close to invisible. */
+#settings-app .primary-button.is-busy:disabled,
+#settings-app .secondary-button.is-busy:disabled {
+  opacity: 1;
+  cursor: progress;
+  color: var(--qf-text-muted);
+}
+
+#settings-app .primary-button.is-busy > svg,
+#settings-app .secondary-button.is-busy > svg {
+  display: none;
+}
+
 #settings-app .primary-button:focus-visible,
 #settings-app .secondary-button:focus-visible {
   outline: none;

@@ -1143,21 +1143,29 @@
       if (Number.isFinite(tax)) payload.facilityTax = tax;
     }
 
-    try {
-      if (state.editingId) {
-        await window.electronAPI.facilities.updateFacility(state.editingId, payload);
-        toast('Facility updated.', 'success');
-      } else {
-        await window.electronAPI.facilities.addFacility(payload);
-        toast('Facility added.', 'success');
+    await QFUI.withButtonBusy($('fac-submit'), 'Saving…', async () => {
+      try {
+        if (state.editingId) {
+          await window.electronAPI.facilities.updateFacility(state.editingId, payload);
+          toast('Facility updated.', 'success');
+        } else {
+          await window.electronAPI.facilities.addFacility(payload);
+          toast('Facility added.', 'success');
+        }
+        clearForm();
+        await loadFacilities();
+      } catch (error) {
+        // main's message names the conflicting facility, so surface it verbatim.
+        console.error('[facilities] save failed:', error);
+        toast(error.message || 'Failed to save facility.', 'error');
       }
-      clearForm();
-      await loadFacilities();
-    } catch (error) {
-      // main's message names the conflicting facility, so surface it verbatim.
-      console.error('[facilities] save failed:', error);
-      toast(error.message || 'Failed to save facility.', 'error');
-    }
+    });
+
+    // This button's caption is STATE - "Add Facility" on a blank form, "Save
+    // Facility" while editing. clearForm() set it correctly inside the busy
+    // window, but the busy restore then put the pre-click caption back, which
+    // would leave "Save Facility" sitting over an empty form. Re-sync here.
+    $('fac-submit').textContent = state.editingId ? 'Save Facility' : 'Add Facility';
   }
 
   /**
@@ -1751,11 +1759,16 @@
 
     const failures = [];
     let imported = 0;
+    const importBtn = $('fac-rav-confirm');
 
+    await QFUI.withButtonBusy(importBtn, 'Importing…', async () => {
     // One call per row, each in its own try/catch: settings-manager THROWS on
     // a duplicate name or a second Default, and one bad row must not abort
     // the rest of the batch.
+    let processed = 0;
     for (const row of rows) {
+      QFUI.setButtonLabel(importBtn, `Importing ${processed + 1}/${rows.length}…`);
+      processed += 1;
       const system = state.allSystems.find(
         (s) => String(s.systemId) === String(row.systemId)
       );
@@ -1795,6 +1808,7 @@
     const summary = [`Imported ${imported} facilit${imported === 1 ? 'y' : 'ies'}.`]
       .concat(failures);
     toast(summary.join(' '), failures.length > 0 ? 'warning' : 'success');
+    });
   }
 
   /* ------------------------------------------------------------------ mount */

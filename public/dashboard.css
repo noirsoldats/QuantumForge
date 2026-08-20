@@ -154,6 +154,27 @@
 
 .dash-tile-action:hover { color: var(--qf-accent-bright); }
 
+.dash-tile-action:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* Small inline text button, so the spinner sits on the text baseline. */
+.dash-tile-action.is-busy:disabled {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  opacity: 1;
+  cursor: progress;
+  color: var(--qf-text-muted);
+}
+
+.dash-tile-action.is-busy .qf-spinner {
+  width: 10px;
+  height: 10px;
+  border-width: 1.5px;
+}
+
 .dash-tile-action:focus-visible {
   outline: none;
   box-shadow: var(--qf-focus-ring);

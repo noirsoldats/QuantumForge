@@ -433,20 +433,17 @@
     const connectBtn = document.getElementById('ch-connect-btn');
     if (connectBtn) {
       connectBtn.addEventListener('click', async () => {
-        connectBtn.disabled = true;
-        QFUI.setButtonLabel(connectBtn, 'Authenticating...');
-        try {
-          const result = await window.electronAPI.esi.authenticate();
-          if (!result || !result.success) {
-            console.error('[character-hub] authentication failed:', result && result.error);
+        await QFUI.withButtonBusy(connectBtn, 'Authenticating…', async () => {
+          try {
+            const result = await window.electronAPI.esi.authenticate();
+            if (!result || !result.success) {
+              console.error('[character-hub] authentication failed:', result && result.error);
+            }
+            await render();
+          } catch (error) {
+            console.error('[character-hub] authentication error:', error);
           }
-          await render();
-        } catch (error) {
-          console.error('[character-hub] authentication error:', error);
-        } finally {
-          connectBtn.disabled = false;
-          QFUI.setButtonLabel(connectBtn, 'Connect Character');
-        }
+        });
       });
     }
 

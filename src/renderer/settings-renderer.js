@@ -252,28 +252,23 @@ async function initSettingsMain() {
   if (connectCharacterBtn) {
     connectCharacterBtn.addEventListener('click', async () => {
       console.log('Connect Character clicked');
-      connectCharacterBtn.disabled = true;
-      QFUI.setButtonLabel(connectCharacterBtn, 'Authenticating...');
-
-      try {
-        const result = await window.electronAPI.esi.authenticate();
-        if (result.success) {
-          console.log('Character connected:', result.character);
-          await loadCharacters();
-        } else {
-          console.error('Authentication failed:', result.error);
-          alert(`Authentication failed: ${result.error}`);
+      // withButtonBusy restores the label it captured, so the icon in the
+      // markup stays intact rather than being re-emitted from JS.
+      await QFUI.withButtonBusy(connectCharacterBtn, 'Authenticating…', async () => {
+        try {
+          const result = await window.electronAPI.esi.authenticate();
+          if (result.success) {
+            console.log('Character connected:', result.character);
+            await loadCharacters();
+          } else {
+            console.error('Authentication failed:', result.error);
+            alert(`Authentication failed: ${result.error}`);
+          }
+        } catch (error) {
+          console.error('Error during authentication:', error);
+          alert('An error occurred during authentication. Please try again.');
         }
-      } catch (error) {
-        console.error('Error during authentication:', error);
-        alert('An error occurred during authentication. Please try again.');
-      } finally {
-        connectCharacterBtn.disabled = false;
-        // Restore only the label - the icon in the markup is left intact
-        // rather than re-emitting markup from JS (which used to overwrite any
-        // changes made to the button in the HTML).
-        QFUI.setButtonLabel(connectCharacterBtn, 'Connect Character');
-      }
+      });
     });
   }
 
@@ -926,11 +921,14 @@ async function fetchCharacterDivisionNames(characterId) {
   const originalHTML = fetchBtn.innerHTML;
 
   try {
-    // Disable button and show loading
+    // Disable button and show loading. This one restores the whole innerHTML
+    // rather than using withButtonBusy, because the button's content is
+    // rebuilt wholesale; the spinner is the shared one either way.
     fetchBtn.disabled = true;
+    fetchBtn.classList.add('is-busy');
     fetchBtn.innerHTML = `
-      <div class="spinner small"></div>
-      Fetching...
+      <span class="qf-spinner qf-spinner-sm" aria-hidden="true"></span>
+      Fetching…
     `;
 
     // Fetch from ESI
@@ -968,6 +966,7 @@ async function fetchCharacterDivisionNames(characterId) {
   } finally {
     // Re-enable button
     fetchBtn.disabled = false;
+    fetchBtn.classList.remove('is-busy');
     fetchBtn.innerHTML = originalHTML;
   }
 }
@@ -1296,19 +1295,9 @@ function updateSdeUI(status, validationStatus, hasBackup, backupVersion) {
 // Check for SDE updates
 async function checkSdeUpdate() {
   const checkBtn = document.getElementById('sde-check-btn');
-  if (checkBtn) {
-    checkBtn.disabled = true;
-    QFUI.setButtonLabel(checkBtn, 'Checking...');
-  }
-
-  try {
+  await QFUI.withButtonBusy(checkBtn, 'Checking…', async () => {
     await loadSdeStatus();
-  } finally {
-    if (checkBtn) {
-      checkBtn.disabled = false;
-      QFUI.setButtonLabel(checkBtn, 'Check for Updates');
-    }
-  }
+  });
 }
 
 // Download SDE
@@ -1391,11 +1380,9 @@ async function downloadSde() {
 async function validateCurrentSde() {
   const validateBtn = document.getElementById('sde-validate-btn');
 
-  if (validateBtn) {
-    validateBtn.disabled = true;
-    const originalText = QFUI.getButtonLabel(validateBtn);
-    QFUI.setButtonLabel(validateBtn, 'Validating...');
+  if (!validateBtn) return;
 
+  await QFUI.withButtonBusy(validateBtn, 'Validating…', async () => {
     try {
       const result = await window.electronAPI.sde.validateCurrent();
 
@@ -1407,11 +1394,8 @@ async function validateCurrentSde() {
     } catch (error) {
       console.error('Validation error:', error);
       alert(`Validation failed: ${error.message}`);
-    } finally {
-      validateBtn.disabled = false;
-      QFUI.setButtonLabel(validateBtn, originalText);
     }
-  }
+  });
 }
 
 // Restore backup SDE
@@ -1425,11 +1409,9 @@ async function restoreBackupSde() {
     return;
   }
 
-  if (restoreBtn) {
-    restoreBtn.disabled = true;
-    const originalText = QFUI.getButtonLabel(restoreBtn);
-    QFUI.setButtonLabel(restoreBtn, 'Restoring...');
+  if (!restoreBtn) return;
 
+  await QFUI.withButtonBusy(restoreBtn, 'Restoring…', async () => {
     try {
       const result = await window.electronAPI.sde.restoreBackup();
 
@@ -1444,11 +1426,8 @@ async function restoreBackupSde() {
     } catch (error) {
       console.error('Restore error:', error);
       alert(`Restore failed: ${error.message}`);
-    } finally {
-      restoreBtn.disabled = false;
-      QFUI.setButtonLabel(restoreBtn, originalText);
     }
-  }
+  });
 }
 
 // Show validation results in modal
@@ -1606,43 +1585,45 @@ async function updateCostIndices() {
   const updateBtn = document.getElementById('cost-indices-update-btn');
   if (!updateBtn) return;
 
-  updateBtn.disabled = true;
-  QFUI.setButtonLabel(updateBtn, 'Updating...');
+  // Only the fetch is busy-wrapped: the success path deliberately holds an
+  // "Updated!" confirmation for two seconds afterwards, which is a separate
+  // state from "in flight" and must survive the busy restore.
+  let outcome = null;
 
-  try {
-    const result = await window.electronAPI.costIndices.fetch();
+  await QFUI.withButtonBusy(updateBtn, 'Updating…', async () => {
+    try {
+      const result = await window.electronAPI.costIndices.fetch();
 
-    if (result.success) {
-      // Show success state (label only - the icon stays put)
-      QFUI.setButtonLabel(updateBtn, 'Updated!');
-
-      // Reload status
-      await loadCostIndicesStatus();
-
-      // Show success message
-      setTimeout(() => {
-        alert(`Successfully updated cost indices for ${result.systemCount.toLocaleString()} solar systems!`);
-      }, 100);
-
-      // Reset button after 2 seconds
-      setTimeout(() => {
-        updateBtn.disabled = false;
-        QFUI.setButtonLabel(updateBtn, 'Update Cost Indices');
-      }, 2000);
-    } else {
-      // Show error
-      alert(`Failed to update cost indices: ${result.error}`);
-
-      updateBtn.disabled = false;
-      QFUI.setButtonLabel(updateBtn, 'Update Cost Indices');
+      if (result.success) {
+        outcome = result;
+        // Reload status
+        await loadCostIndicesStatus();
+      } else {
+        // Show error
+        alert(`Failed to update cost indices: ${result.error}`);
+      }
+    } catch (error) {
+      console.error('Error updating cost indices:', error);
+      alert(`Error updating cost indices: ${error.message}`);
     }
-  } catch (error) {
-    console.error('Error updating cost indices:', error);
-    alert(`Error updating cost indices: ${error.message}`);
+  });
 
+  if (!outcome) return;
+
+  // Show success state (label only - the icon stays put)
+  updateBtn.disabled = true;
+  QFUI.setButtonLabel(updateBtn, 'Updated!');
+
+  // Show success message
+  setTimeout(() => {
+    alert(`Successfully updated cost indices for ${outcome.systemCount.toLocaleString()} solar systems!`);
+  }, 100);
+
+  // Reset button after 2 seconds
+  setTimeout(() => {
     updateBtn.disabled = false;
     QFUI.setButtonLabel(updateBtn, 'Update Cost Indices');
-  }
+  }, 2000);
 }
 
 function initializeCostIndicesControls() {

@@ -27,6 +27,9 @@ const VIEW_HTML = fs.readFileSync(
 );
 
 require('../../public/shared/qf-search-select.js');
+// Sets window.QFUI, the same way index.html loads it before every view
+// renderer. The renderer calls QFUI.withButtonBusy on its action buttons.
+require('../../public/shared/ui-helpers.js');
 // Sets window.QFFacilityImport, the same way index.html loads it before the
 // view renderer. Without it both import buttons no-op.
 require('../../src/renderer/facility-import-parsers.js');

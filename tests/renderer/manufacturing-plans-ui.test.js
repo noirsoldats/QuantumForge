@@ -23,6 +23,10 @@ const VIEW_HTML = fs.readFileSync(
 );
 
 require('../../public/shared/qf-search-select.js');
+// Sets window.QFUI, the same way index.html loads it before every view
+// renderer. The renderers call QFUI.withButtonBusy on each action button, so
+// without this every click handler throws ReferenceError.
+require('../../public/shared/ui-helpers.js');
 
 let characters;
 let plans;

@@ -869,7 +869,7 @@
 
   async function handleRefresh() {
     if (!els.refreshBtn) return;
-    if (els.refreshLabel.textContent === 'Refreshing…') return;
+    if (QFUI.isBusy(els.refreshBtn)) return;
 
     // Gated by the ESI cache. Say so immediately rather than round-tripping to
     // main just to be told the same thing.
@@ -883,31 +883,30 @@
       return;
     }
 
-    els.refreshBtn.disabled = true;
-    els.refreshLabel.textContent = 'Refreshing…';
+    await QFUI.withButtonBusy(els.refreshBtn, 'Refreshing…', async () => {
+      try {
+        const result = await window.electronAPI.blueprints.fetch(state.characterId);
+        if (!result || !result.success) {
+          throw new Error((result && result.error) || 'Unknown error');
+        }
 
-    try {
-      const result = await window.electronAPI.blueprints.fetch(state.characterId);
-      if (!result || !result.success) {
-        throw new Error((result && result.error) || 'Unknown error');
+        // Gated: ESI was never asked, so the stored blueprints are unchanged.
+        if (result.skipped) {
+          toast(result.reason || 'Blueprints are already up to date', 'info');
+          return;
+        }
+
+        await loadBlueprints();
+        toast('Blueprints refreshed', 'success');
+      } catch (error) {
+        console.error('[blueprints] Refresh failed:', error);
+        toast(`Failed to refresh blueprints: ${error.message}`, 'error');
       }
+    });
 
-      // Gated: ESI was never asked, so the stored blueprints are unchanged.
-      if (result.skipped) {
-        toast(result.reason || 'Blueprints are already up to date', 'info');
-        return;
-      }
-
-      await loadBlueprints();
-      toast('Blueprints refreshed', 'success');
-    } catch (error) {
-      console.error('[blueprints] Refresh failed:', error);
-      toast(`Failed to refresh blueprints: ${error.message}`, 'error');
-    } finally {
-      els.refreshBtn.disabled = false;
-      els.refreshLabel.textContent = 'Refresh from API';
-      startCacheCountdown();
-    }
+    // After the restore: startCacheCountdown rewrites the label, and the busy
+    // restore would otherwise land on top of it.
+    startCacheCountdown();
   }
 
   /**
@@ -930,7 +929,12 @@
       render: ({ cached, label }) => {
         if (!els.refreshBtn) return;
         els.refreshBtn.classList.toggle('is-gated', cached);
-        els.refreshLabel.textContent = cached ? `Cached (${label})` : 'Refresh from API';
+        // This ticks once a second, so it must not stomp the in-flight label
+        // while a refresh is running (Assets already guarded this; here it did
+        // not, so the busy label was overwritten within a second).
+        if (!QFUI.isBusy(els.refreshBtn)) {
+          els.refreshLabel.textContent = cached ? `Cached (${label})` : 'Refresh from API';
+        }
         els.refreshBtn.title = cached
           ? `ESI has no newer blueprints yet - cache expires in ${label}`
           : 'Fetch the latest blueprints from ESI';

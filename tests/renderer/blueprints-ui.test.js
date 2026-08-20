@@ -37,6 +37,11 @@ const VIEW_CSS = fs.readFileSync(
   'utf8'
 );
 
+// Sets window.QFUI, the same way index.html loads it before every view
+// renderer. The renderer calls QFUI.withButtonBusy/isBusy on the refresh
+// button, so without this the handler throws ReferenceError.
+require('../../public/shared/ui-helpers.js');
+
 /* --------------------------------------------------------------- fixtures */
 
 let character;

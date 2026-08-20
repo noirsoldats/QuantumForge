@@ -455,11 +455,10 @@ async function refreshMarketData() {
   if (marketRefreshInFlight) return;
   marketRefreshInFlight = true;
 
+  // setBusy rather than a raw textContent write: this button has no icon
+  // today, but textContent is the call that deletes one if it ever gains it.
   const btn = document.getElementById('tile-market-refresh');
-  if (btn) {
-    btn.disabled = true;
-    btn.textContent = 'Refreshing…';
-  }
+  QFUI.setBusy(btn, true, 'Refreshing…');
 
   // Start indeterminate: the first progress event only arrives once page
   // fetching begins, and some steps report no progress at all.
@@ -533,10 +532,7 @@ async function refreshMarketData() {
       loadMarketTile();
     }, 1200);
 
-    if (btn) {
-      btn.disabled = false;
-      btn.textContent = 'Refresh';
-    }
+    QFUI.setBusy(btn, false);
     marketRefreshInFlight = false;
   }
 }
@@ -974,17 +970,15 @@ document.addEventListener('DOMContentLoaded', async () => {
     const refreshBtn = document.getElementById('dash-refresh-all');
     if (refreshBtn) {
       refreshBtn.addEventListener('click', async () => {
-        refreshBtn.disabled = true;
-        QFUI.setButtonLabel(refreshBtn, 'Refreshing…');
-        try {
-          await window.electronAPI.esi.refreshGlobalNow();
-        } catch (error) {
-          console.error('Industry refresh failed:', error);
-        } finally {
-          await refreshDashboard();
-          QFUI.setButtonLabel(refreshBtn, 'Refresh Industry Data');
-          refreshBtn.disabled = false;
-        }
+        await QFUI.withButtonBusy(refreshBtn, 'Refreshing…', async () => {
+          try {
+            await window.electronAPI.esi.refreshGlobalNow();
+          } catch (error) {
+            console.error('Industry refresh failed:', error);
+          } finally {
+            await refreshDashboard();
+          }
+        });
       });
     }
 
