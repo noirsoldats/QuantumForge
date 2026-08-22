@@ -46,6 +46,89 @@ jest.mock('electron', () => {
   };
 });
 
+/* ------------------------------------------------------------------ network
+ *
+ * NO TEST MAY TOUCH THE NETWORK.
+ *
+ * ESI's error limit is APP-WIDE, not per-endpoint, and a 4xx costs ~2.5x what a
+ * success does. A test that accidentally calls ESI in a loop can therefore burn
+ * the budget for the real application - and CI would do it on every run. The
+ * SDE/Fuzzwork endpoints are somebody else's bandwidth too.
+ *
+ * The guard is installed at `net.Socket.prototype.connect` deliberately, NOT at
+ * `global.fetch`:
+ *
+ *   - Many suites assign their own `global.fetch = jest.fn()` in beforeEach
+ *     (every renderer suite does, to serve its view HTML). A guard living on
+ *     global.fetch would be silently overwritten by those, leaving the illusion
+ *     of protection with none of the substance.
+ *   - The socket is the layer everything funnels through - verified against
+ *     this Node's undici `fetch`, `http.request`, and `tls.connect`, all of
+ *     which hit Socket.prototype.connect.
+ *
+ * Tests mock at the module boundary (`jest.mock('../../src/main/esi-fetch')`)
+ * or by replacing `global.fetch`, so nothing legitimate connects. If a test
+ * ever needs a real socket - a local server fixture, say - call
+ * `allowNetwork()` in that test and `blockNetwork()` in its afterEach, rather
+ * than deleting this.
+ */
+const net = require('net');
+
+/*
+ * Install ONCE per worker process.
+ *
+ * Jest runs this file for every test file, but test files in the same worker
+ * share the `net` module - so a naive install wraps `connect` again on each
+ * one. The wrappers then stack, and each closes over its own `allowed` flag:
+ * the outermost says yes while an inner one still throws, so allowNetwork()
+ * silently stops working (blocking still works, which is what makes it easy to
+ * miss). The state therefore lives on a symbol on the shared module, and the
+ * patch is applied only if it is not already there.
+ */
+const GUARD = Symbol.for('quantumforge.test.networkGuard');
+
+function describeTarget(args) {
+  const [first] = args;
+  if (first && typeof first === 'object') {
+    if (first.path) return String(first.path);
+    const host = first.host || first.hostname || 'unknown-host';
+    return first.port ? `${host}:${first.port}` : String(host);
+  }
+  // connect(port[, host]) - the positional form.
+  if (typeof first === 'number' || typeof first === 'string') {
+    const host = typeof args[1] === 'string' ? args[1] : 'localhost';
+    return `${host}:${first}`;
+  }
+  return 'unknown target';
+}
+
+if (!net[GUARD]) {
+  const realSocketConnect = net.Socket.prototype.connect;
+
+  // The single source of truth for "is network allowed", shared by every test
+  // file that runs in this worker.
+  const guard = { allowed: false };
+  net[GUARD] = guard;
+
+  net.Socket.prototype.connect = function guardedConnect(...args) {
+    if (guard.allowed) return realSocketConnect.apply(this, args);
+    throw new Error(
+      `Network access is blocked in tests (tried to connect to ${describeTarget(args)}).\n`
+      + 'Mock the module instead - e.g. jest.mock("../../src/main/esi-fetch") - or\n'
+      + 'assign global.fetch. See the network guard in tests/setup.js.'
+    );
+  };
+}
+
+/** Escape hatch for a test that genuinely needs a socket (e.g. a local server). */
+global.allowNetwork = () => { net[GUARD].allowed = true; };
+/** Restore the block. Call in afterEach whenever allowNetwork() was used. */
+global.blockNetwork = () => { net[GUARD].allowed = false; };
+
+// Re-block between tests: an allowNetwork() a test forgets to undo must not
+// leak into the next one.
+beforeEach(() => { net[GUARD].allowed = false; });
+
 // Suppress console logs during tests (optional)
 // Uncomment if you want cleaner test output
 // global.console = {

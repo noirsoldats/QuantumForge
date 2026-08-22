@@ -63,29 +63,28 @@
   const fmt = (n) => Number(n || 0).toLocaleString('en-US');
   const fmtSp = (sp) => `${(Number(sp || 0) / 1e6).toFixed(1)}M`;
 
-  let templateCache = null;
-
   /** Fetch the view markup from its own file (see settings-renderer for the pattern). */
   async function loadTemplate() {
     const inline = document.getElementById('character-hub-view-template');
     if (inline) return inline.content.cloneNode(true);
 
-    if (!templateCache) {
-      try {
-        const html = await fetch('character-hub.view.html').then((r) => r.text());
-        const parsed = new DOMParser().parseFromString(html, 'text/html');
-        const tpl = parsed.getElementById('character-hub-view-template');
-        if (!tpl) {
-          console.error('[character-hub] template not found');
-          return null;
-        }
-        templateCache = tpl.content;
-      } catch (error) {
-        console.error('[character-hub] failed to load template:', error);
+    try {
+      // Cached on the DOCUMENT by QFUI, not in this module: a module-scoped
+      // cache is wiped by jest.resetModules() in the suites' beforeEach, so
+      // the view was re-parsed on every test.
+      const fragment = await QFUI.loadViewFragment(
+        'character-hub.view.html',
+        'character-hub-view-template'
+      );
+      if (!fragment) {
+        console.error('[character-hub] template not found');
         return null;
       }
+      return fragment;
+    } catch (error) {
+      console.error('[character-hub] failed to load template:', error);
+      return null;
     }
-    return document.importNode(templateCache, true);
   }
 
   /**

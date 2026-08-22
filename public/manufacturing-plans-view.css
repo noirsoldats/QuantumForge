@@ -924,7 +924,17 @@
    doubled the column width for every row in the table. Stacked, the column
    only has to fit the widest single pill, and the extra height costs
    nothing: rows are far shorter than they are wide. */
+/* The CELL itself stays a table-cell. `display: flex` on a <td> takes it out
+   of the table's internal box model: the browser wraps it in an anonymous
+   table-cell, and it stops sharing column widths and vertical alignment with
+   the header, the footer and every other row - which is exactly how this
+   column drifted out of line with its own row. The stacking lives on an
+   inner wrapper instead, where it costs the table nothing. */
 #mp-view .mp-acq-cell {
+  text-align: center;
+}
+
+#mp-view .mp-acq-stack {
   display: flex;
   flex-direction: column;
   /* Centres each pill AND stops it stretching to the column width. */

@@ -27,6 +27,10 @@ const VIEW_HTML = fs.readFileSync(
   'utf8'
 );
 
+// Sets window.QFUI, the same way index.html loads it before every view
+// renderer. The renderer loads its template through QFUI.loadViewFragment,
+// so without this the mount throws ReferenceError.
+require('../../public/shared/ui-helpers.js');
 require('../../public/shared/qf-search-select.js');
 
 /* --------------------------------------------------------------- fixtures */

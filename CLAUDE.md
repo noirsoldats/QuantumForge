@@ -514,6 +514,47 @@ this by editing `styles.css`: every un-ported page still depends on those rules.
 Known outstanding instance: `.fac-list-head` (`facilities-view.css:348`) sets neither
 `background` nor `padding` and is carrying the wash today.
 
+### 6c. Never put `display: flex`/`grid` on a `<td>` or `<th>`
+
+A cell set to `display: flex` (or `grid`, or `block`) **stops being a table-cell**. It leaves the
+table's internal box model, the browser wraps it in an *anonymous* table-cell to keep the row
+valid, and the flex box sits inside that as an ordinary block. The cell then no longer shares
+column widths or vertical alignment with the `<th>` above it or the other `<td>`s in its own row.
+
+This shipped on the Manufacturing Plans **Materials** tab: `.mp-acq-cell` was a `<td>` with
+`display: flex` to stack its pills, and the Acquisition column drifted out of line with its row.
+It reads as *intermittent* — the anonymous cell sizes to that row's own content, so a one-pill
+row, a two-pill row and a "Not Acquired" row each drift by a different amount.
+
+**Stack or lay out inside a wrapper `<div>`, and leave the cell alone:**
+
+```js
+const cell = el('td', 'mp-acq-cell');      // stays a real table-cell
+const stack = el('div', 'mp-acq-stack');   // flex lives HERE
+cell.appendChild(stack);
+```
+```css
+.mp-acq-cell  { text-align: center; }                        /* no display! */
+.mp-acq-stack { display: flex; flex-direction: column; }
+```
+
+The same applies to a full-width row: give the `<td colSpan>` a `<div>` child rather than making
+the cell itself a flex container.
+
+**Use a real `<table>` for tabular data** — the browser sizes each column across every row at
+once, which per-row grids cannot do, and which is why alignment kept fighting us here. The cell
+rule above is the price of admission.
+
+Testing note: **jsdom does not do layout**, so no renderer test can observe the misalignment.
+Assert against the stylesheet text — that `.mp-acq-cell`'s rule declares no
+`display: flex|grid|block` — and assert in the DOM that the pills are children of the wrapper,
+not of the `<td>`.
+
+To sweep for it, intersect every class landing on a `<td>`/`<th>` with every rule declaring a
+block-level `display`, matching only where the class is the **last** compound selector (so
+descendant rules don't produce false hits). Validate any such scan by confirming it flags a
+known-bad revision before trusting a clean result.
+
 ### 7. Manufacturing Plan prices are locked
 
 Plan prices are frozen at a user-chosen point and **never auto-update on market refresh**. Only an
@@ -579,6 +620,137 @@ indicators* against the locked values, but must never write the locked price its
 - 1 arg: Delete operation
 - 4 args: Price override `(typeId, price, notes, timestamp)`
 - 14 args: Price cache `(typeId, locationId, regionId, ...)`
+
+### One big suite sets the floor — split it, share the harness
+
+Jest runs suites in parallel but **cannot split a single file across workers**, so wall clock is
+bounded below by the slowest single suite. Two 2,600-4,700 line files were the entire critical
+path; splitting them by feature area took the run from ~32s to ~19s.
+
+The harness — fake IPC backend, mount helpers, DOM utilities — lives in
+`tests/renderer/helpers/<view>-harness.js`, and each split file does:
+
+```js
+const h = require('./helpers/plans-harness');
+h.installHooks();                                    // opt-in, not on require
+const { state, mountView, openTab, settle } = h;
+```
+
+**Fixture state must be reached through a `state` facade of getters/setters**, not bare exported
+bindings. The fakes close over the harness's `let` bindings; a test file assigning to an imported
+copy could mutate (`state.plans[0].x = 1`) but never REPLACE (`state.plans = []`) — the second
+would silently not reach the fake.
+
+`mock-contract.test.js` audits the mock, so its PAIRS entry points at the **harness**, not at any
+one split test file.
+
+When splitting, watch for these — each one cost a round of failures:
+
+- A mechanical `foo` → `state.foo` rename must be **string- and comment-aware**. A regex pass
+  corrupted test names (`'2 items'` → `'2 state.items'`), prose in comments, and regex literals
+  (`/\.mp-materials-frame/` → `/\.mp-state.materials-frame/`). Scan with a tokenizer that tracks
+  string/template/comment/regex state, then verify: zero bare refs, zero `state.` inside string
+  literals, zero in comments, and the test COUNT unchanged.
+- **`...spread`** reads as a property access if you only look at the previous character.
+- **Local variables that shadow a fixture name** (`const drift = document.getElementById(…)`)
+  become `const state.drift = …`, a syntax error. `node --check` each split file.
+- Suites reading files (`fs`/`path` for stylesheet assertions) need those requires re-added.
+
+### Await the work, don't drain the queue
+
+A DOM event handler **cannot be awaited** — the browser discards an event listener's return
+value — so clicking a button leaves an `async` handler running with nothing to wait on. The
+tempting fix is to drain the macrotask queue a fixed number of times:
+
+```js
+// DON'T - slow and only probabilistically correct
+async function flush() {
+  for (let i = 0; i < 12; i += 1) {
+    await Promise.resolve();
+    await new Promise((r) => setTimeout(r, 0));
+  }
+}
+```
+
+`12` is a guess. Too low and tests fail intermittently as chains get deeper; too high and every
+call burns hops on an idle queue (~1.4ms each in jsdom — this was several seconds per run).
+
+**Instead, give the work a handle.** The renderer registers handler promises and exposes
+`whenSettled()`; the test awaits the actual work:
+
+```js
+// renderer
+const pending = new Set();
+function trackPending(result) {
+  if (!result || typeof result.then !== 'function') return result;
+  pending.add(result);
+  result.then(() => pending.delete(result), () => pending.delete(result));
+  return result;
+}
+async function whenSettled() {
+  while (pending.size > 0) await Promise.allSettled([...pending]);   // loops: a handler can start another
+}
+// bind through one choke point so nothing is missed
+const bindClick = (id, h) => el.addEventListener('click', (...a) => trackPending(h(...a)));
+// register: { title, mount, whenSettled }
+```
+
+`market-view-renderer.js` is the reference. Note the loop in `whenSettled` — a save that triggers
+a reload adds new work while the first batch is settling.
+
+**Inline `async` listeners bypass the choke point.** An `addEventListener('click', async () => …)`
+written by hand is invisible to `bindClick`; wrap it explicitly with
+`trackPending((async () => { … })())`. One such listener kept a test failing after every other
+case was fixed.
+
+Only 4 of 152 tests in that suite ever needed the draining — the other 148 were paying for it
+because `mount()` already awaits its own `loadAll()`. If `await mountView(...)` covers the case,
+no flush is needed at all.
+
+### Templates: cache on the document, not the module
+
+View renderers load their markup once and clone it per mount, via
+`QFUI.loadViewTemplate(container, url)` (writes into a container) or
+`QFUI.loadViewFragment(url, templateId)` (returns a fragment). Cloning measures ~3.3x faster than
+re-parsing (12ms → 3.6ms for an 8.6KB view under jsdom), and mounting happens on every navigation
+and pop-out, so this is a real app win and not only a test one.
+
+**The cache must live on `window`, not in the module closure.** Renderer suites call
+`jest.resetModules()` in `beforeEach`, which wipes a module-scoped cache — so the old per-renderer
+`let templateCache = null` re-parsed the view on all ~292 tests of a suite while looking like it
+cached. Fixing that one line took `manufacturing-plans-ui` from 32s to 16s.
+
+A renderer using these helpers depends on `QFUI`, so its test suite must
+`require('../../public/shared/ui-helpers.js')` — the app gets it from `index.html`, which loads it
+before every renderer.
+
+### No test may touch the network
+
+`tests/setup.js` installs a guard that makes any outbound connection throw.
+**ESI's error limit is app-wide** and a 4xx costs ~2.5x a success, so a test looping over ESI
+burns the real application's budget — on every CI run.
+
+Mock at the module boundary (`jest.mock('../../src/main/esi-fetch')`) or assign `global.fetch`.
+If a test genuinely needs a socket, call `global.allowNetwork()` in it and `global.blockNetwork()`
+in its `afterEach`; the guard re-blocks before every test regardless.
+
+Two things about the guard that are easy to get wrong if you touch it:
+
+**It lives on `net.Socket.prototype.connect`, not `global.fetch`.** Every renderer suite assigns
+its own `global.fetch = jest.fn()` in `beforeEach` to serve view HTML — a guard on `global.fetch`
+would be silently overwritten by those, leaving the appearance of protection and none of it. The
+socket is the layer undici's `fetch`, `http.request` and `tls.connect` all funnel through.
+
+**It must install exactly once per worker.** Jest runs `setup.js` per test *file*, but files in a
+worker share the `net` module, so a naive install stacks wrappers — each closing over its own
+flag, so the outer one reports "allowed" while an inner one still throws. Blocking keeps working,
+which is what makes this easy to miss; only `allowNetwork()` breaks, and only once a second file
+runs in the same worker. The state therefore lives on `Symbol.for('quantumforge.test.networkGuard')`
+on the `net` module and the patch is applied only if absent.
+
+`tests/unit/network-guard.test.js` covers all of this, including the stacking regression. Its
+escape-hatch test deliberately does **not** open a real listening server: a live handle inside a
+jest worker stops the worker exiting and showed up as a hang in the full run.
 
 ## Critical Files Reference
 

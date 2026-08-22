@@ -43,7 +43,12 @@ const RENDERER_DIR = path.join(__dirname, '../../src/renderer');
 const TEST_DIR = __dirname;
 
 /**
- * Renderer -> the suite that mounts it.
+ * Renderer -> the file holding the mock that mounts it.
+ *
+ * Usually the view's own suite. Where a view's tests were split across several
+ * files to let jest run them in parallel, the mock moved into a shared harness
+ * under helpers/ and that is what gets checked - the mock is the thing this
+ * file audits, so it follows the mock rather than the tests.
  *
  * Only views with a jsdom suite appear here. A view added without one is
  * caught by the coverage test at the bottom rather than silently skipped.
@@ -57,9 +62,9 @@ const PAIRS = [
   ['esi-status-view-renderer.js', 'esi-status-ui.test.js'],
   ['facilities-view-renderer.js', 'facilities-ui.test.js'],
   ['loot-analyzer-view-renderer.js', 'loot-analyzer-ui.test.js'],
-  ['manufacturing-plans-view-renderer.js', 'manufacturing-plans-ui.test.js'],
+  ['manufacturing-plans-view-renderer.js', 'helpers/plans-harness.js'],
   ['manufacturing-summary-view-renderer.js', 'manufacturing-summary-ui.test.js'],
-  ['market-view-renderer.js', 'market-watchlist-ui.test.js'],
+  ['market-view-renderer.js', 'helpers/market-harness.js'],
   ['reactions-view-renderer.js', 'reactions-ui.test.js'],
   ['skills-view-renderer.js', 'skills-ui.test.js'],
   ['what-can-i-build-view-renderer.js', 'what-can-i-build-ui.test.js'],

@@ -520,8 +520,7 @@
      ============================================================ */
 
   async function mount(container, params, ctx) {
-    const response = await fetch('audit-log.view.html');
-    container.innerHTML = await response.text();
+    await QFUI.loadViewTemplate(container, 'audit-log.view.html');
 
     const view = container.querySelector('#audit-log-view');
     els = {

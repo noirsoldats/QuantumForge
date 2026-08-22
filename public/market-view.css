@@ -515,12 +515,32 @@
   background-color: var(--qf-error);
 }
 
+/*
+ * Column widths: identity | source | status | actions.
+ *
+ * Source carries the longest text on the card - a full station name like
+ * "Jita IV - Moon 4 - Caldari Navy Assembly Plant" - so it gets the largest
+ * flexible share. Status was previously the widest track (1.4fr) despite its
+ * content being intrinsically narrow: a freshness pill, or the "Updating from
+ * ESI…" line and its progress bar. That left a slab of dead space between the
+ * pill and the buttons while Source truncated after a couple of words.
+ *
+ * Status is now sized to its content with a floor wide enough for the progress
+ * bar to still read as a bar, and the space it gave up goes to Source.
+ */
 #market-view .mk-set-body {
   padding: 16px 18px;
   display: grid;
-  grid-template-columns: 1.6fr 1fr 1.4fr auto;
+  grid-template-columns: 1.5fr 2fr minmax(150px, auto) auto;
   gap: 20px;
   align-items: center;
+}
+
+/* A grid item's default min-width is min-content, so a long station name in
+   the Source column would widen its track and squeeze the others no matter
+   what the value itself does. This lets the fr sizing actually hold. */
+#market-view .mk-set-body > * {
+  min-width: 0;
 }
 
 #market-view .mk-set-name {
@@ -582,6 +602,33 @@
   color: var(--qf-text-primary);
   margin-top: 3px;
   font-family: var(--qf-font-mono);
+}
+
+/* Station names are long ("Jita IV - Moon 4 - Caldari Navy Assembly Plant")
+   and this column is the narrow one, so the value is clamped to two lines
+   rather than being allowed to stretch the grid. The full text is on the
+   element's title attribute. min-width:0 is required - a grid item defaults
+   to min-content width, which would let a long unbroken name push the track
+   wider regardless of the clamp. */
+/*
+ * Station names are long ("Jita IV - Moon 4 - Caldari Navy Assembly Plant"),
+ * so the value wraps to at most two lines and then ellipses. The full text is
+ * always on the element's title attribute.
+ *
+ * min-width:0 is required even with the clamp: a grid item defaults to
+ * min-content width, so without it a long unbroken name widens the track and
+ * squeezes the other columns regardless of what the value itself does.
+ */
+#market-view .mk-set-source {
+  min-width: 0;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  /* Prefer the name's own spaces and hyphens; break mid-word only when a
+     single token is itself too long for the column. */
+  overflow-wrap: break-word;
+  line-height: 1.35;
 }
 
 /* Freshness pill. Every level sets the same properties. */

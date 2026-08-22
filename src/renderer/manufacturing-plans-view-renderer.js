@@ -124,7 +124,6 @@
   };
 
   let searchSelects = [];
-  let templateCache = null;
 
   /* --------------------------------------------------------------- helpers */
 
@@ -410,22 +409,23 @@
     const inline = $('manufacturing-plans-view-template');
     if (inline) return inline.content.cloneNode(true);
 
-    if (!templateCache) {
-      try {
-        const html = await fetch('manufacturing-plans.view.html').then((r) => r.text());
-        const parsed = new DOMParser().parseFromString(html, 'text/html');
-        const tpl = parsed.getElementById('manufacturing-plans-view-template');
-        if (!tpl) {
-          console.error('[plans] template not found');
-          return null;
-        }
-        templateCache = tpl.content;
-      } catch (error) {
-        console.error('[plans] failed to load template:', error);
+    try {
+      // Cached on the DOCUMENT by QFUI, not in this module: a module-scoped
+      // cache is wiped by jest.resetModules() in the suites' beforeEach, so
+      // the 37KB view was being re-parsed on every one of ~292 tests.
+      const fragment = await QFUI.loadViewFragment(
+        'manufacturing-plans.view.html',
+        'manufacturing-plans-view-template'
+      );
+      if (!fragment) {
+        console.error('[plans] template not found');
         return null;
       }
+      return fragment;
+    } catch (error) {
+      console.error('[plans] failed to load template:', error);
+      return null;
     }
-    return document.importNode(templateCache, true);
   }
 
   /* ------------------------------------------------------------ characters */
@@ -1563,7 +1563,12 @@
 
         row.appendChild(el('td', 'mp-right mp-mono', formatISK((locked || 0) * mat.quantity)));
 
-        const acq = el('td', 'mp-acq-cell');
+        const acqCell = el('td', 'mp-acq-cell');
+        // The pills stack inside a wrapper, NOT in the <td> itself - a <td>
+        // with `display: flex` is no longer a table-cell and drops out of the
+        // table's column layout, which misaligns this column against its row.
+        const acq = el('div', 'mp-acq-stack');
+        acqCell.appendChild(acq);
         // Two DIFFERENT sources, which read as duplicates when styled alike:
         //   - acquisitionMethod is a manual ledger entry - how YOU recorded
         //     obtaining it ("Purchased", "Manufactured", ...).
@@ -1605,7 +1610,7 @@
         if (acq.children.length === 0) {
           acq.appendChild(el('span', 'mp-acq-none', 'Not Acquired'));
         }
-        row.appendChild(acq);
+        row.appendChild(acqCell);
 
         host.appendChild(row);
 

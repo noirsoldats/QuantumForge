@@ -967,8 +967,7 @@
     state.addResults = [];
     state.pendingDelete = null;
 
-    const response = await fetch('blueprints.view.html');
-    container.innerHTML = await response.text();
+    await QFUI.loadViewTemplate(container, 'blueprints.view.html');
 
     els = {
       root: container.querySelector('#blueprints-view'),

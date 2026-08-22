@@ -1417,8 +1417,7 @@
     state.savedFacilityId = null;
     state.savedReactionFacilityId = null;
 
-    const response = await fetch('manufacturing-summary.view.html');
-    container.innerHTML = await response.text();
+    await QFUI.loadViewTemplate(container, 'manufacturing-summary.view.html');
 
     els = {
       root: container.querySelector('#summary-view'),

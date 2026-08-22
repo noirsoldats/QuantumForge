@@ -763,8 +763,7 @@
      ============================================================ */
 
   async function mount(container, params, ctx) {
-    const response = await fetch('esi-status.view.html');
-    container.innerHTML = await response.text();
+    await QFUI.loadViewTemplate(container, 'esi-status.view.html');
 
     const view = container.querySelector('#esi-status-view');
     els = {

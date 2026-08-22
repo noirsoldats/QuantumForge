@@ -186,28 +186,69 @@
   /** New/Edit watchlist modal mode. */
   let wlFormMode = 'create';
 
-  let templateCache = null;
+  /* ------------------------------------------------------- pending work */
+
+  /**
+   * Async work started by a DOM event handler.
+   *
+   * A click handler cannot be awaited by its caller - the browser discards
+   * whatever an event listener returns - so an `async` handler leaves work in
+   * flight that nothing holds a reference to. Tests used to cope by draining
+   * the macrotask queue a fixed number of times and hoping that was enough,
+   * which is both slow and only probabilistically correct.
+   *
+   * Registering the promise here gives that work a handle, so a test can await
+   * exactly the thing it triggered instead of guessing at a number of rounds.
+   */
+  const pending = new Set();
+
+  /**
+   * Record a handler's promise, if it returned one.
+   * @param {*} result - a handler's return value; ignored unless thenable
+   * @returns {*} the result, unchanged
+   */
+  function trackPending(result) {
+    if (!result || typeof result.then !== 'function') return result;
+    pending.add(result);
+    // Settle-or-fail both count as finished; errors are the handler's own
+    // problem and are already reported where they happen.
+    result.then(() => pending.delete(result), () => pending.delete(result));
+    return result;
+  }
+
+  /**
+   * Resolve once every tracked handler has finished.
+   *
+   * Loops because one handler can start another (a save that triggers a
+   * reload). Exposed on the view definition for tests.
+   */
+  async function whenSettled() {
+    while (pending.size > 0) {
+      await Promise.allSettled([...pending]);
+    }
+  }
 
   async function loadTemplate() {
     const inline = document.getElementById('market-view-template');
     if (inline) return inline.content.cloneNode(true);
 
-    if (!templateCache) {
-      try {
-        const html = await fetch('market.view.html').then((r) => r.text());
-        const parsed = new DOMParser().parseFromString(html, 'text/html');
-        const tpl = parsed.getElementById('market-view-template');
-        if (!tpl) {
-          console.error('[market] template not found');
-          return null;
-        }
-        templateCache = tpl.content;
-      } catch (error) {
-        console.error('[market] failed to load template:', error);
+    try {
+      // Cached on the DOCUMENT by QFUI, not in this module: a module-scoped
+      // cache is wiped by jest.resetModules() in the suites' beforeEach, so
+      // the view was re-parsed on every test.
+      const fragment = await QFUI.loadViewFragment(
+        'market.view.html',
+        'market-view-template'
+      );
+      if (!fragment) {
+        console.error('[market] template not found');
         return null;
       }
+      return fragment;
+    } catch (error) {
+      console.error('[market] failed to load template:', error);
+      return null;
     }
-    return document.importNode(templateCache, true);
   }
 
   /* ------------------------------------------------------------ context */
@@ -301,6 +342,68 @@
     if (input.regionId) ids.add(input.regionId);
     if (output.regionId) ids.add(output.regionId);
     return ids;
+  }
+
+  /**
+   * Where ONE scope reads its prices from, as shown in the Source column.
+   *
+   * Returns null when the scope prices region-wide: the region is already on
+   * the card's sub-line, so naming it again here would just repeat it. The
+   * caller turns a null into the word "Region".
+   */
+  function scopeSourceName(loc) {
+    // A player structure carries its own name - it is not in market_locations,
+    // which only holds NPC hubs.
+    if (loc.structureName) return loc.structureName;
+    if (loc.structureId) return `Structure ${loc.structureId}`;
+
+    if (loc.locationType === 'region') return null;
+
+    if (loc.locationId) {
+      const hub = state.marketLocations.find(
+        (l) => String(l.locationId) === String(loc.locationId)
+      );
+      if (hub) return hub.locationName;
+      return `Station ${loc.locationId}`;
+    }
+
+    return null;
+  }
+
+  /** True when a scope has no location configured at all. */
+  function scopeIsUnset(loc) {
+    return !loc.regionId && !loc.locationId && !loc.structureId;
+  }
+
+  /**
+   * Human-readable price source for a set's card. Shows both stations when the
+   * input and output scopes price against different ones, and the bare word
+   * "Region" when the set is region-wide (the region itself is on the
+   * sub-line, so repeating it here would say nothing new).
+   */
+  function setSourceLabel(set) {
+    const inLoc = setLocation(set, 'input');
+    const outLoc = setLocation(set, 'output');
+
+    // Nothing configured at all. Without this an unset set would read
+    // "Region", claiming a scope it does not have.
+    if (scopeIsUnset(inLoc) && scopeIsUnset(outLoc)) return 'Not configured';
+
+    const input = scopeSourceName(inLoc);
+    const output = scopeSourceName(outLoc);
+
+    // Region-wide on both sides.
+    if (!input && !output) return 'Region';
+
+    // One side is a station and the other is region-wide - a real, easily
+    // forgotten asymmetry, so it is spelled out rather than collapsed.
+    if (input && !output) return `${input} · Region`;
+    if (!input && output) return `Region · ${output}`;
+
+    // Both stations. Identical is by far the common case - collapse it, or
+    // every card would read the same name twice.
+    if (input === output) return input;
+    return `${input} · ${output}`;
   }
 
   /* ------------------------------------------------- refresh progress modal */
@@ -1238,23 +1341,25 @@
       identity.appendChild(region);
       body.appendChild(identity);
 
-      // --- col 2: pricing basis ---
+      // --- col 2: price source ---
       // The mockup shows an item count here, but a market set holds no item
-      // list - only pricing config. The basis (which side of the book each
-      // scope reads) is the meaningful per-set fact, so show that instead.
-      const basisCol = document.createElement('div');
-      const basisLabel = document.createElement('div');
-      basisLabel.className = 'mk-set-col-label';
-      basisLabel.textContent = 'Basis';
-      basisCol.appendChild(basisLabel);
-      const basisValue = document.createElement('div');
-      basisValue.className = 'mk-set-col-value';
-      const inCfg = (set.inputMaterials || {});
-      const outCfg = (set.outputProducts || {});
-      basisValue.textContent =
-        `${inCfg.priceType || '--'} in · ${outCfg.priceType || '--'} out`;
-      basisCol.appendChild(basisValue);
-      body.appendChild(basisCol);
+      // list - only pricing config, so there is nothing to count. The card's
+      // job is "which market am I pricing against", so this names the STATION
+      // (or structure) the prices come from, or reads "Region" when the set
+      // prices region-wide. The region itself stays on the sub-line above.
+      const sourceCol = document.createElement('div');
+      const sourceLabel = document.createElement('div');
+      sourceLabel.className = 'mk-set-col-label';
+      sourceLabel.textContent = 'Source';
+      sourceCol.appendChild(sourceLabel);
+      const sourceValue = document.createElement('div');
+      sourceValue.className = 'mk-set-col-value mk-set-source';
+      sourceValue.textContent = setSourceLabel(set);
+      // Station names are long and the column is narrow, so the full value
+      // has to stay reachable on hover.
+      sourceValue.title = sourceValue.textContent;
+      sourceCol.appendChild(sourceValue);
+      body.appendChild(sourceCol);
 
       // --- col 3: status (refreshing bar, or freshness pill) ---
       const statusCol = document.createElement('div');
@@ -2731,7 +2836,7 @@
       remove.title = 'Remove from watchlist';
       remove.setAttribute('aria-label', 'Remove from watchlist');
       remove.appendChild(icon('trash', 14));
-      remove.addEventListener('click', async () => {
+      remove.addEventListener('click', () => trackPending((async () => {
         try {
           await window.electronAPI.market.watchlists.removeItem(item.id);
           await loadWatchlists();
@@ -2743,7 +2848,7 @@
         } catch (error) {
           console.error('[market] failed to remove watchlist item:', error);
         }
-      });
+      })()));
       actions.appendChild(remove);
       tr.appendChild(actions);
 
@@ -4106,7 +4211,7 @@
 
     const bindClick = (id, handler) => {
       const el = document.getElementById(id);
-      if (el) el.addEventListener('click', handler);
+      if (el) el.addEventListener('click', (...args) => trackPending(handler(...args)));
     };
 
     bindClick('mk-new-watchlist', () => openWatchlistForm('create'));
@@ -4236,6 +4341,9 @@
     window.QFShell.router.register('market', {
       title: 'Market Manager',
       mount,
+      // For tests: await the async work a click handler started, instead of
+      // draining the macrotask queue a fixed number of times and hoping.
+      whenSettled,
     });
   }
 })();

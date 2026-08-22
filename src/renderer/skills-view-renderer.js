@@ -667,8 +667,7 @@
     state.groups = {};
     state.collapsed = {};
 
-    const response = await fetch('skills.view.html');
-    container.innerHTML = await response.text();
+    await QFUI.loadViewTemplate(container, 'skills.view.html');
 
     els = {
       root: container.querySelector('#skills-view'),

@@ -1379,8 +1379,7 @@
     state.savedViews = [];
     state.activeViewId = null;
 
-    const response = await fetch('assets.view.html');
-    container.innerHTML = await response.text();
+    await QFUI.loadViewTemplate(container, 'assets.view.html');
 
     els = {
       root: container.querySelector('#assets-view'),

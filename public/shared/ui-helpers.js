@@ -157,6 +157,98 @@
     });
   }
 
+  /**
+   * Parsed view templates, keyed by url. One entry per view, for the life of
+   * the DOCUMENT - deliberately not the module.
+   *
+   * A module-scoped cache is wiped by `jest.resetModules()`, which the renderer
+   * suites call in `beforeEach`. That is how the older per-renderer caches
+   * ended up re-parsing their view on all ~292 tests of a suite while looking
+   * like they cached. Parking it on `window` outlives the module registry, so
+   * the parse really does happen once per worker.
+   */
+  const TEMPLATE_CACHE_KEY = '__qfViewTemplateCache';
+  if (!window[TEMPLATE_CACHE_KEY]) window[TEMPLATE_CACHE_KEY] = new Map();
+  const templateCache = window[TEMPLATE_CACHE_KEY];
+
+  /**
+   * Load a view's HTML into `container`.
+   *
+   * Replaces the `container.innerHTML = await (await fetch(url)).text()` that
+   * every view renderer used to inline. That re-parsed the whole view on EVERY
+   * mount; this parses once per url and clones thereafter, which measures ~3.3x
+   * faster (12ms -> 3.6ms on an 8.6KB view under jsdom). Mounting happens on
+   * every navigation and pop-out, so the win is real in the app and not just in
+   * the test suite.
+   *
+   * The fetch is cached too: the response for a given url cannot change within
+   * a session, since these are packaged files.
+   *
+   * @param {HTMLElement} container - emptied, then filled with the view
+   * @param {string} url - e.g. 'assets.view.html'
+   * @returns {Promise<void>}
+   */
+  async function loadViewTemplate(container, url) {
+    let template = templateCache.get(url);
+
+    if (!template) {
+      const response = await fetch(url);
+      const html = await response.text();
+      // A <template> parses its contents inertly - no images load, no scripts
+      // run - which is both faster and safer than assigning to a live element.
+      template = document.createElement('template');
+      template.innerHTML = html;
+      templateCache.set(url, template);
+    }
+
+    container.textContent = '';
+    // Clone, never append the cached nodes themselves: appending would MOVE
+    // them out of the template and empty the cache entry, so the second mount
+    // would silently render nothing.
+    container.appendChild(template.content.cloneNode(true));
+  }
+
+  /**
+   * A view's template CONTENT, ready to clone.
+   *
+   * The sibling of loadViewTemplate for the renderers that keep their markup
+   * in an `<template id="…">` inside the view file and want the fragment
+   * rather than having it written into a container. Same document-scoped
+   * cache, so the parse happens once per worker here too.
+   *
+   * @param {string} url - e.g. 'market.view.html'
+   * @param {string} templateId - the <template> element's id
+   * @returns {Promise<DocumentFragment|null>} a fresh clone, or null if absent
+   */
+  async function loadViewFragment(url, templateId) {
+    const key = `${url}#${templateId}`;
+    let content = templateCache.get(key);
+
+    if (!content) {
+      const response = await fetch(url);
+      const html = await response.text();
+      const holder = document.createElement('template');
+      holder.innerHTML = html;
+      const found = holder.content.getElementById
+        ? holder.content.getElementById(templateId)
+        : holder.content.querySelector(`#${templateId}`);
+      const template = found || holder.content.querySelector(`#${templateId}`);
+      if (!template) return null;
+      content = template.content;
+      templateCache.set(key, content);
+    }
+
+    return document.importNode(content, true);
+  }
+
+  /**
+   * Drop cached templates. Only needed by tests that swap a view's HTML
+   * between cases; the app has no reason to call it.
+   */
+  function clearViewTemplateCache() {
+    templateCache.clear();
+  }
+
   // Also exposed as a bare `QFUI` for terse call sites in renderers.
   window.QFUI = {
     PORTRAIT_PLACEHOLDER,
@@ -166,5 +258,8 @@
     isBusy,
     withButtonBusy,
     attachPortraitFallbacks,
+    loadViewTemplate,
+    loadViewFragment,
+    clearViewTemplateCache,
   };
 })();

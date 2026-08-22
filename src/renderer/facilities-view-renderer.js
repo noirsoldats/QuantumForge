@@ -78,7 +78,6 @@
     },
   };
 
-  let templateCache = null;
   let searchSelects = [];
   /**
    * Selects owned by the Ravworks preview, tracked apart from the form's.
@@ -1817,22 +1816,23 @@
     const inline = $('facilities-view-template');
     if (inline) return inline.content.cloneNode(true);
 
-    if (!templateCache) {
-      try {
-        const html = await fetch(TEMPLATE_URL).then((r) => r.text());
-        const parsed = new DOMParser().parseFromString(html, 'text/html');
-        const tpl = parsed.getElementById('facilities-view-template');
-        if (!tpl) {
-          console.error('[facilities] template not found');
-          return null;
-        }
-        templateCache = tpl;
-      } catch (error) {
-        console.error('[facilities] template load failed:', error);
+    try {
+      // Cached on the DOCUMENT by QFUI, not in this module: a module-scoped
+      // cache is wiped by jest.resetModules() in the suites' beforeEach, so
+      // the view was re-parsed on every test.
+      const fragment = await QFUI.loadViewFragment(
+        TEMPLATE_URL,
+        'facilities-view-template'
+      );
+      if (!fragment) {
+        console.error('[facilities] template not found');
         return null;
       }
+      return fragment;
+    } catch (error) {
+      console.error('[facilities] template load failed:', error);
+      return null;
     }
-    return templateCache.content.cloneNode(true);
   }
 
   async function mount(container, params, ctx) {

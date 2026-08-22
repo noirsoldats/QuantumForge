@@ -1044,8 +1044,7 @@
     state.analyzing = false;
     noMarketSelected = true;
 
-    const response = await fetch('loot-analyzer.view.html');
-    container.innerHTML = await response.text();
+    await QFUI.loadViewTemplate(container, 'loot-analyzer.view.html');
 
     const $ = (id) => container.querySelector(`#${id}`);
 

@@ -29,6 +29,11 @@
 const fs = require('fs');
 const path = require('path');
 
+// Sets window.QFUI, the same way index.html loads it before every view
+// renderer. The renderer loads its template through QFUI.loadViewTemplate,
+// so without this the mount throws ReferenceError.
+require('../../public/shared/ui-helpers.js');
+
 const VIEW_HTML = fs.readFileSync(
   path.join(__dirname, '../../public/loot-analyzer.view.html'),
   'utf8'

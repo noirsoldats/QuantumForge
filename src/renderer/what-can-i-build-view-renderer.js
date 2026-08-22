@@ -1306,8 +1306,7 @@
     state.dropColumn = null;
     noMarketRegion = true;
 
-    const response = await fetch('what-can-i-build.view.html');
-    container.innerHTML = await response.text();
+    await QFUI.loadViewTemplate(container, 'what-can-i-build.view.html');
 
     const $ = (id) => container.querySelector(`#${id}`);
 
